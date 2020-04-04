@@ -1,0 +1,11 @@
+So I now remember sort of that the Mikro has its own bootloader (?)
+which can only be used with the Mikro downloader EXE.  Does the
+Mikro not expose BOOT0?  I had made my own board out of an unmodified
+STM32 exposing BOOT0 on the crazy big protoboard.  I can downloading using
+"make burn", which calls dfu-util.
+
+
+
+Use bit-banding where single bit read-modify-write operations are used
+    setting GPIO direction
+    clearing/setting GPIO
