@@ -39,11 +39,7 @@ OBJECTS = \
         crc7.o \
         logprintf.o \
         sd_spi.o \
-        video.o \
         reset_button.o \
-        bus_signals.o \
-        bus_aggregate.o \
-        io_service.o \
         $(NULL)
 
 SOURCES = $(OBJECTS:.o=.c)
