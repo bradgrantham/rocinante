@@ -75,6 +75,6 @@ ioboard.dfu: ioboard.hex
 	python dfu-convert -i ioboard.hex ioboard.dfu
 
 burn: ioboard.dfu
-	sudo dfu-util -d 0483:df11 -a 0 -D ioboard.dfu
+	dfu-util -d 0483:df11 -a 0 -D ioboard.dfu
 
 # DO NOT DELETE
