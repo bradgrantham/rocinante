@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#include <math.h>
 
 #include <stm32f4xx_hal.h>
 
@@ -96,8 +97,9 @@ static void SystemClock_Config(void)
     panic();
   }
 
-  /* Enable TIM1 CLK */
+  /* Enable other CLKs */
   __HAL_RCC_TIM1_CLK_ENABLE();
+  __HAL_RCC_TIM2_CLK_ENABLE();
   __HAL_RCC_DMA2_CLK_ENABLE();
 }
 
@@ -242,7 +244,6 @@ unsigned char gMonitorCommandLineLength = 0;
 void usage()
 {
     printf("help       - this help message\n");
-    printf("rows       - print row counter\n");
     printf("debug N    - set debug level\n");
     printf("sdreset    - reset SD\n");
     printf("dumpkbd    - toggle dumping keyboard\n");
@@ -258,7 +259,7 @@ volatile unsigned char gSerialInputToMonitor = 1;
 
 unsigned char sd_buffer[SD_BLOCK_SIZE];
 
-uint32_t rows = 0;
+uint32_t rowCyclesSpent[262];
 
 void process_local_key(unsigned char c)
 {
@@ -280,10 +281,12 @@ void process_local_key(unsigned char c)
             if(!SDCARD_init())
                 printf("Failed to start access to SD card as SPI\n");
 
-        } else if(strcmp(gMonitorCommandLine, "rows") == 0) {
+        } else if(strcmp(gMonitorCommandLine, "rowcycles") == 0) {
 
-            printf("%lu rows\n", rows);
-            SERIAL_flush();
+            for(int i = 0; i < 262; i++) {
+                printf("row %3d: %8lu cycles, %lu microseconds\n", i, rowCyclesSpent[i],
+                    rowCyclesSpent[i] / SystemCoreClock);
+            }
 
         } else if(strcmp(gMonitorCommandLine, "sdspeed") == 0) {
 
@@ -438,33 +441,152 @@ void console_queue_init()
     queue_init(&con_queue.q, CON_QUEUE_CAPACITY);
 }
 
-unsigned char rowA[910];
-unsigned char rowB[910];
+// XXX put these in SRAM2 somehow to relieve main memory pressure
+unsigned char row0[910];
+unsigned char row1[910];
 
-const unsigned char syncTipVoltage = 0;
-const unsigned char syncPorchVoltage = 54;
-const unsigned char blackVoltage = 65;
-const unsigned char whiteVoltage = 186;
-const unsigned char maxVoltage = 255;
+#define NTSC_EQPULSE_LINES	3
+#define NTSC_VSYNC_LINES	3
+#define NTSC_VBLANK_LINES	15
+#define NTSC_FIELD_LINES	262
+#define NTSC_PIXEL_LINES	(NTSC_FIELD_LINES - NTSC_VBLANK_LINES - NTSC_VSYNC_LINES - NTSC_EQPULSE_LINES * 2)
+#define NTSC_HOR_SYNC_DUR	.075
+#define NTSC_FIELDS		60
+#define NTSC_FRONTPORCH		.02
+#define NTSC_BACKPORCH		.07 /* not including COLORBURST */
 
-unsigned char videoVoltage(unsigned char luminance) { return blackVoltage + luminance * (whiteVoltage - blackVoltage) / 255; }
+const unsigned char syncTipDACValue = 0;
+const unsigned char syncPorchDACValue = 54;
+const unsigned char blackDACValue = 65;
+const unsigned char whiteDACValue = 186;
+const unsigned char maxDACValue = 255;
+
+unsigned char videoDACValue(unsigned char luminance) { return blackDACValue + luminance * (whiteDACValue - blackDACValue) / 255; }
+
+int rowNumber;
+int fieldNumber;
+int whichRowBuffer;
+
+int horSyncTicks;
+int lineTicks;
+int fieldTicks;
+int frontporchTicks;
+int backporchTicks;
+
+// XXX later put source buffers in CCM
+
+void fillRowBuffer(int fieldNumber, int rowNumber, int rowSize, volatile unsigned char *rowBuffer)
+{
+    /*
+     * Rows 0 through 8 are vertical blank
+     */
+    if(rowNumber < NTSC_EQPULSE_LINES) {
+
+        for (int col = 0; col < lineTicks; col++) {
+            if (col < horSyncTicks || (col > lineTicks/2 && col < lineTicks/2 + horSyncTicks)) {
+                rowBuffer[col] = syncTipDACValue;
+            } else {
+                rowBuffer[col] = syncPorchDACValue;
+            }
+        }
+
+    } else if(rowNumber - NTSC_EQPULSE_LINES < NTSC_VSYNC_LINES) {
+
+	for (int col = 0; col < lineTicks; col++) {
+	    if (col < lineTicks/2-horSyncTicks || (col > lineTicks/2 && col < 210)) {
+                rowBuffer[col] = syncTipDACValue;
+            } else {
+                rowBuffer[col] = syncPorchDACValue;
+            }
+        }
+
+    } else if(rowNumber - (NTSC_EQPULSE_LINES + NTSC_VSYNC_LINES) < NTSC_EQPULSE_LINES) {
+
+        for (int col = 0; col < lineTicks; col++) {
+            if (col < horSyncTicks || (col > lineTicks/2 && col < lineTicks/2 + horSyncTicks)) {
+                rowBuffer[col] = syncTipDACValue;
+            } else {
+                rowBuffer[col] = syncPorchDACValue;
+            }
+        }
+
+    } else if(rowNumber - (NTSC_EQPULSE_LINES + NTSC_VSYNC_LINES + NTSC_EQPULSE_LINES) < NTSC_VBLANK_LINES) {
+
+        /*
+         * Rows 9 through 23 are other part of vertical blank
+         */
+
+	for (int col = 0; col < lineTicks; col++) {
+	    if (col < horSyncTicks) {
+                rowBuffer[col] = syncTipDACValue;
+            } else {
+                rowBuffer[col] = syncPorchDACValue;
+            }
+        }
+
+    } else {
+
+        int y = rowNumber - (NTSC_EQPULSE_LINES + NTSC_VSYNC_LINES + NTSC_EQPULSE_LINES + NTSC_VBLANK_LINES);
+
+	for (int col = 0; col < lineTicks; col++) {
+	    if (col < horSyncTicks) {
+                rowBuffer[col] = syncTipDACValue;
+            } else {
+		if((col < horSyncTicks + backporchTicks) || (col >= lineTicks - frontporchTicks)) {
+                    rowBuffer[col] = syncPorchDACValue;
+                } else {
+                    int x = col - (horSyncTicks + backporchTicks); // 0 to 761
+                    int xTile = x / 10;
+                    int yTile = y / 10;
+                    if((yTile + xTile) % 2) {
+                        rowBuffer[col] = blackDACValue;
+                    } else {
+                        rowBuffer[col] = whiteDACValue;
+                    }
+                }
+            }
+        }
+    }
+    if(rowNumber == 0) {
+        rowBuffer[0] = 255;
+        rowBuffer[1] = 255;
+        rowBuffer[2] = 255;
+        rowBuffer[3] = 255;
+    }
+}
 
 void DMA2_Stream2_IRQHandler(void)
 {
-    // row transferred
-    rows += 1;
+    // Configure timer TIM2
+    TIM2->SR = 0;                       /* reset status */
+    TIM2->ARR = 0xFFFFFFFF;
+    TIM2->CNT = 0;
+    TIM2->CR1 = TIM_CR1_CEN;            /* enable the timer */
 
-    int whichIsScanning = (DMA2_Stream2->CR & DMA_SxCR_CT) ? 1 : 0;
-    unsigned char *rowBuffer = whichIsScanning ? rowA : rowB;
-    int row = rows % 262;
-    // do work
-
-    for(int i = 220; i < 700; i++) {
-        rowBuffer[i] = blackVoltage + (rows / 100) % 120;
-    }
-
+    // Clear interrupt flag
     // DMA2->LISR &= ~DMA_TCIF;
     DMA2->LIFCR |= DMA_LIFCR_CTCIF2;
+
+    rowNumber = rowNumber + 1;
+    // row to calculate
+    if(rowNumber == NTSC_FIELD_LINES) {
+        rowNumber = 0;
+        fieldNumber++;
+    }
+
+    int whichIsScanning = (DMA2_Stream2->CR & DMA_SxCR_CT) ? 1 : 0; // This should work, but doesn't
+    // int whichIsScanning = whichRowBuffer ? 0 : 1; //
+
+    unsigned char *rowBuffer = (whichIsScanning == 1) ? row0 : row1;
+    // do work
+
+    if(fieldNumber == 0) { // XXX
+        fillRowBuffer(fieldNumber, rowNumber, sizeof(row0), rowBuffer);
+        rowCyclesSpent[rowNumber] = TIM2->CNT;
+    }
+
+    whichRowBuffer = whichRowBuffer ^ 0x01;
+    TIM2->CR1 = 0;            /* stop the timer */
 }
 
 int main()
@@ -485,6 +607,20 @@ int main()
 
     printf("\n\nAlice 3 I/O firmware, %s\n", IOBOARD_FIRMWARE_VERSION_STRING);
     printf("System core clock: %lu MHz\n", SystemCoreClock / 1000000);
+
+    float clock = 14.318180;
+    fieldTicks = floorf(clock * 1000000.0 / NTSC_FIELDS + 0.5);
+    lineTicks = floorf((double)fieldTicks / NTSC_FIELD_LINES + 0.5);
+    printf("calculated lineTicks = %d\n", lineTicks);
+    lineTicks = 910; // XXX
+    horSyncTicks = floorf(lineTicks * NTSC_HOR_SYNC_DUR + 0.5);
+    frontporchTicks = lineTicks * NTSC_FRONTPORCH;
+    backporchTicks = lineTicks * NTSC_BACKPORCH;
+
+    printf("calculated horSyncTicks = %d\n", horSyncTicks);
+    printf("calculated frontporchTicks = %d\n", frontporchTicks);
+    printf("calculated backporchTicks = %d\n", backporchTicks);
+
 
     LED_beat_heart();
     SERIAL_flush();
@@ -563,15 +699,7 @@ int main()
     // pixels is (1 - .165) * (1 / 15734) / (1 / 3579545) = 189.96568418711380557696 cycles (190)
     //     280 cycles at double clock
 
-    for(int i = 0; i < 910; i++) {
-        if(i < 455) {
-            rowA[i] = blackVoltage;
-            rowB[i] = whiteVoltage;
-        } else {
-            rowA[i] = blackVoltage + 25;
-            rowB[i] = whiteVoltage - 25;
-        }
-    }
+    fillRowBuffer(0, 0, 910, row0);
 
     // Note that the counter starts counting 1 clock cycle after setting the CEN bit in the TIMx_CR1 register.
     uint32_t count = 12;        // 140 MHz, need 14.318180...
@@ -597,7 +725,7 @@ int main()
         *p = v;
     }
 
-    // STEP 2: configure DMA to double buffer write 910 bytes from rowA and then rowB at 14.318180
+    // STEP 2: configure DMA to double buffer write 910 bytes from row0 and then row1 at 14.318180
 #if 0
 stream configuration register DMA_SxCR 
     CHSEL = 000 // channel 0
@@ -621,7 +749,7 @@ stream configuration register DMA_SxCR
     EN = 1 // when ready to enable
 transfer count DMA_SxNDTR = 910
 base memory address DMA_SxM0AR DMA_SxM1AR
-    rowA and rowB
+    row0 and row1
 peripheral memory address DMA_SxPAR
     GPIOC ODR?
 FIFO control register DMA_SxFCR
@@ -633,13 +761,14 @@ FIFO control register DMA_SxFCR
     // must clear flag before re-enabling
 #endif
     DMA2_Stream2->NDTR = 910;
-    DMA2_Stream2->M0AR = (uint32_t)rowA;
-    DMA2_Stream2->M1AR = (uint32_t)rowB;
+    DMA2_Stream2->M0AR = (uint32_t)row0;
+    DMA2_Stream2->M1AR = (uint32_t)row1;
     DMA2_Stream2->PAR = (uint32_t)&GPIOC->ODR;
+    DMA2_Stream2->FCR = DMA_FIFOMODE_ENABLE; // | DMA_FIFO_THRESHOLD_HALFFULL;
     DMA2_Stream2->CR =
         DMA_CHANNEL_6 | 
         DMA_PDATAALIGN_BYTE |
-        DMA_MDATAALIGN_BYTE | 
+        DMA_MDATAALIGN_HALFWORD | 
         DMA_SxCR_DBM |
         DMA_PRIORITY_VERY_HIGH |
         DMA_MINC_ENABLE |
