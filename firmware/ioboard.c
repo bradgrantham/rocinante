@@ -242,6 +242,7 @@ unsigned char gMonitorCommandLineLength = 0;
 void usage()
 {
     printf("help       - this help message\n");
+    printf("rows       - print row counter\n");
     printf("debug N    - set debug level\n");
     printf("sdreset    - reset SD\n");
     printf("dumpkbd    - toggle dumping keyboard\n");
@@ -256,6 +257,8 @@ void usage()
 volatile unsigned char gSerialInputToMonitor = 1;
 
 unsigned char sd_buffer[SD_BLOCK_SIZE];
+
+uint32_t rows = 0;
 
 void process_local_key(unsigned char c)
 {
@@ -276,6 +279,11 @@ void process_local_key(unsigned char c)
 
             if(!SDCARD_init())
                 printf("Failed to start access to SD card as SPI\n");
+
+        } else if(strcmp(gMonitorCommandLine, "rows") == 0) {
+
+            printf("%lu rows\n", rows);
+            SERIAL_flush();
 
         } else if(strcmp(gMonitorCommandLine, "sdspeed") == 0) {
 
@@ -441,6 +449,24 @@ const unsigned char maxVoltage = 255;
 
 unsigned char videoVoltage(unsigned char luminance) { return blackVoltage + luminance * (whiteVoltage - blackVoltage) / 255; }
 
+void DMA2_Stream2_IRQHandler(void)
+{
+    // row transferred
+    rows += 1;
+
+    int whichIsScanning = (DMA2_Stream2->CR & DMA_SxCR_CT) ? 1 : 0;
+    unsigned char *rowBuffer = whichIsScanning ? rowA : rowB;
+    int row = rows % 262;
+    // do work
+
+    for(int i = 220; i < 700; i++) {
+        rowBuffer[i] = blackVoltage + (rows / 100) % 120;
+    }
+
+    // DMA2->LISR &= ~DMA_TCIF;
+    DMA2->LIFCR |= DMA_LIFCR_CTCIF2;
+}
+
 int main()
 {
     system_init();
@@ -551,11 +577,13 @@ int main()
     uint32_t count = 12;        // 140 MHz, need 14.318180...
                                 // need main clock as close as possible to @ 171.816
 
+    HAL_NVIC_SetPriority(DMA2_Stream2_IRQn, 1, 1);
+    HAL_NVIC_EnableIRQ(DMA2_Stream2_IRQn);
+
     // Configure TIM1_CH2 to drive DMA
     TIM1->CCR2 = count / 2 - 1;         /* 50% duty cycle */ 
     TIM1->CCER |= TIM_CCER_CC2E;        /* enable capture/compare CH2 */
-    TIM1->EGR |= TIM_EGR_TG;            /* enable trigger generation */
-    TIM1->DIER |= TIM_DIER_TDE | TIM_DIER_CC2DE | TIM_DIER_UDE;         /* enable triggering and updating DMA */
+    TIM1->DIER |= TIM_DIER_CC2DE;       /* enable capture/compare updates */
 
     // Configure timer TIM1
     TIM1->SR = 0;                       /* reset status */
@@ -616,7 +644,7 @@ FIFO control register DMA_SxFCR
         DMA_PRIORITY_VERY_HIGH |
         DMA_MINC_ENABLE |
         DMA_MEMORY_TO_PERIPH | 
-        // DMA_IT_TC | 
+        DMA_IT_TC | 
         0;
     DMA2_Stream2->CR |= DMA_SxCR_EN;
 
