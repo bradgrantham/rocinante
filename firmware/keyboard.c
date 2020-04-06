@@ -66,7 +66,7 @@ void KBD_set_receive()
     HAL_GPIO_Init(KEYBOARD_DATA_PORT, &GPIO_InitStruct); 
 
     /* Enable and set EXTI Line15-10 interrupt */
-    HAL_NVIC_SetPriority(EXTI15_10_IRQn, 1, 0);
+    HAL_NVIC_SetPriority(EXTI15_10_IRQn, 2, 0);
     HAL_NVIC_EnableIRQ(EXTI15_10_IRQn);
 }
 
@@ -104,7 +104,7 @@ void KBD_send_byte(int b)
 
     GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
     GPIO_InitStruct.Pull = GPIO_NOPULL;
-    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_MEDIUM;
 
     GPIO_InitStruct.Pin = KEYBOARD_CLOCK_PIN_MASK;
     HAL_GPIO_Init(KEYBOARD_CLOCK_PORT, &GPIO_InitStruct); 

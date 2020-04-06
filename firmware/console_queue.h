@@ -23,6 +23,7 @@ inline static void console_enqueue_key_unsafe(unsigned char d)
     if(full) {
         gConsoleOverflowed = 1;
     } else {
+        // queue_enq(&con_queue.q, d);
         queue_enq(&con_queue.q, d);
     }
 }

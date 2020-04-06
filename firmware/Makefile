@@ -1,6 +1,6 @@
 FIRMWARE_VERSION    := $(shell date)
 
-OPT             =       -O2 -g
+OPT             =       -O2 -g -funroll-loops
 
 # TOOLROOT        ?=      $(HOME)/trees/gcc-arm-none-eabi-5_3-2016q1
 TOOLROOT        ?=      $(HOME)/packages/gcc-arm-none-eabi-7-2018-q2-update
