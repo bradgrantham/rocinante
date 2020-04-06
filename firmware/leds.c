@@ -47,7 +47,7 @@ void LED_set_info(int on)
 
 void LED_init()
 {
-    GPIO_InitTypeDef  GPIO_InitStruct;
+    GPIO_InitTypeDef  GPIO_InitStruct = {0};
 
     GPIO_InitStruct.Pin = LED_PIN_MASK;
     GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;

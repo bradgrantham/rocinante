@@ -271,137 +271,12 @@ unsigned char sd_buffer[SD_BLOCK_SIZE];
 
 uint32_t rowCyclesSpent[262];
 int scanOnlyFirstField = 0;
+typedef enum { VIDEO_GPIOC_TEST, VIDEO_COLOR_TEST, VIDEO_IMAGE } VideoMode;
+VideoMode videoMode = VIDEO_COLOR_TEST;
+int withColorBurst = 1;
 
-void process_local_key(unsigned char c)
-{
-    // XXX make this table driven, break into lots smaller functions
-    if(c == '\r' || c == '\n') {
-        putchar('\n');
-        gMonitorCommandBuffer[gMonitorCommandBufferLength] = 0;
-
-        if((strcmp(gMonitorCommandBuffer, "help") == 0) ||
-           (strcmp(gMonitorCommandBuffer, "h") == 0) ||
-           (strcmp(gMonitorCommandBuffer, "?") == 0)) {
-
-            usage();
-
-        } else if(strcmp(gMonitorCommandBuffer, "sdreset") == 0) {
-
-            printf("Resetting SD card...\n");
-
-            if(!SDCARD_init())
-                printf("Failed to start access to SD card as SPI\n");
-
-        } else if(strcmp(gMonitorCommandBuffer, "go") == 0) {
-
-            gOutputDevices |= OUTPUT_TO_VIDEO;
-            scanOnlyFirstField = 0;
-
-        } else if(strcmp(gMonitorCommandBuffer, "rowcycles") == 0) {
-
-            for(int i = 0; i < 262; i++) {
-                printf("row %3d: %8lu cycles, %lu microseconds", i, rowCyclesSpent[i],
-                    rowCyclesSpent[i] / (SystemCoreClock / 1000000));
-                if(rowCyclesSpent[i] > 10677) {
-                    printf(", overrun by %lu%%\n", rowCyclesSpent[i] * 100 / 10677 - 100);
-                } else { 
-                    printf(", %lu%% remained\n", (10677 - rowCyclesSpent[i]) * 100 / 10677);
-                }
-            }
-
-        } else if(strcmp(gMonitorCommandBuffer, "sdspeed") == 0) {
-
-            const int megabytes = 2;
-            printf("will read %d megabyte of SD\n", megabytes);
-
-            SERIAL_flush();
-
-            int then = HAL_GetTick();
-            for(int i = 0; i < megabytes * 1024 * 1024 / SD_BLOCK_SIZE; i++)
-                SDCARD_readblock(i, sd_buffer);
-            int now = HAL_GetTick();
-
-            int kilobytes = megabytes * 1024;
-            int millis = now - then;
-            int kb_per_second = kilobytes * 1000 / millis;
-
-            printf("done, %d KB per second\n", kb_per_second);
-
-        } else if(strcmp(gMonitorCommandBuffer, "dumpkbd") == 0) {
-
-            gDumpKeyboardData = !gDumpKeyboardData;
-            if(gDumpKeyboardData)
-                printf("Dumping keyboard data...\n");
-            else
-                printf("Not dumping keyboard data...\n");
-
-        } else if(strcmp(gMonitorCommandBuffer, "flashinfo") == 0) {
-
-            for(int i = 0; i < 8; i++) {
-                LED_set_info(1);
-                delay_ms(125);
-                LED_set_info(0);
-                delay_ms(125);
-            }
-
-        } else if(strcmp(gMonitorCommandBuffer, "panic") == 0) {
-
-            printf("panicking now\n");
-            panic();
-
-        } else if(strcmp(gMonitorCommandBuffer, "version") == 0) {
-
-            printf("%s\n", IOBOARD_FIRMWARE_VERSION_STRING);
-
-        } else if(strncmp(gMonitorCommandBuffer, "debug ", 6) == 0) {
-
-            char *p = gMonitorCommandBuffer + 5;
-            while(*p == ' ')
-                p++;
-            gDebugLevel = strtol(p, NULL, 0);
-            printf("Debug level set to %d\n", gDebugLevel);
-
-        } else if(strncmp(gMonitorCommandBuffer, "read ", 5) == 0) {
-
-            char *p = gMonitorCommandBuffer + 4;
-            while(*p == ' ')
-                p++;
-            int n = strtol(p, NULL, 0);
-            if(SDCARD_readblock(n, sd_buffer)) {
-                dump_buffer_hex(4, sd_buffer, sizeof(sd_buffer));
-            }
-
-        } else {
-
-            printf("Unknown command.\n");
-            usage();
-        }
-
-        printf("* ");
-        gMonitorCommandBufferLength = 0;
-
-    } else {
-
-        if(c == 127 || c == '\b') {
-            if(gMonitorCommandBufferLength > 0) {
-                putchar('\b');
-                putchar(' ');
-                putchar('\b');
-                gMonitorCommandBufferLength--;
-            } else {
-                bell();
-            }
-        } else {
-            if(gMonitorCommandBufferLength < sizeof(gMonitorCommandBuffer) - 1) {
-                putchar(c);
-                gMonitorCommandBuffer[gMonitorCommandBufferLength++] = c;
-            } else {
-                bell();
-            }
-        }
-    // TODO - upload data, write block
-    }
-}
+void fillBlankLineBuffer(unsigned char *rowBuffer);
+unsigned char *rowBlankLineBuffer;
 
 void check_exceptional_conditions()
 {
@@ -425,6 +300,8 @@ void check_exceptional_conditions()
         gKeyboardBATBadParity = 0;
     }
 }
+
+void process_local_key(unsigned char c);
 
 void process_monitor_queue()
 {
@@ -464,9 +341,9 @@ void console_queue_init()
 
 // These are in CCM to reduce contention with SRAM1 during DMA 
 #if 0
-unsigned char rowEQSyncPulseBuffer[910];
-unsigned char rowVSyncBuffer[910];
-unsigned char rowBlankLineBuffer[910];
+unsigned char rowEQSyncPulseBuffer[ROW_SIZE];
+unsigned char rowVSyncBuffer[ROW_SIZE];
+unsigned char rowBlankLineBuffer[ROW_SIZE];
 #else
 unsigned char *rowEQSyncPulseBuffer = (unsigned char *)(0x10010000 - 1024);
 unsigned char *rowVSyncBuffer = (unsigned char *)(0x10010000 - 2048);
@@ -3443,12 +3320,14 @@ unsigned int pie_length = 47336;
 
 // XXX these are in SRAM2 to reduce contention with SRAM1 during DMA
 #if 0
-unsigned char row0[910];
-unsigned char row1[910];
+unsigned char row0[ROW_SIZE];
+unsigned char row1[ROW_SIZE];
 #else
 unsigned char *row0 = (unsigned char *)0x2001C000;
 unsigned char *row1 = (unsigned char *)0x2001D000;
 #endif
+
+#define ROW_SIZE        910     /* number of samples we target, 4x colorburst */
 
 #define NTSC_EQPULSE_LINES	3
 #define NTSC_VSYNC_LINES	3
@@ -3461,19 +3340,19 @@ unsigned char *row1 = (unsigned char *)0x2001D000;
 #define NTSC_FIELDS		60
 #define NTSC_FRONTPORCH		.02
 #define NTSC_BACKPORCH		.075 /* not including COLORBURST */
-#define NTSC_COLORBURST_CYCLES  9
+#define NTSC_COLORBURST_CYCLES  10
 
-const unsigned char syncTipDACValue = 0;
-const unsigned char syncPorchDACValue = 54;
-const unsigned char blackDACValue = 65;
-const unsigned char whiteDACValue = 186;
-const unsigned char maxDACValue = 255;
+unsigned char syncTipDACValue = 0;
+unsigned char syncPorchDACValue = 80;
+unsigned char blackDACValue = 90;
+unsigned char whiteDACValue = 186;
+unsigned char maxDACValue = 255;
 
 unsigned char videoDACValue(unsigned char luminance) { return blackDACValue + luminance * (whiteDACValue - blackDACValue) / 255; }
 
-int rowNumber;
-int fieldNumber;
-int colorBurstPhase;
+int rowNumber = 0;
+int fieldNumber = 0;
+int colorBurstPhase = 2;
 
 int eqPulseTicks;
 int vsyncPulseTicks;
@@ -3485,7 +3364,7 @@ int backPorchTicks;
 
 // XXX later put source buffers in CCM
 
-void fillEQPulseBuffer(size_t rowSize, unsigned char *rowBuffer)
+void fillEQPulseBuffer(unsigned char *rowBuffer)
 {
     for (int col = 0; col < lineTicks; col++) {
         if (col < eqPulseTicks || (col > lineTicks/2 && col < lineTicks/2 + eqPulseTicks)) {
@@ -3496,7 +3375,7 @@ void fillEQPulseBuffer(size_t rowSize, unsigned char *rowBuffer)
     }
 }
 
-void fillVSyncBuffer(size_t rowSize, unsigned char *rowBuffer)
+void fillVSyncBuffer(unsigned char *rowBuffer)
 {
     for (int col = 0; col < lineTicks; col++) {
         // if (col < lineTicks/2-vsyncPulseTicks || (col > lineTicks/2 && col < vsyncPulseTicks)) {
@@ -3508,23 +3387,31 @@ void fillVSyncBuffer(size_t rowSize, unsigned char *rowBuffer)
     }
 }
 
-void addColorBurst(int colorBurstPhase, size_t rowSize, unsigned char *rowBuffer)
+unsigned char burstPhase0;
+unsigned char burstPhase90;
+unsigned char burstPhase180;
+unsigned char burstPhase270;
+
+
+void addColorBurst(int colorBurstPhase, unsigned char *rowBuffer)
 {
+    if(!withColorBurst) {
+        return;
+    }
+
     const int startOfColorBurstTicks = 76; // XXX magic number for current clock
-    const unsigned char burstMin = syncPorchDACValue - .45 * syncPorchDACValue;
-    const unsigned char burstMax = syncPorchDACValue + .45 * syncPorchDACValue;
 
     for(int col = startOfColorBurstTicks; col < startOfColorBurstTicks + NTSC_COLORBURST_CYCLES * 4; col++) {
         switch((col - startOfColorBurstTicks + colorBurstPhase) % 4) {
-            case 0: rowBuffer[col] = burstMax; break;
-            case 1: rowBuffer[col] = burstMax; break;
-            case 2: rowBuffer[col] = burstMin; break;
-            case 3: rowBuffer[col] = burstMin; break;
+            case 0: rowBuffer[col] = burstPhase0; break;
+            case 1: rowBuffer[col] = burstPhase90; break;
+            case 2: rowBuffer[col] = burstPhase180; break;
+            case 3: rowBuffer[col] = burstPhase270; break;
         }
     }
 }
 
-void fillBlankLineBuffer(size_t rowSize, unsigned char *rowBuffer)
+void fillBlankLineBuffer(unsigned char *rowBuffer)
 {
     for (int col = 0; col < lineTicks; col++) {
         if (col < horSyncTicks) {
@@ -3533,28 +3420,38 @@ void fillBlankLineBuffer(size_t rowSize, unsigned char *rowBuffer)
             rowBuffer[col] = syncPorchDACValue;
         }
     }
+    addColorBurst(colorBurstPhase, rowBuffer); // XXX
 }
 
 /* Phase is 0, 1, 2, or 3 since our sample clock is 4X the colorburst frequency */
-void fillRowBuffer(int fieldNumber, int rowNumber, size_t rowSize, int colorBurstPhase, unsigned char *rowBuffer)
+void fillRowBuffer(int fieldNumber, int rowNumber, int colorBurstPhase, unsigned char *rowBuffer)
 {
+    if(videoMode == VIDEO_GPIOC_TEST) {
+        for(int i = 0; i < ROW_SIZE / 2; i++) {
+            rowBuffer[i] = 0xFF;
+        }
+        for(int i = ROW_SIZE / 2; i < ROW_SIZE; i++) {
+            rowBuffer[i] = 0x0;
+        }
+        return;
+    }
     /*
      * Rows 0 through 8 are equalizing pulse, then vsync, then equalizing pulse
      */
     if(rowNumber < NTSC_EQPULSE_LINES) {
 
         // XXX should just change DMA source address but then these need to be in SRAM2
-        memcpy(rowBuffer, rowEQSyncPulseBuffer, rowSize);
+        memcpy(rowBuffer, rowEQSyncPulseBuffer, ROW_SIZE);
 
     } else if(rowNumber - NTSC_EQPULSE_LINES < NTSC_VSYNC_LINES) {
 
         // XXX should just change DMA source address but then these need to be in SRAM2
-        memcpy(rowBuffer, rowVSyncBuffer, rowSize);
+        memcpy(rowBuffer, rowVSyncBuffer, ROW_SIZE);
 
     } else if(rowNumber - (NTSC_EQPULSE_LINES + NTSC_VSYNC_LINES) < NTSC_EQPULSE_LINES) {
 
         // XXX should just change DMA source address but then these need to be in SRAM2
-        memcpy(rowBuffer, rowEQSyncPulseBuffer, rowSize);
+        memcpy(rowBuffer, rowEQSyncPulseBuffer, ROW_SIZE);
 
     } else if(rowNumber - (NTSC_EQPULSE_LINES + NTSC_VSYNC_LINES + NTSC_EQPULSE_LINES) < NTSC_VBLANK_LINES) {
 
@@ -3563,13 +3460,13 @@ void fillRowBuffer(int fieldNumber, int rowNumber, size_t rowSize, int colorBurs
          */
 
         // XXX should just change DMA source address
-        memcpy(rowBuffer, rowBlankLineBuffer, rowSize);
-        addColorBurst(colorBurstPhase, rowSize, rowBuffer);
+        memcpy(rowBuffer, rowBlankLineBuffer, ROW_SIZE);
+        // addColorBurst(colorBurstPhase, rowBuffer);
 
     } else {
 
-        memcpy(rowBuffer, rowBlankLineBuffer, rowSize);
-        addColorBurst(colorBurstPhase, rowSize, rowBuffer);
+        memcpy(rowBuffer, rowBlankLineBuffer, ROW_SIZE);
+        // addColorBurst(colorBurstPhase, rowBuffer);
         // 244 lines
         // 189 columns @ 4 per pixel
         int y = rowNumber - (NTSC_EQPULSE_LINES + NTSC_VSYNC_LINES + NTSC_EQPULSE_LINES + NTSC_VBLANK_LINES);
@@ -3614,14 +3511,42 @@ void fillRowBuffer(int fieldNumber, int rowNumber, size_t rowSize, int colorBurs
                 }
             }
         } else {
-            unsigned char *imgRow = imgBufferRow(y);
-            unsigned char *rowOut = rowBuffer + horSyncTicks + backPorchTicks;
-            for(int col = 0; col < 189; col++) {
-                unsigned char pixel = *imgRow++;
-                *rowOut++ = whiteDACValue + 25; // pixel;
-                *rowOut++ = whiteDACValue + 25; // pixel;
-                *rowOut++ = whiteDACValue - 25; // pixel;
-                *rowOut++ = whiteDACValue - 25; // pixel;
+            switch(videoMode) {
+                case VIDEO_COLOR_TEST: {
+                    if(y > 20 && y < 230) {
+                        unsigned char *rowOut = rowBuffer + horSyncTicks + backPorchTicks + 20 * 4;
+                        unsigned char v = blackDACValue + 60;
+                        unsigned char a = blackDACValue + 120;
+                        unsigned char b = blackDACValue + 120;
+                        unsigned char c = blackDACValue;
+                        unsigned char d = blackDACValue;
+                        for(int col = 20; col < 50; col++) {
+                            *rowOut++ = v;
+                            *rowOut++ = v;
+                            *rowOut++ = v;
+                            *rowOut++ = v;
+                        }
+                        for(int col = 50; col < 169; col++) {
+                            *rowOut++ = a;
+                            *rowOut++ = b;
+                            *rowOut++ = c;
+                            *rowOut++ = d;
+                        }
+                    }
+                    break;
+                }
+                case VIDEO_IMAGE: {
+                    unsigned char *imgRow = imgBufferRow(y);
+                    unsigned char *rowOut = rowBuffer + horSyncTicks + backPorchTicks;
+                    for(int col = 0; col < 189; col++) {
+                        unsigned char pixel = *imgRow++;
+                        *rowOut++ = pixel;
+                        *rowOut++ = pixel + 40;
+                        *rowOut++ = pixel + 40;
+                        *rowOut++ = pixel;
+                    }
+                    break;
+                }
             }
         }
     }
@@ -3798,7 +3723,7 @@ void DMA2_Stream2_IRQHandler(void)
 
     // because our lines have 910 samples at 4x the colorburst
     // clock, and lines are 1/227.5 colorburst frequency
-    colorBurstPhase = (colorBurstPhase + 2) % 4;
+    // colorBurstPhase = (colorBurstPhase + 2) % 4; // Apple //e doesn't do this!
 
     rowNumber = rowNumber + 1;
     // row to calculate
@@ -3812,12 +3737,199 @@ void DMA2_Stream2_IRQHandler(void)
     unsigned char *nextRowBuffer = (whichIsScanning == 1) ? row0 : row1;
 
     if((!scanOnlyFirstField) || (fieldNumber == 0)) { // XXX
-        fillRowBuffer(fieldNumber, rowNumber, 910, colorBurstPhase, nextRowBuffer);
+        fillRowBuffer(fieldNumber, rowNumber, colorBurstPhase, nextRowBuffer);
         rowCyclesSpent[rowNumber] = TIM2->CNT;
     }
 
     TIM2->CR1 = 0;            /* stop the timer */
 }
+
+
+void process_local_key(unsigned char c)
+{
+    // XXX make this table driven, break into lots smaller functions
+    if(c == '\r' || c == '\n') {
+        putchar('\n');
+        gMonitorCommandBuffer[gMonitorCommandBufferLength] = 0;
+
+        if((strcmp(gMonitorCommandBuffer, "help") == 0) ||
+           (strcmp(gMonitorCommandBuffer, "h") == 0) ||
+           (strcmp(gMonitorCommandBuffer, "?") == 0)) {
+
+            usage();
+
+        } else if(strcmp(gMonitorCommandBuffer, "sdreset") == 0) {
+
+            printf("Resetting SD card...\n");
+
+            if(!SDCARD_init())
+                printf("Failed to start access to SD card as SPI\n");
+
+        } else if(strncmp(gMonitorCommandBuffer, "porch ", 6) == 0) {
+
+            char *p = gMonitorCommandBuffer + 5;
+            while(*p == ' ')
+                p++;
+            syncPorchDACValue = strtol(p, NULL, 0);
+            printf("syncPorchDACValue set to %d\n", syncPorchDACValue);
+            fillEQPulseBuffer(rowEQSyncPulseBuffer);
+            fillVSyncBuffer(rowVSyncBuffer);
+            fillBlankLineBuffer(rowBlankLineBuffer); // XXX
+
+        } else if(strncmp(gMonitorCommandBuffer, "burstmin ", 9) == 0) {
+
+            char *p = gMonitorCommandBuffer + 9;
+            while(*p == ' ')
+                p++;
+            int burstMin = strtol(p, NULL, 0);
+            printf("burstMin set to %d\n", burstMin);
+            burstPhase180 = burstMin;
+            burstPhase270 = burstMin;
+            fillBlankLineBuffer(rowBlankLineBuffer);
+
+        } else if(strncmp(gMonitorCommandBuffer, "burstmax ", 9) == 0) {
+
+            char *p = gMonitorCommandBuffer + 9;
+            while(*p == ' ')
+                p++;
+            int burstMax = strtol(p, NULL, 0);
+            printf("burstMax set to %d\n", burstMax);
+            burstPhase0 = burstMax;
+            burstPhase90 = burstMax;
+            fillBlankLineBuffer(rowBlankLineBuffer); // XXX
+
+        } else if(strncmp(gMonitorCommandBuffer, "burst ", 6) == 0) {
+
+            char *p = gMonitorCommandBuffer + 5;
+            while(*p == ' ')
+                p++;
+            withColorBurst = strtol(p, NULL, 0);
+            printf("withColorBurst set to %d\n", withColorBurst);
+            fillBlankLineBuffer(rowBlankLineBuffer); // XXX
+
+        } else if(strcmp(gMonitorCommandBuffer, "gpioctest") == 0) {
+
+            videoMode = VIDEO_GPIOC_TEST;
+
+        } else if(strcmp(gMonitorCommandBuffer, "videotest") == 0) {
+
+            videoMode = VIDEO_COLOR_TEST;
+
+        } else if(strcmp(gMonitorCommandBuffer, "videoimage") == 0) {
+
+            videoMode = VIDEO_IMAGE;
+
+        } else if(strcmp(gMonitorCommandBuffer, "go") == 0) {
+
+            gOutputDevices |= OUTPUT_TO_VIDEO;
+            scanOnlyFirstField = 0;
+
+        } else if(strcmp(gMonitorCommandBuffer, "rowcycles") == 0) {
+
+            for(int i = 0; i < 262; i++) {
+                printf("row %3d: %8lu cycles, %lu microseconds", i, rowCyclesSpent[i],
+                    rowCyclesSpent[i] / (SystemCoreClock / 1000000));
+                if(rowCyclesSpent[i] > 10677) {
+                    printf(", overrun by %lu%%\n", rowCyclesSpent[i] * 100 / 10677 - 100);
+                } else { 
+                    printf(", %lu%% remained\n", (10677 - rowCyclesSpent[i]) * 100 / 10677);
+                }
+            }
+
+        } else if(strcmp(gMonitorCommandBuffer, "sdspeed") == 0) {
+
+            const int megabytes = 2;
+            printf("will read %d megabyte of SD\n", megabytes);
+
+            SERIAL_flush();
+
+            int then = HAL_GetTick();
+            for(int i = 0; i < megabytes * 1024 * 1024 / SD_BLOCK_SIZE; i++)
+                SDCARD_readblock(i, sd_buffer);
+            int now = HAL_GetTick();
+
+            int kilobytes = megabytes * 1024;
+            int millis = now - then;
+            int kb_per_second = kilobytes * 1000 / millis;
+
+            printf("done, %d KB per second\n", kb_per_second);
+
+        } else if(strcmp(gMonitorCommandBuffer, "dumpkbd") == 0) {
+
+            gDumpKeyboardData = !gDumpKeyboardData;
+            if(gDumpKeyboardData)
+                printf("Dumping keyboard data...\n");
+            else
+                printf("Not dumping keyboard data...\n");
+
+        } else if(strcmp(gMonitorCommandBuffer, "flashinfo") == 0) {
+
+            for(int i = 0; i < 8; i++) {
+                LED_set_info(1);
+                delay_ms(125);
+                LED_set_info(0);
+                delay_ms(125);
+            }
+
+        } else if(strcmp(gMonitorCommandBuffer, "panic") == 0) {
+
+            printf("panicking now\n");
+            panic();
+
+        } else if(strcmp(gMonitorCommandBuffer, "version") == 0) {
+
+            printf("%s\n", IOBOARD_FIRMWARE_VERSION_STRING);
+
+        } else if(strncmp(gMonitorCommandBuffer, "debug ", 6) == 0) {
+
+            char *p = gMonitorCommandBuffer + 5;
+            while(*p == ' ')
+                p++;
+            gDebugLevel = strtol(p, NULL, 0);
+            printf("Debug level set to %d\n", gDebugLevel);
+
+        } else if(strncmp(gMonitorCommandBuffer, "read ", 5) == 0) {
+
+            char *p = gMonitorCommandBuffer + 4;
+            while(*p == ' ')
+                p++;
+            int n = strtol(p, NULL, 0);
+            if(SDCARD_readblock(n, sd_buffer)) {
+                dump_buffer_hex(4, sd_buffer, sizeof(sd_buffer));
+            }
+
+        } else {
+
+            printf("Unknown command.\n");
+            usage();
+        }
+
+        printf("* ");
+        gMonitorCommandBufferLength = 0;
+
+    } else {
+
+        if(c == 127 || c == '\b') {
+            if(gMonitorCommandBufferLength > 0) {
+                putchar('\b');
+                putchar(' ');
+                putchar('\b');
+                gMonitorCommandBufferLength--;
+            } else {
+                bell();
+            }
+        } else {
+            if(gMonitorCommandBufferLength < sizeof(gMonitorCommandBuffer) - 1) {
+                putchar(c);
+                gMonitorCommandBuffer[gMonitorCommandBufferLength++] = c;
+            } else {
+                bell();
+            }
+        }
+    // TODO - upload data, write block
+    }
+}
+
 
 int main()
 {
@@ -3842,12 +3954,17 @@ int main()
     fieldTicks = floorf(clock * 1000000.0 / NTSC_FIELDS + 0.5);
     lineTicks = floorf((double)fieldTicks / NTSC_FIELD_LINES + 0.5);
     printf("calculated lineTicks = %d\n", lineTicks);
-    lineTicks = 910; // XXX
+    lineTicks = ROW_SIZE; // XXX
     horSyncTicks = floorf(lineTicks * NTSC_HOR_SYNC_DUR + 0.5);
     frontPorchTicks = lineTicks * NTSC_FRONTPORCH;
     backPorchTicks = lineTicks * NTSC_BACKPORCH;
     eqPulseTicks = lineTicks * NTSC_EQ_PULSE_INTERVAL;
     vsyncPulseTicks = lineTicks * NTSC_VSYNC_BLANK_INTERVAL;
+
+    burstPhase0 = syncPorchDACValue + .45 * syncPorchDACValue;
+    burstPhase90 = syncPorchDACValue + .45 * syncPorchDACValue;
+    burstPhase180 = syncPorchDACValue - .45 * syncPorchDACValue;
+    burstPhase270 = syncPorchDACValue - .45 * syncPorchDACValue;
 
     printf("calculated horSyncTicks = %d\n", horSyncTicks);
     printf("calculated frontPorchTicks = %d\n", frontPorchTicks);
@@ -3919,10 +4036,11 @@ int main()
 
     GPIO_InitTypeDef  GPIO_InitStruct = {0};
     GPIO_InitStruct.Pull = GPIO_NOPULL;
-    GPIO_InitStruct.Pin = 0xFF;
+    GPIO_InitStruct.Pin = 0x1FF;
     GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
     GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_MEDIUM;
     HAL_GPIO_Init(GPIOC, &GPIO_InitStruct); 
+    GPIOC->ODR = GPIOC->ODR & ~0x100;
 
     // one line = (1 / 3579545) * (455/2)
 
@@ -3931,10 +4049,10 @@ int main()
     // pixels is (1 - .165) * (1 / 15734) / (1 / 3579545) = 189.96568418711380557696 cycles (190)
     //     280 cycles at double clock
 
-    fillEQPulseBuffer(sizeof(rowEQSyncPulseBuffer), rowEQSyncPulseBuffer);
-    fillVSyncBuffer(sizeof(rowVSyncBuffer), rowVSyncBuffer);
-    fillBlankLineBuffer(sizeof(rowBlankLineBuffer), rowBlankLineBuffer);
-    fillRowBuffer(0, 0, 910, 0, row0);
+    fillEQPulseBuffer(rowEQSyncPulseBuffer);
+    fillVSyncBuffer(rowVSyncBuffer);
+    fillBlankLineBuffer(rowBlankLineBuffer);
+    fillRowBuffer(0, 0, 0, row0);
 
         // 244 lines
         // 189 columns @ 4 per pixel
@@ -4000,7 +4118,7 @@ FIFO control register DMA_SxFCR
     // TCIE, TCIF
     // must clear flag before re-enabling
 #endif
-    DMA2_Stream2->NDTR = 910;
+    DMA2_Stream2->NDTR = ROW_SIZE;
     DMA2_Stream2->M0AR = (uint32_t)row0;
     DMA2_Stream2->M1AR = (uint32_t)row1;
     DMA2_Stream2->PAR = (uint32_t)&GPIOC->ODR;
@@ -4029,7 +4147,7 @@ FIFO control register DMA_SxFCR
         int key;
 
         SERIAL_try_to_transmit_buffers();
-        LED_beat_heart();
+        // LED_beat_heart();
 
         SERIAL_poll_continue();
 
