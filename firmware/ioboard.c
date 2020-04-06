@@ -79,7 +79,9 @@ static void SystemClock_Config(void)
   RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
   RCC_OscInitStruct.PLL.PLLM = 16; // Divide HSE by this
   // RCC_OscInitStruct.PLL.PLLN = 336; // Then multiply by this
-  RCC_OscInitStruct.PLL.PLLN = 360; // Then multiply by this
+  // RCC_OscInitStruct.PLL.PLLN = 360; // Then multiply by this for 180MHz
+    // need main clock as close as possible to @ 171.816
+  RCC_OscInitStruct.PLL.PLLN = 344; // Then multiply by this for 172MHz
   RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2; // Then divide by this
   RCC_OscInitStruct.PLL.PLLQ = 7; // Divide by this for SD, USB OTG FS, and some other peripherals
   if(HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
@@ -90,8 +92,8 @@ static void SystemClock_Config(void)
   RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_SYSCLK | RCC_CLOCKTYPE_PCLK1 | RCC_CLOCKTYPE_PCLK2;
   RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
   RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
-  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV4; // APB1 will be 45MHz // 42MHz
-  RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV2; // APB2 will be 90MHz // 84MHz
+  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV4; // APB1 will be 43MHz // 45MHz // 42MHz
+  RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV2; // APB2 will be 86MHz // 90MHz // 84MHz
   // grantham - 5 cycles for 168MHz is stated in Table 10 in the STM32F4 reference manual
   if(HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_6) != HAL_OK)
   {
@@ -268,7 +270,7 @@ volatile unsigned char gSerialInputToMonitor = 1;
 unsigned char sd_buffer[SD_BLOCK_SIZE];
 
 uint32_t rowCyclesSpent[262];
-int scanOnlyFirstField = 1;
+int scanOnlyFirstField = 0;
 
 void process_local_key(unsigned char c)
 {
@@ -472,7 +474,7 @@ unsigned char *rowBlankLineBuffer = (unsigned char *)(0x10010000 - 3072);
 unsigned char *imgBuffer = (unsigned char *)(0x10010000 - 3072 - 256 * 200);
 unsigned char *imgBufferRow(int row) { return imgBuffer + row * 200; }
         // 244 lines
-        // 194 columns @ 4 per pixel
+        // 189 columns @ 4 per pixel
 unsigned char *imgBufferPixel(int x, int y) { return imgBufferRow(y) + x; }
 #endif
 
@@ -3458,7 +3460,8 @@ unsigned char *row1 = (unsigned char *)0x2001D000;
 #define NTSC_HOR_SYNC_DUR	.075
 #define NTSC_FIELDS		60
 #define NTSC_FRONTPORCH		.02
-#define NTSC_BACKPORCH		.07 /* not including COLORBURST */
+#define NTSC_BACKPORCH		.075 /* not including COLORBURST */
+#define NTSC_COLORBURST_CYCLES  9
 
 const unsigned char syncTipDACValue = 0;
 const unsigned char syncPorchDACValue = 54;
@@ -3470,6 +3473,7 @@ unsigned char videoDACValue(unsigned char luminance) { return blackDACValue + lu
 
 int rowNumber;
 int fieldNumber;
+int colorBurstPhase;
 
 int eqPulseTicks;
 int vsyncPulseTicks;
@@ -3504,6 +3508,22 @@ void fillVSyncBuffer(size_t rowSize, unsigned char *rowBuffer)
     }
 }
 
+void addColorBurst(int colorBurstPhase, size_t rowSize, unsigned char *rowBuffer)
+{
+    const int startOfColorBurstTicks = 76; // XXX magic number for current clock
+    const unsigned char burstMin = syncPorchDACValue - .45 * syncPorchDACValue;
+    const unsigned char burstMax = syncPorchDACValue + .45 * syncPorchDACValue;
+
+    for(int col = startOfColorBurstTicks; col < startOfColorBurstTicks + NTSC_COLORBURST_CYCLES * 4; col++) {
+        switch((col - startOfColorBurstTicks + colorBurstPhase) % 4) {
+            case 0: rowBuffer[col] = burstMax; break;
+            case 1: rowBuffer[col] = burstMax; break;
+            case 2: rowBuffer[col] = burstMin; break;
+            case 3: rowBuffer[col] = burstMin; break;
+        }
+    }
+}
+
 void fillBlankLineBuffer(size_t rowSize, unsigned char *rowBuffer)
 {
     for (int col = 0; col < lineTicks; col++) {
@@ -3515,7 +3535,8 @@ void fillBlankLineBuffer(size_t rowSize, unsigned char *rowBuffer)
     }
 }
 
-void fillRowBuffer(int fieldNumber, int rowNumber, size_t rowSize, unsigned char *rowBuffer)
+/* Phase is 0, 1, 2, or 3 since our sample clock is 4X the colorburst frequency */
+void fillRowBuffer(int fieldNumber, int rowNumber, size_t rowSize, int colorBurstPhase, unsigned char *rowBuffer)
 {
     /*
      * Rows 0 through 8 are equalizing pulse, then vsync, then equalizing pulse
@@ -3543,12 +3564,14 @@ void fillRowBuffer(int fieldNumber, int rowNumber, size_t rowSize, unsigned char
 
         // XXX should just change DMA source address
         memcpy(rowBuffer, rowBlankLineBuffer, rowSize);
+        addColorBurst(colorBurstPhase, rowSize, rowBuffer);
 
     } else {
 
         memcpy(rowBuffer, rowBlankLineBuffer, rowSize);
+        addColorBurst(colorBurstPhase, rowSize, rowBuffer);
         // 244 lines
-        // 194 columns @ 4 per pixel
+        // 189 columns @ 4 per pixel
         int y = rowNumber - (NTSC_EQPULSE_LINES + NTSC_VSYNC_LINES + NTSC_EQPULSE_LINES + NTSC_VBLANK_LINES);
         int yTile = y >> 4;
 
@@ -3593,12 +3616,12 @@ void fillRowBuffer(int fieldNumber, int rowNumber, size_t rowSize, unsigned char
         } else {
             unsigned char *imgRow = imgBufferRow(y);
             unsigned char *rowOut = rowBuffer + horSyncTicks + backPorchTicks;
-            for(int col = 0; col < 194; col++) {
+            for(int col = 0; col < 189; col++) {
                 unsigned char pixel = *imgRow++;
-                *rowOut++ = pixel;
-                *rowOut++ = pixel;
-                *rowOut++ = pixel;
-                *rowOut++ = pixel;
+                *rowOut++ = whiteDACValue + 25; // pixel;
+                *rowOut++ = whiteDACValue + 25; // pixel;
+                *rowOut++ = whiteDACValue - 25; // pixel;
+                *rowOut++ = whiteDACValue - 25; // pixel;
             }
         }
     }
@@ -3710,6 +3733,7 @@ const int validRight = 15;
 const int validTop = 26;
 const int validWidth = 164;
 const int validHeight = 200;
+
 void VIDEO_putchar(char c)
 {
     int pixelX = validRight + charX * fontWidth;
@@ -3719,6 +3743,10 @@ void VIDEO_putchar(char c)
 
         charX = 0;
         charY++;
+
+    } else if(c == 127 || c == '\b') {
+
+        charX--;
 
     } else {
 
@@ -3746,10 +3774,10 @@ void VIDEO_putchar(char c)
     if(charY >= validHeight / fontHeight) {
         /* scroll */
         for(int y = validTop; y < validTop + validHeight - fontHeight; y++) {
-            memcpy(imgBufferRow(y), imgBufferRow(y + fontHeight), validWidth);
+            memcpy(imgBufferRow(y) + validRight, imgBufferRow(y + fontHeight) + validRight, validWidth);
         }
         for(int y = validTop + validHeight - fontHeight; y < validTop + validHeight; y++) {
-            memset(imgBufferRow(y), blackDACValue, validWidth);
+            memset(imgBufferRow(y) + validRight, blackDACValue, validWidth);
         }
         charY--;
     }
@@ -3768,6 +3796,10 @@ void DMA2_Stream2_IRQHandler(void)
     TIM2->CNT = 0;
     TIM2->CR1 = TIM_CR1_CEN;            /* enable the timer */
 
+    // because our lines have 910 samples at 4x the colorburst
+    // clock, and lines are 1/227.5 colorburst frequency
+    colorBurstPhase = (colorBurstPhase + 2) % 4;
+
     rowNumber = rowNumber + 1;
     // row to calculate
     if(rowNumber == NTSC_FIELD_LINES) {
@@ -3780,7 +3812,7 @@ void DMA2_Stream2_IRQHandler(void)
     unsigned char *nextRowBuffer = (whichIsScanning == 1) ? row0 : row1;
 
     if((!scanOnlyFirstField) || (fieldNumber == 0)) { // XXX
-        fillRowBuffer(fieldNumber, rowNumber, 910, nextRowBuffer);
+        fillRowBuffer(fieldNumber, rowNumber, 910, colorBurstPhase, nextRowBuffer);
         rowCyclesSpent[rowNumber] = TIM2->CNT;
     }
 
@@ -3902,14 +3934,14 @@ int main()
     fillEQPulseBuffer(sizeof(rowEQSyncPulseBuffer), rowEQSyncPulseBuffer);
     fillVSyncBuffer(sizeof(rowVSyncBuffer), rowVSyncBuffer);
     fillBlankLineBuffer(sizeof(rowBlankLineBuffer), rowBlankLineBuffer);
-    fillRowBuffer(0, 0, 910, row0);
+    fillRowBuffer(0, 0, 910, 0, row0);
 
         // 244 lines
-        // 194 columns @ 4 per pixel
+        // 189 columns @ 4 per pixel
     memset(imgBuffer, 0, 256 * 200);
     for(int y = 0; y < 244; y++) {
         unsigned char *imgRow = imgBufferRow(y);
-        for(int x = 0; x < 194; x++) {
+        for(int x = 0; x < 189; x++) {
             unsigned char pixel = pie_bytes[194 * y + x];
             imgRow[x] = videoDACValue(pixel);
         }
@@ -3919,7 +3951,6 @@ int main()
     float colorBurstInCoreClocks = SystemCoreClock / 14318180.0;
     // need main clock as close as possible to @ 171.816
     uint32_t count = (colorBurstInCoreClocks + .5);
-
 
     HAL_NVIC_SetPriority(DMA2_Stream2_IRQn, 1, 1);
     HAL_NVIC_EnableIRQ(DMA2_Stream2_IRQn);
