@@ -1,11 +1,54 @@
+
+PLL_N 408 is 171.789420MHz, .0167% error, pretty close but color drift
+    What if external oscillator is not exactly 16MHz?
+    What if it's just a touch fast?  So that calculated 14.315785 is closer to 14.318180
+    Like it's somewhere around 16002676.76554237158493229676
+
+To Do
+    Clean up breadboard - prevent wires from being yanked 
+        make video connector a little less precarious somehow
+        scope testpoints
+    Read PPMs
+        grayscale at 200x200 by 1 byte
+        grayscale at 400x200 by 1 nybble
+        color PPMs ? 
+        palettized PPMs (how does that work?) at 200x200 by 1 byte,
+            convert RGB palette to lookup table into 32 bit wave value
+    if you can't get color figured out, jump ship
+    audio - 22050?
+        double buffering with realtime mixing?
+        test with YMs
+    Make into wired breadboard
+        want different chip?  SRAM on the side?
+        option to drive NTSC DAC or VGA 
+    Design PCB, send off
+    do a ray-tracing or other demo
+    clean up current CLI - tableize with function and help
+    embed a basic or scripting language
+        read and write files
+        MicroPython?
+    factor out video formats somehow
+        generalized beam-tracing framework
+            per-row functions
+            525 function pointers? (2K)
+            swap DMA buffer pointers for EQ and VSYNC and not just copy stuff around
+                But all functions get a 910-element buffer?
+        give a shot at decompressing JPEG blocks in RT
+        some modes will need to be exclusive because of memory size
+            e.g. 200x200 palettized mode vs 400x400 bitmap mode
+        interlaced mode
+        monochrome 80 character text mode
+        Apple //e video mode per row
+            allow loading 0x2000 blobs
+            HGR, GR? TEXT? 80TEXT? DHGR? DGR?
+        Channel F video mode
+    Apple //e emulation
+    Z80 / CP/M emulation
+    Channel F emulation
+    ColecoVision emulation
+
 So I now remember sort of that the Mikro has its own bootloader (?)
 which can only be used with the Mikro downloader EXE.  Does the
 Mikro not expose BOOT0?  I had made my own board out of an unmodified
 STM32 exposing BOOT0 on the crazy big protoboard.  I can downloading using
 "make burn", which calls dfu-util.
-
-
-
-Use bit-banding where single bit read-modify-write operations are used
-    setting GPIO direction
-    clearing/setting GPIO
