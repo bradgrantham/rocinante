@@ -59,6 +59,59 @@ void panic(void)
 //----------------------------------------------------------------------------
 // System Initialization Goop
 
+// DMA_BEATS should be SystemCoreClock / 14318180.0
+// need main clock as close as possible to @ 171.816 if DMA_BEATS is 12
+
+#if 0
+
+// calculated 229.090909MHz, .0000% error
+unsigned int PLL_M = 11;
+unsigned int PLL_N = 315;
+unsigned int PLL_P = RCC_PLLP_DIV2;
+unsigned int DMA_BEATS = 16;
+
+#elif 0
+
+// calculated 157.5MHz, .0000% error
+unsigned int PLL_M = 16;
+unsigned int PLL_N = 315;
+unsigned int PLL_P = RCC_PLLP_DIV2;
+unsigned int DMA_BEATS = 11;
+
+#elif 0
+
+// calculated 143.2MHz, .0127% error, nope, color and sync wouldn't lock...
+unsigned int PLL_M = 20;
+unsigned int PLL_N = 357;
+unsigned int PLL_P = RCC_PLLP_DIV2;
+unsigned int DMA_BEATS = 10;
+
+#elif 1
+
+// around 171.789474MHz, .0167% error, pretty close but color drift
+unsigned int PLL_M = 19;
+unsigned int PLL_N = 409; // 408;
+unsigned int PLL_P = RCC_PLLP_DIV2;
+unsigned int DMA_BEATS = 12;
+
+#elif 0
+  
+// 168MHz, from Mikro maybe?, color doesn't work, video may not work
+unsigned int PLL_M = 16;
+unsigned int PLL_N = 344;
+unsigned int PLL_P = RCC_PLLP_DIV2;
+unsigned int DMA_BEATS = 12;
+
+#elif 0
+  
+// 180MHz, monochrome works but color does not work
+unsigned int PLL_M = 16;
+unsigned int PLL_N = 360;
+unsigned int PLL_P = RCC_PLLP_DIV2;
+unsigned int DMA_BEATS = 13; // or 12 ; beats is actually like 12.5 :-/
+
+#endif
+
 static void SystemClock_Config(void)
 {
   RCC_ClkInitTypeDef RCC_ClkInitStruct;
@@ -71,19 +124,18 @@ static void SystemClock_Config(void)
      clocked below the maximum system frequency, to update the voltage scaling value 
      regarding system frequency refer to product datasheet.  */
   __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE2);
-  
+
+  unsigned int PLL_Q = (16000000 / PLL_M * PLL_N / 2 / 24 + 999999) / 1000000;
+
   RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_LSI|RCC_OSCILLATORTYPE_HSE;
   RCC_OscInitStruct.HSEState = RCC_HSE_ON;
   RCC_OscInitStruct.LSIState = RCC_LSI_ON;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
   RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
-  RCC_OscInitStruct.PLL.PLLM = 16; // Divide HSE by this
-  // RCC_OscInitStruct.PLL.PLLN = 336; // Then multiply by this
-  // RCC_OscInitStruct.PLL.PLLN = 360; // Then multiply by this for 180MHz
-    // need main clock as close as possible to @ 171.816
-  RCC_OscInitStruct.PLL.PLLN = 344; // Then multiply by this for 172MHz
-  RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2; // Then divide by this
-  RCC_OscInitStruct.PLL.PLLQ = 7; // Divide by this for SD, USB OTG FS, and some other peripherals
+  RCC_OscInitStruct.PLL.PLLM = PLL_M; // Divide HSE by this
+  RCC_OscInitStruct.PLL.PLLN = PLL_N; // Then multiply by this 
+  RCC_OscInitStruct.PLL.PLLP = PLL_P; // Then divide by this
+  RCC_OscInitStruct.PLL.PLLQ = PLL_Q; // Divide by this for SD, USB OTG FS, and some other peripherals
   if(HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
   {
     panic();
@@ -92,10 +144,10 @@ static void SystemClock_Config(void)
   RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_SYSCLK | RCC_CLOCKTYPE_PCLK1 | RCC_CLOCKTYPE_PCLK2;
   RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
   RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
-  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV4; // APB1 will be 43MHz // 45MHz // 42MHz
-  RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV2; // APB2 will be 86MHz // 90MHz // 84MHz
+  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV4; // APB1 clock
+  RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV2; // APB2 clock
   // grantham - 5 cycles for 168MHz is stated in Table 10 in the STM32F4 reference manual
-  if(HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_6) != HAL_OK)
+  if(HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_7) != HAL_OK)
   {
     panic();
   }
@@ -162,18 +214,11 @@ void errorchar_flush()
 }
 
 //----------------------------------------------------------------------------
-// CP/M 8MB Disk definitions
+// File operations
+
+    FATFS gFATVolume;
 
 #if 0
-
-#define SECTORS_PER_BLOCK 4
-#define SECTORS_PER_TRACK 64
-#define TRACKS_PER_DISK 1024
-#define SECTOR_SIZE 128
-/* disk is 8MB, so 16384 512-byte blocks per disk */
-#define BLOCKS_PER_DISK 16384
-
-FATFS gFATVolume;
 
 #define DISK_IMAGE_MAX 8
 char gDiskImageFilenames[DISK_IMAGE_MAX][13];
@@ -3319,13 +3364,8 @@ const unsigned char pie_bytes[] = {
 unsigned int pie_length = 47336;
 
 // XXX these are in SRAM2 to reduce contention with SRAM1 during DMA
-#if 0
-unsigned char row0[ROW_SIZE];
-unsigned char row1[ROW_SIZE];
-#else
 unsigned char *row0 = (unsigned char *)0x2001C000;
 unsigned char *row1 = (unsigned char *)0x2001D000;
-#endif
 
 #define ROW_SIZE        910     /* number of samples we target, 4x colorburst */
 
@@ -3391,6 +3431,8 @@ unsigned char burstPhase0;
 unsigned char burstPhase90;
 unsigned char burstPhase180;
 unsigned char burstPhase270;
+unsigned char testMin = 0;
+unsigned char testMax = 120;
 
 
 void addColorBurst(int colorBurstPhase, unsigned char *rowBuffer)
@@ -3515,11 +3557,11 @@ void fillRowBuffer(int fieldNumber, int rowNumber, int colorBurstPhase, unsigned
                 case VIDEO_COLOR_TEST: {
                     if(y > 20 && y < 230) {
                         unsigned char *rowOut = rowBuffer + horSyncTicks + backPorchTicks + 20 * 4;
-                        unsigned char v = blackDACValue + 60;
-                        unsigned char a = blackDACValue + 120;
-                        unsigned char b = blackDACValue + 120;
-                        unsigned char c = blackDACValue;
-                        unsigned char d = blackDACValue;
+                        unsigned char v = blackDACValue + (testMin + testMax)/2;
+                        unsigned char a = blackDACValue + testMin;
+                        unsigned char b = blackDACValue + testMin;
+                        unsigned char c = blackDACValue + testMax;
+                        unsigned char d = blackDACValue + testMax;
                         for(int col = 20; col < 50; col++) {
                             *rowOut++ = v;
                             *rowOut++ = v;
@@ -3776,6 +3818,22 @@ void process_local_key(unsigned char c)
             fillVSyncBuffer(rowVSyncBuffer);
             fillBlankLineBuffer(rowBlankLineBuffer); // XXX
 
+        } else if(strncmp(gMonitorCommandBuffer, "testmin ", 8) == 0) {
+
+            char *p = gMonitorCommandBuffer + 8;
+            while(*p == ' ')
+                p++;
+            testMin = strtol(p, NULL, 0);
+            printf("testMin set to %d\n", testMin);
+
+        } else if(strncmp(gMonitorCommandBuffer, "testmax ", 8) == 0) {
+
+            char *p = gMonitorCommandBuffer + 8;
+            while(*p == ' ')
+                p++;
+            testMax = strtol(p, NULL, 0);
+            printf("testMax set to %d\n", testMax);
+
         } else if(strncmp(gMonitorCommandBuffer, "burstmin ", 9) == 0) {
 
             char *p = gMonitorCommandBuffer + 9;
@@ -3834,6 +3892,32 @@ void process_local_key(unsigned char c)
                 } else { 
                     printf(", %lu%% remained\n", (10677 - rowCyclesSpent[i]) * 100 / 10677);
                 }
+            }
+
+        } else if(strncmp(gMonitorCommandBuffer, "ls", 2) == 0) {
+
+            FRESULT res;
+            DIR dir;
+            static FILINFO fno;
+
+            res = f_opendir(&dir, "/");                       /* Open the directory */
+            if (res == FR_OK) {
+                for (;;) {
+                    res = f_readdir(&dir, &fno);                   /* Read a directory item */
+                    if(res != FR_OK) {
+                        printf("failed to readdir - %d\n", res);
+                        break;
+                    }
+                    if (fno.fname[0] == 0) break;  /* Break on end of dir */
+                    if (fno.fattrib & AM_DIR) {                    /* It is a directory */
+                        printf("/%s/\n", fno.fname);
+                    } else {                                       /* It is a file. */
+                        printf("/%s\n", fno.fname);
+                    }
+                }
+                f_closedir(&dir);
+            } else {
+                printf("failed to f_opendir - %d\n", res);
             }
 
         } else if(strcmp(gMonitorCommandBuffer, "sdspeed") == 0) {
@@ -3948,7 +4032,7 @@ int main()
     LED_beat_heart();
 
     printf("\n\nAlice 3 I/O firmware, %s\n", IOBOARD_FIRMWARE_VERSION_STRING);
-    printf("System core clock: %lu MHz\n", SystemCoreClock / 1000000);
+    printf("System core clock: %lu Hz, %lu MHz\n", SystemCoreClock, SystemCoreClock / 1000000);
 
     float clock = 14.318180;
     fieldTicks = floorf(clock * 1000000.0 / NTSC_FIELDS + 0.5);
@@ -3976,7 +4060,6 @@ int main()
     LED_beat_heart();
     SERIAL_flush();
 
-#if 0 // configure SD, load FAT32, read files
     SPI_config_for_sd();
     LED_beat_heart();
 
@@ -3997,11 +4080,7 @@ int main()
     }
     SERIAL_flush();
 
-    int success = read_bootrom();
-    if(!success) {
-        panic();
-    }
-    LED_beat_heart();
+#if 0 // configure SD, load FAT32, read files
 
     success = read_disk_image_list();
     if(!success) {
@@ -4069,19 +4148,10 @@ int main()
     float colorBurstInCoreClocks = SystemCoreClock / 14318180.0;
     // need main clock as close as possible to @ 171.816
     uint32_t count = (colorBurstInCoreClocks + .5);
+    printf("colorBurstInCoreClocks = %lu, expected %d\n", count, DMA_BEATS);
 
     HAL_NVIC_SetPriority(DMA2_Stream2_IRQn, 1, 1);
     HAL_NVIC_EnableIRQ(DMA2_Stream2_IRQn);
-
-    // Configure TIM1_CH2 to drive DMA
-    TIM1->CCR2 = count / 2 - 1;         /* 50% duty cycle */ 
-    TIM1->CCER |= TIM_CCER_CC2E;        /* enable capture/compare CH2 */
-    TIM1->DIER |= TIM_DIER_CC2DE;       /* enable capture/compare updates */
-
-    // Configure timer TIM1
-    TIM1->SR = 0;                       /* reset status */
-    TIM1->ARR = count - 1;
-    TIM1->CR1 = TIM_CR1_CEN;            /* enable the timer */
 
     // STEP 2: configure DMA to double buffer write 910 bytes from row0 and then row1 at 14.318180
 #if 0
@@ -4133,7 +4203,18 @@ FIFO control register DMA_SxFCR
         DMA_MEMORY_TO_PERIPH | 
         DMA_IT_TC | 
         0;
+
+    // Configure TIM1_CH2 to drive DMA
+    TIM1->CCR2 = count / 2;         /* 50% duty cycle */ 
+    TIM1->CCER |= TIM_CCER_CC2E;        /* enable capture/compare CH2 */
+    TIM1->DIER |= TIM_DIER_CC2DE;       /* enable capture/compare updates */
+
+    // Configure timer TIM1
+    TIM1->SR = 0;                       /* reset status */
+    TIM1->ARR = count - 1;
+
     DMA2_Stream2->CR |= DMA_SxCR_EN;
+    TIM1->CR1 = TIM_CR1_CEN;            /* enable the timer */
 
     // STEP 4: set row buffers from a monochrome image
 

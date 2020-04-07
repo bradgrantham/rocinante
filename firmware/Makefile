@@ -29,6 +29,7 @@ OBJECTS = \
         STM32Cube4/stm32f4xx_hal.o \
         syscalls.o \
         ff.o \
+        ff_unicode.o \
         diskio.o \
         delay.o \
         leds.o \
@@ -47,12 +48,12 @@ OBJECTS = \
 SOURCES = $(OBJECTS:.o=.c)
 DEPS = $(OBJECTS:.o=.d)
 
-ioboard.hex: ioboard.elf
+main.hex: main.elf
 	$(TOOLROOT)/bin/arm-none-eabi-objcopy -O ihex $< $@
 
 -include $(DEPS)
 
-ioboard.elf:  $(OBJECTS) ioboard.o
+main.elf:  $(OBJECTS) main.o
 	$(TOOLROOT)/bin/arm-none-eabi-gcc $(OPT) $(CORTEX_M4_HWFP_CC_FLAGS) -DSTM32F415xx -L$(CORTEX_M4_HWFP_LIB_PATH) -TSTM32F415RG_FLASH.ld -lm -Wl,--gc-sections $^ -o $@
 
 STM32Cube4/startup_stm32f417xx.o: STM32Cube4/startup_stm32f417xx.s
@@ -71,10 +72,10 @@ bootrom.bin: ../../rom/rom.bin
 	(cd ../../rom ; make rom.bin)
 	dd bs=1024 count=1 if=../../rom/rom.bin of=bootrom.bin
 
-ioboard.dfu: ioboard.hex
-	python dfu-convert -i ioboard.hex ioboard.dfu
+main.dfu: main.hex
+	python dfu-convert -i main.hex main.dfu
 
-burn: ioboard.dfu
-	dfu-util -d 0483:df11 -a 0 -D ioboard.dfu
+burn: main.dfu
+	dfu-util -d 0483:df11 -a 0 -D main.dfu
 
 # DO NOT DELETE
