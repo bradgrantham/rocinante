@@ -78,6 +78,33 @@ void SPI_disable_sd()
     delay_ms(100);
 }
 
+uint32_t SPI_get_prescaling_for_baud(uint32_t baud)
+{
+    uint32_t prescaling = 2;
+    while(prescaling <= 256 && SystemCoreClock / 4 / prescaling > baud) {
+        prescaling *= 2;
+    }
+    if(prescaling > 256) {
+        printf("failed to find prescaler for SPI that worked!\n");
+        panic();
+    }
+    return prescaling;
+}
+
+uint32_t SPI_get_prescaler(uint32_t prescaling)
+{
+    switch(prescaling) {
+        case 128: return SPI_BAUDRATEPRESCALER_128; break;
+        case 64: return SPI_BAUDRATEPRESCALER_64; break;
+        case 32: return SPI_BAUDRATEPRESCALER_32; break;
+        case 16: return SPI_BAUDRATEPRESCALER_16; break;
+        case 8: return SPI_BAUDRATEPRESCALER_8; break;
+        case 4: return SPI_BAUDRATEPRESCALER_4; break;
+        case 2: return SPI_BAUDRATEPRESCALER_2; break;
+    }
+    return SPI_BAUDRATEPRESCALER_256;
+}
+
 // Postcondition: SPI configured for SD, SS high (false)
 void SPI_config_for_sd()
 {
@@ -88,7 +115,14 @@ void SPI_config_for_sd()
     // SPI2 is APB1, which is 1/4 system clock, or at 168MHz, APB1 is
     // 42MHz.  Init should be at  100KHz - 400 KHz, 128 will be 328.124Khz,
     // 256 will be about 164.062KHz
-    gSPIHandle.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_256;
+    uint32_t prescaling = SPI_get_prescaling_for_baud(300000);
+    if(SystemCoreClock / 4 / prescaling < 100000) {
+        printf("Warning, SPI prescaler %lu means SPI init will be at %lu KHz\n", prescaling, SystemCoreClock / 4 / prescaling / 1000);
+    } else {
+        printf("chose SPI prescaler %lu so SPI init will be at %lu KHz\n", prescaling, SystemCoreClock / 4 / prescaling / 1000);
+    }
+
+    gSPIHandle.Init.BaudRatePrescaler = SPI_get_prescaler(prescaling);
     gSPIHandle.Init.Direction         = SPI_DIRECTION_2LINES;
     gSPIHandle.Init.CLKPhase          = SPI_PHASE_2EDGE;
     gSPIHandle.Init.CLKPolarity       = SPI_POLARITY_HIGH;
@@ -280,8 +314,11 @@ int SDCARD_init()
 
     // SPI2 is APB1, which is 1/4 system clock, or at 168MHz, APB1 is
     // 42MHz.  After init, we should be able to set the clock as
-    // high as 25MHz.  Baud scaler at 2 should be 21MHz.
-    SPI2->CR1 = (SPI2->CR1 & ~SPI_CR1_BR) | SPI_BAUDRATEPRESCALER_2;
+    // high as 25MHz.
+    uint32_t prescaling = SPI_get_prescaling_for_baud(25000000);
+    printf("chose SPI prescaler %lu so SPI init will be at %lu KHz\n", prescaling, SystemCoreClock / 4 / prescaling / 1000);
+
+    SPI2->CR1 = (SPI2->CR1 & ~SPI_CR1_BR) | SPI_get_prescaler(prescaling);
 
     return 1;
 }

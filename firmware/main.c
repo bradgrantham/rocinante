@@ -64,7 +64,32 @@ void panic(void)
 
 #if 0
 
-// calculated 229.090909MHz, .0000% error
+// 157.50, 16002676, 19, 374, 2, 11, 3.579546, 0.000000
+unsigned int PLL_M = 19;
+unsigned int PLL_N = 374;
+unsigned int PLL_P = RCC_PLLP_DIV2;
+unsigned int DMA_BEATS = 11;
+
+#elif 0
+
+// 171.79, 16002676, 17, 365, 2, 12, 3.579030, -0.000144, no color lock
+unsigned int PLL_M = 17;
+unsigned int PLL_N = 365;
+unsigned int PLL_P = RCC_PLLP_DIV2;
+unsigned int DMA_BEATS = 12;
+
+#elif 0
+
+// 186.16, 16002676, 15, 349, 2, 13, 3.580086, 0.000151, no color lock
+// calculated 186.16
+unsigned int PLL_M = 15;
+unsigned int PLL_N = 349;
+unsigned int PLL_P = RCC_PLLP_DIV2;
+unsigned int DMA_BEATS = 13;
+
+#elif 0
+
+// calculated 229.090909MHz, .0000% error, but color won't lock.
 unsigned int PLL_M = 11;
 unsigned int PLL_N = 315;
 unsigned int PLL_P = RCC_PLLP_DIV2;
@@ -88,9 +113,11 @@ unsigned int DMA_BEATS = 10;
 
 #elif 1
 
-// around 171.789474MHz, .0167% error, pretty close but color drift
+// PLL_N 408 is 171.789420MHz, .0167% error, pretty close but color drift
+//     12 beats would be 3.578946 MHz, -0.0167 error (touch slow)
+// PLL_N 409 is 172.210472 MHz; 12 beats would be 3.58771816666666666666, +.2284% error fast
 unsigned int PLL_M = 19;
-unsigned int PLL_N = 409; // 408;
+unsigned int PLL_N = 409; // should be 408;
 unsigned int PLL_P = RCC_PLLP_DIV2;
 unsigned int DMA_BEATS = 12;
 
@@ -3392,7 +3419,7 @@ unsigned char videoDACValue(unsigned char luminance) { return blackDACValue + lu
 
 int rowNumber = 0;
 int fieldNumber = 0;
-int colorBurstPhase = 2;
+int colorBurstPhase = 0;
 
 int eqPulseTicks;
 int vsyncPulseTicks;
@@ -3582,9 +3609,9 @@ void fillRowBuffer(int fieldNumber, int rowNumber, int colorBurstPhase, unsigned
                     unsigned char *rowOut = rowBuffer + horSyncTicks + backPorchTicks;
                     for(int col = 0; col < 189; col++) {
                         unsigned char pixel = *imgRow++;
+                        *rowOut++ = pixel + 40;
+                        *rowOut++ = pixel + 40;
                         *rowOut++ = pixel;
-                        *rowOut++ = pixel + 40;
-                        *rowOut++ = pixel + 40;
                         *rowOut++ = pixel;
                     }
                     break;
@@ -3839,10 +3866,10 @@ void process_local_key(unsigned char c)
             char *p = gMonitorCommandBuffer + 9;
             while(*p == ' ')
                 p++;
-            int burstMin = strtol(p, NULL, 0);
-            printf("burstMin set to %d\n", burstMin);
-            burstPhase180 = burstMin;
-            burstPhase270 = burstMin;
+            int burstMax = strtol(p, NULL, 0);
+            printf("burstMax set to %d\n", burstMax);
+            burstPhase180 = burstMax;
+            burstPhase270 = burstMax;
             fillBlankLineBuffer(rowBlankLineBuffer);
 
         } else if(strncmp(gMonitorCommandBuffer, "burstmax ", 9) == 0) {
@@ -3850,10 +3877,10 @@ void process_local_key(unsigned char c)
             char *p = gMonitorCommandBuffer + 9;
             while(*p == ' ')
                 p++;
-            int burstMax = strtol(p, NULL, 0);
-            printf("burstMax set to %d\n", burstMax);
-            burstPhase0 = burstMax;
-            burstPhase90 = burstMax;
+            int burstMin = strtol(p, NULL, 0);
+            printf("burstMin set to %d\n", burstMin);
+            burstPhase0 = burstMin;
+            burstPhase90 = burstMin;
             fillBlankLineBuffer(rowBlankLineBuffer); // XXX
 
         } else if(strncmp(gMonitorCommandBuffer, "burst ", 6) == 0) {
@@ -4045,10 +4072,10 @@ int main()
     eqPulseTicks = lineTicks * NTSC_EQ_PULSE_INTERVAL;
     vsyncPulseTicks = lineTicks * NTSC_VSYNC_BLANK_INTERVAL;
 
-    burstPhase0 = syncPorchDACValue + .45 * syncPorchDACValue;
-    burstPhase90 = syncPorchDACValue + .45 * syncPorchDACValue;
-    burstPhase180 = syncPorchDACValue - .45 * syncPorchDACValue;
-    burstPhase270 = syncPorchDACValue - .45 * syncPorchDACValue;
+    burstPhase0 = syncPorchDACValue - .45 * syncPorchDACValue;
+    burstPhase90 = syncPorchDACValue - .45 * syncPorchDACValue;
+    burstPhase180 = syncPorchDACValue + .45 * syncPorchDACValue;
+    burstPhase270 = syncPorchDACValue + .45 * syncPorchDACValue;
 
     printf("calculated horSyncTicks = %d\n", horSyncTicks);
     printf("calculated frontPorchTicks = %d\n", frontPorchTicks);
