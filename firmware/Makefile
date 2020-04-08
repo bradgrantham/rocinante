@@ -29,7 +29,6 @@ OBJECTS = \
         STM32Cube4/stm32f4xx_hal.o \
         syscalls.o \
         ff.o \
-        ff_unicode.o \
         diskio.o \
         delay.o \
         leds.o \
@@ -44,6 +43,7 @@ OBJECTS = \
         sd_spi.o \
         reset_button.o \
         $(NULL)
+        # ff_unicode.o \ # need for ExFAT and LFN support
 
 SOURCES = $(OBJECTS:.o=.c)
 DEPS = $(OBJECTS:.o=.d)

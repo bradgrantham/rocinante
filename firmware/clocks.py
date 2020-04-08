@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-HSE = 16002676.76554237158493229676 # 16000000
+# HSE = 16002676.76554237158493229676
+HSE = 16000000
+# HSE = 15963353.949525948274897431152
 
 clocksByConfig = []
 
 minAcceptableMHz = 140
-maxAcceptableMHz = 240
+maxAcceptableMHz = 220
 
 for PLLM in range(2, 64):
     # VCO input frequency = PLL input clock frequency / PLLM with 2 <= PLLM <= 63

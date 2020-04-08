@@ -1,8 +1,45 @@
+4/8
+    Clean up row buffer generation
+        row function pointers filled in by mode function?
 
-PLL_N 408 is 171.789420MHz, .0167% error, pretty close but color drift
-    What if external oscillator is not exactly 16MHz?
-    What if it's just a touch fast?  So that calculated 14.315785 is closer to 14.318180
-    Like it's somewhere around 16002676.76554237158493229676
+Make a CB xtal into logic, test freq with scope to calibrate scope
+    Need Schmidt triggers?
+    Plug into GPIO for testing?
+    DMA in, DMA out for colorburst?
+    Just gate for colorburst?
+Order a 14.318180 MHz crystal?  But then what to do about USB?
+Order a range of ceramic caps for filtering?
+
+H is 63555.56us
+Scope only locks to my video at line #5
+
+201.78, 16000000, 9, 227, 2, 14, 3.603175, 0.006601, YES
+    Attempting to match the Apple //e phase:
+    This outlier locked color! But MUCH more phase drift, blue to green over 1/2 line
+    250 phase drift in 1/2 line
+185.78, 16000000, 18, 418, 2, 13, 3.572650, -0.001926, YES
+    This outlier the other direction also locked color! Reverse phase drift? orange to magenta
+    -60 phase drift in 1/2 line
+if 3.603175 is 250 drift and 3.572650 is -60 phase drift, I want 3.572650 + 60 * (3.603175 - 3.572650) / 310, or 3.57855806451612903225
+    maybe line
+
+221 capacitor is 220 pF / .22 nF
+    3x = .66 nF
+332 capacitor is 3300 pF / 3.3 nF
+    So 1 nF or 2 nF might be nice intermediate
+    2x would be 1.5 nF
+
+Need database of video field formats
+    VCR, Apple //e, Video tape, Look at Channel F output from VCR
+    Want %H of each segment and voltage
+        Number of first EQ burst (e.g. 0 or 6)
+        Number of VSYNC bursts a la VCR and NTSC standard (e.g. 0 or 6)
+        Number of VSYNC lines a la Apple //e (e.g. 4 or 0)
+        Whether VSYNC lines have colorburst
+        Number of second EQ burst (e.g. 0 or 6)
+        Regular lines: sync pulse, back porch, location and count of colorbursts, front porch
+        number of blank lines before, number of blank lines after
+    "video {fcc1953, vcr, apple2e, tape, channelf}"
 
 To Do
     Clean up breadboard - prevent wires from being yanked 

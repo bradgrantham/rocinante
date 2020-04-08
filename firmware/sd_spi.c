@@ -81,7 +81,7 @@ void SPI_disable_sd()
 uint32_t SPI_get_prescaling_for_baud(uint32_t baud)
 {
     uint32_t prescaling = 2;
-    while(prescaling <= 256 && SystemCoreClock / 4 / prescaling > baud) {
+    while((prescaling <= 256) && (SystemCoreClock / 4 / prescaling > baud)) {
         prescaling *= 2;
     }
     if(prescaling > 256) {
@@ -115,7 +115,7 @@ void SPI_config_for_sd()
     // SPI2 is APB1, which is 1/4 system clock, or at 168MHz, APB1 is
     // 42MHz.  Init should be at  100KHz - 400 KHz, 128 will be 328.124Khz,
     // 256 will be about 164.062KHz
-    uint32_t prescaling = SPI_get_prescaling_for_baud(300000);
+    uint32_t prescaling = SPI_get_prescaling_for_baud(220000);
     if(SystemCoreClock / 4 / prescaling < 100000) {
         printf("Warning, SPI prescaler %lu means SPI init will be at %lu KHz\n", prescaling, SystemCoreClock / 4 / prescaling / 1000);
     } else {

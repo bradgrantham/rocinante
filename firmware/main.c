@@ -62,9 +62,296 @@ void panic(void)
 // DMA_BEATS should be SystemCoreClock / 14318180.0
 // need main clock as close as possible to @ 171.816 if DMA_BEATS is 12
 
+typedef struct {
+    float CPUFreq;      // not used; computed
+    uint32_t HSE;       // not used; fixed
+    uint32_t PLL_M;
+    uint32_t PLL_N;
+    uint32_t PLL_P;
+    uint32_t DMA_BEATS;
+    float colorburstClock;      // not used; computed
+    float error;      // not used; computed
+} ClockConfiguration;
+
+unsigned int whichConfig = 0;
+ClockConfiguration clockConfigs[] =
+{
+    { 157.18, 16000000, 17, 334, 2, 11, 3.572193, -0.002054, }, 
+    { 185.78, 16000000, 18, 418, 2, 13, 3.572650, -0.001926, },
+    { 200.89, 16000000, 9, 226, 2, 14, 3.587302, 0.002167, },
+    { 143.50, 16000000, 16, 287, 2, 10, 3.587500, 0.002222, },
+    { 172.21, 16000000, 19, 409, 2, 12, 3.587719, 0.002284, },
+    { 215.27, 16000000, 11, 296, 2, 15, 3.587879, 0.002328, },
+    { 172.24, 16000000, 17, 366, 2, 12, 3.588235, 0.002428, },
+    { 200.94, 16000000, 17, 427, 2, 14, 3.588235, 0.002428, },
+    { 201.78, 16000000, 9, 227, 2, 14, 3.603175, 0.006601, },
+};
+
 #if 0
 
-// 157.50, 16002676, 19, 374, 2, 11, 3.579546, 0.000000
+// stabbing in dark
+// 200.47, 16000000, 17, 426, 2, 14, 3.579832, 0.000080, NO
+unsigned int PLL_M = 17;
+unsigned int PLL_N = 426;
+unsigned int PLL_P = RCC_PLLP_DIV2;
+unsigned int DMA_BEATS = 14;
+
+#elif 0
+
+// stabbing in dark
+// 143.06, 16000000, 17, 304, 2, 10, 3.576471, -0.000859
+unsigned int PLL_M = 17;
+unsigned int PLL_N = 304;
+unsigned int PLL_P = RCC_PLLP_DIV2;
+unsigned int DMA_BEATS = 10;
+
+#elif 0
+
+// stabbing in dark
+// 214.55, 16000000, 11, 295, 2, 15, 3.575758, -0.001058
+unsigned int PLL_M = 11;
+unsigned int PLL_N = 295;
+unsigned int PLL_P = RCC_PLLP_DIV2;
+unsigned int DMA_BEATS = 15;
+
+#elif 0
+
+// stabbing in dark
+// 200.57, 16000000, 14, 351, 2, 14, 3.581633, 0.000583
+unsigned int PLL_M = 14;
+unsigned int PLL_N = 351;
+unsigned int PLL_P = RCC_PLLP_DIV2;
+unsigned int DMA_BEATS = 14;
+
+#elif 0
+
+// stabbing in dark
+// 200.50, 16000000, 16, 401, 2, 14, 3.580357, 0.000227
+unsigned int PLL_M = 16;
+unsigned int PLL_N = 401;
+unsigned int PLL_P = RCC_PLLP_DIV2;
+unsigned int DMA_BEATS = 14;
+
+#elif 0
+
+// stabbing in dark
+// 186.00, 16000000, 12, 279, 2, 13, 3.576923, -0.000732, NO
+unsigned int PLL_M = 12;
+unsigned int PLL_N = 279;
+unsigned int PLL_P = RCC_PLLP_DIV2;
+unsigned int DMA_BEATS = 13;
+
+#elif 0
+
+// stabbing in dark
+// 157.18, 16000000, 17, 334, 2, 11, 3.572193, -0.002054, YES
+unsigned int PLL_M = 17;
+unsigned int PLL_N = 334;
+unsigned int PLL_P = RCC_PLLP_DIV2;
+unsigned int DMA_BEATS = 11;
+
+#elif 0
+
+// stabbing in dark
+// 171.50, 16000000, 16, 343, 2, 12, 3.572917, -0.001852
+unsigned int PLL_M = 16;
+unsigned int PLL_N = 343;
+unsigned int PLL_P = RCC_PLLP_DIV2;
+unsigned int DMA_BEATS = 12;
+
+#elif 0
+
+// stabbing in dark
+// 215.11, 16000000, 9, 242, 2, 15, 3.585185, 0.001576, NO
+unsigned int PLL_M = 9;
+unsigned int PLL_N = 242;
+unsigned int PLL_P = RCC_PLLP_DIV2;
+unsigned int DMA_BEATS = 15;
+
+#elif 0
+
+// stabbing in dark
+// 200.73, 16000000, 11, 276, 2, 14, 3.584416, 0.001361, NO
+unsigned int PLL_M = 11;
+unsigned int PLL_N = 276;
+unsigned int PLL_P = RCC_PLLP_DIV2;
+unsigned int DMA_BEATS = 14;
+
+#elif 0
+
+
+// stabbing in dark
+// 214.93, 16000000, 15, 403, 2, 15, 3.582222, 0.000748, NO
+unsigned int PLL_M = 15;
+unsigned int PLL_N = 403;
+unsigned int PLL_P = RCC_PLLP_DIV2;
+unsigned int DMA_BEATS = 15;
+
+#elif 0
+
+// stabbing in dark
+// 214.86, 16000000, 14, 376, 2, 15, 3.580952, 0.000393
+unsigned int PLL_M = 14;
+unsigned int PLL_N = 376;
+unsigned int PLL_P = RCC_PLLP_DIV2;
+unsigned int DMA_BEATS = 15;
+
+#elif 0
+
+// stabbing in dark
+// 215.00, 16000000, 8, 215, 2, 15, 3.583333, 0.001058
+unsigned int PLL_M = 8;
+unsigned int PLL_N = 215;
+unsigned int PLL_P = RCC_PLLP_DIV2;
+unsigned int DMA_BEATS = 15;
+
+#elif 0
+
+// stabbing in dark
+// 157.33, 16000000, 21, 413, 2, 11, 3.575758, -0.001058
+unsigned int PLL_M = 21;
+unsigned int PLL_N = 413;
+unsigned int PLL_P = RCC_PLLP_DIV2;
+unsigned int DMA_BEATS = 11;
+
+#elif 0
+
+// stabbing in dark
+// 185.85, 16000000, 13, 302, 2, 13, 3.573964, -0.001559
+unsigned int PLL_M = 13;
+unsigned int PLL_N = 302;
+unsigned int PLL_P = RCC_PLLP_DIV2;
+unsigned int DMA_BEATS = 13;
+
+#elif 0
+
+// stabbing in dark
+// 214.50, 16000000, 16, 429, 2, 15, 3.575000, -0.001270
+unsigned int PLL_M = 16;
+unsigned int PLL_N = 429;
+unsigned int PLL_P = RCC_PLLP_DIV2;
+unsigned int DMA_BEATS = 15;
+
+#elif 0
+
+// 214.67, 16000000, 12, 322, 2, 15, 3.577778, -0.000494
+// Chosen by math about where 0 phase drift should occur
+unsigned int PLL_M = 12;
+unsigned int PLL_N = 322;
+unsigned int PLL_P = RCC_PLLP_DIV2;
+unsigned int DMA_BEATS = 15;
+
+#elif 1
+
+// Chosen to go further than Apple //e's colorburst clock from reference clock
+// 185.78, 16000000, 18, 418, 2, 13, 3.572650, -0.001926, YES, better lock
+unsigned int PLL_M = 18;
+unsigned int PLL_N = 418;
+unsigned int PLL_P = RCC_PLLP_DIV2;
+unsigned int DMA_BEATS = 13;
+
+#elif 0
+
+// Chosen to go further than Apple //e's colorburst clock from reference clock
+// 201.78, 16000000, 9, 227, 2, 14, 3.603175, 0.006601, color LOCKS!!! WTF?
+unsigned int PLL_M = 9;
+unsigned int PLL_N = 227;
+unsigned int PLL_P = RCC_PLLP_DIV2;
+unsigned int DMA_BEATS = 14;
+
+#elif 0
+
+// Chosen to match Apple //e's colorburst clock
+// 215.47, 16000000, 15, 404, 2, 15, 3.591111, 0.003231, no color lock
+unsigned int PLL_M = 15;
+unsigned int PLL_N = 404;
+unsigned int PLL_P = RCC_PLLP_DIV2;
+unsigned int DMA_BEATS = 15;
+
+#elif 0
+
+// 214.77, 16000000, 13, 349, 2, 15, 3.579487, -0.000016
+unsigned int PLL_M = 13;
+unsigned int PLL_N = 349;
+unsigned int PLL_P = RCC_PLLP_DIV2;
+unsigned int DMA_BEATS = 15;
+
+#elif 0
+
+// 157.89, 16000000, 19, 375, 2, 11, 3.588517, 0.002506, no color lock
+unsigned int PLL_M = 19;
+unsigned int PLL_N = 375;
+unsigned int PLL_P = RCC_PLLP_DIV2;
+unsigned int DMA_BEATS = 11;
+
+#elif 0
+
+// 171.87, 15963353, 15, 323, 2, 12, 3.580669, 0.000314, no color lock
+unsigned int PLL_M = 15;
+unsigned int PLL_N = 323;
+unsigned int PLL_P = RCC_PLLP_DIV2;
+unsigned int DMA_BEATS = 12;
+
+#elif 0
+
+// 171.84, 15963353, 17, 366, 2, 12, 3.580017, 0.000132, color locks but phase drift
+unsigned int PLL_M = 17;
+unsigned int PLL_N = 366;
+unsigned int PLL_P = RCC_PLLP_DIV2;
+unsigned int DMA_BEATS = 12;
+
+#elif 0
+
+// 157.46, 15963353, 11, 217, 2, 11, 3.578562, -0.000275, no color lock
+unsigned int PLL_M = 10;
+unsigned int PLL_N = 269;
+unsigned int PLL_P = RCC_PLLP_DIV2;
+unsigned int DMA_BEATS = 15;
+
+#elif 0
+
+// 214.71, 15963353, 10, 269, 2, 15, 3.578452, -0.000305, no color lock
+unsigned int PLL_M = 10;
+unsigned int PLL_N = 269;
+unsigned int PLL_P = RCC_PLLP_DIV2;
+unsigned int DMA_BEATS = 15;
+
+#elif 0
+
+// 200.89, 15963353, 9, 226, 2, 14, 3.579085, -0.000128, color locks
+unsigned int PLL_M = 9;
+unsigned int PLL_N = 226;
+unsigned int PLL_P = RCC_PLLP_DIV2;
+unsigned int DMA_BEATS = 14;
+
+#elif 0
+
+// 143.17, 15963353, 16, 287, 2, 10, 3.579283, -0.000073, color lock, just a touch of glitching
+unsigned int PLL_M = 16;
+unsigned int PLL_N = 287;
+unsigned int PLL_P = RCC_PLLP_DIV2;
+unsigned int DMA_BEATS = 10;
+
+#elif 0
+
+// 229.07, 15963353, 10, 287, 2, 16, 3.579283, -0.000073
+// SD startup hangs, need to make APB1 half speed again
+unsigned int PLL_M = 10;
+unsigned int PLL_N = 287;
+unsigned int PLL_P = RCC_PLLP_DIV2;
+unsigned int DMA_BEATS = 16;
+
+#elif 0
+
+// 214.78, 15963353, 11, 296, 2, 15, 3.579661, 0.000032, color lock but drift
+unsigned int PLL_M = 11;
+unsigned int PLL_N = 296;
+unsigned int PLL_P = RCC_PLLP_DIV2;
+unsigned int DMA_BEATS = 15;
+
+#elif 0
+
+// 157.50, 16002676, 19, 374, 2, 11, 3.579546, 0.000000, no color lock...
 unsigned int PLL_M = 19;
 unsigned int PLL_N = 374;
 unsigned int PLL_P = RCC_PLLP_DIV2;
@@ -111,7 +398,7 @@ unsigned int PLL_N = 357;
 unsigned int PLL_P = RCC_PLLP_DIV2;
 unsigned int DMA_BEATS = 10;
 
-#elif 1
+#elif 0
 
 // PLL_N 408 is 171.789420MHz, .0167% error, pretty close but color drift
 //     12 beats would be 3.578946 MHz, -0.0167 error (touch slow)
@@ -152,6 +439,10 @@ static void SystemClock_Config(void)
      regarding system frequency refer to product datasheet.  */
   __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE2);
 
+  int PLL_M = clockConfigs[whichConfig].PLL_M;
+  int PLL_N = clockConfigs[whichConfig].PLL_N;
+  int PLL_P = clockConfigs[whichConfig].PLL_P;
+
   unsigned int PLL_Q = (16000000 / PLL_M * PLL_N / 2 / 24 + 999999) / 1000000;
 
   RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_LSI|RCC_OSCILLATORTYPE_HSE;
@@ -181,6 +472,7 @@ static void SystemClock_Config(void)
 
   // 415 comes up by default with D$ and I$ enabled and prefetch enabled
   // FLASH->ACR |= FLASH_ACR_PRFTEN
+  // FLASH->ACR &= ~FLASH_ACR_PRFTEN;
 
   /* Enable other CLKs */
   __HAL_RCC_TIM1_CLK_ENABLE();
@@ -427,6 +719,7 @@ unsigned char *imgBufferRow(int row) { return imgBuffer + row * 200; }
 unsigned char *imgBufferPixel(int x, int y) { return imgBufferRow(y) + x; }
 #endif
 
+#if 0
 const unsigned char pie_bytes[] = {
     0x65, 0x58, 0x51, 0x64, 0x76, 0x5c, 0x4f, 0x4f, 0x56, 0x53, 0x52, 0x61, 0x54, 0x4e, 0x5c, 0x64, 
     0x64, 0x63, 0x62, 0x63, 0x5d, 0x57, 0x64, 0x6a, 0x67, 0x65, 0x6a, 0x6d, 0x6d, 0x6f, 0x6a, 0x6c, 
@@ -3389,12 +3682,13 @@ const unsigned char pie_bytes[] = {
     0x48, 0x4c, 0x44, 0xa5, 0xb0, 0xae, 0xa9, 0xa2, 
 };
 unsigned int pie_length = 47336;
+#endif
 
 // XXX these are in SRAM2 to reduce contention with SRAM1 during DMA
 unsigned char *row0 = (unsigned char *)0x2001C000;
 unsigned char *row1 = (unsigned char *)0x2001D000;
 
-#define ROW_SIZE        910     /* number of samples we target, 4x colorburst */
+#define ROW_SIZE        910     /* number of samples we target, 4x colorburst yields 227.5 cycles */
 
 #define NTSC_EQPULSE_LINES	3
 #define NTSC_VSYNC_LINES	3
@@ -3404,7 +3698,7 @@ unsigned char *row1 = (unsigned char *)0x2001D000;
 #define NTSC_EQ_PULSE_INTERVAL	.04
 #define NTSC_VSYNC_BLANK_INTERVAL	.43
 #define NTSC_HOR_SYNC_DUR	.075
-#define NTSC_FIELDS		60
+#define NTSC_FIELDS		59.94
 #define NTSC_FRONTPORCH		.02
 #define NTSC_BACKPORCH		.075 /* not including COLORBURST */
 #define NTSC_COLORBURST_CYCLES  10
@@ -3468,7 +3762,7 @@ void addColorBurst(int colorBurstPhase, unsigned char *rowBuffer)
         return;
     }
 
-    const int startOfColorBurstTicks = 76; // XXX magic number for current clock
+    const int startOfColorBurstTicks = 80; // XXX magic number for current clock
 
     for(int col = startOfColorBurstTicks; col < startOfColorBurstTicks + NTSC_COLORBURST_CYCLES * 4; col++) {
         switch((col - startOfColorBurstTicks + colorBurstPhase) % 4) {
@@ -3530,12 +3824,10 @@ void fillRowBuffer(int fieldNumber, int rowNumber, int colorBurstPhase, unsigned
 
         // XXX should just change DMA source address
         memcpy(rowBuffer, rowBlankLineBuffer, ROW_SIZE);
-        // addColorBurst(colorBurstPhase, rowBuffer);
 
     } else {
 
         memcpy(rowBuffer, rowBlankLineBuffer, ROW_SIZE);
-        // addColorBurst(colorBurstPhase, rowBuffer);
         // 244 lines
         // 189 columns @ 4 per pixel
         int y = rowNumber - (NTSC_EQPULSE_LINES + NTSC_VSYNC_LINES + NTSC_EQPULSE_LINES + NTSC_VBLANK_LINES);
@@ -3616,9 +3908,12 @@ void fillRowBuffer(int fieldNumber, int rowNumber, int colorBurstPhase, unsigned
                     }
                     break;
                 }
+                case VIDEO_GPIOC_TEST: /* notreached */
+                    break;
             }
         }
     }
+    // if(rowNumber == 0) { rowBuffer[0] = 255;}
 }
 
 int fontWidth = 5, fontHeight = 7;
@@ -3777,6 +4072,68 @@ void VIDEO_putchar(char c)
     }
 }
 
+int debugOverlayEnabled = 0;
+#define debugCharsWidth 40
+#define debugCharsHeight 13
+#define debugCharsRightTick (80 + horSyncTicks + backPorchTicks)
+#define debugCharsTopTick (NTSC_EQPULSE_LINES + NTSC_VSYNC_LINES + NTSC_EQPULSE_LINES + NTSC_VBLANK_LINES + 20)
+#define debugFontWidthScale 4
+#define debugFontHeightScale 1
+unsigned char debugChars[debugCharsHeight][debugCharsWidth];
+
+#include "8x16.h"
+// static int font8x16Width = 8, font8x16Height = 16;
+// static unsigned char font8x16Bits[] = {
+
+/* 8x16 font, 4x width, doubled height */
+
+void fillRowDebugOverlay(int fieldNumber, int rowNumber, unsigned char* nextRowBuffer)
+{
+    uint32_t whiteDACValueLong =
+        (whiteDACValue << 24) |
+        (whiteDACValue << 16) |
+        (whiteDACValue <<  8) |
+        (whiteDACValue <<  0);
+    int debugFontScanlineHeight = font8x16Height * debugFontHeightScale;
+
+    int rowWithinDebugArea = rowNumber - debugCharsTopTick;
+    int charRow = rowWithinDebugArea / debugFontScanlineHeight;
+    int charPixelY = (rowWithinDebugArea % debugFontScanlineHeight) / debugFontHeightScale;
+
+// XXX this code assumes font width <= 8 and each row padded out to a byte
+    if((rowWithinDebugArea >= 0) && (charRow < debugCharsHeight)) {
+        for(int charCol = 0; charCol < debugCharsWidth; charCol++) {
+            unsigned char debugChar = debugChars[charRow][charCol];
+            if(debugChar != 0) {
+                unsigned char charRowBits = font8x16Bits[debugChar * font8x16Height + charPixelY];
+#if debugFontWidthScale == 4 && font8x16Height == 8
+                if(charRowBits & 0x01) { *(uint32_t*)charPixels[0] = whiteDACValueLong; }
+                if(charRowBits & 0x02) { *(uint32_t*)charPixels[1] = whiteDACValueLong; }
+                if(charRowBits & 0x04) { *(uint32_t*)charPixels[2] = whiteDACValueLong; }
+                if(charRowBits & 0x08) { *(uint32_t*)charPixels[3] = whiteDACValueLong; }
+                if(charRowBits & 0x10) { *(uint32_t*)charPixels[4] = whiteDACValueLong; }
+                if(charRowBits & 0x20) { *(uint32_t*)charPixels[5] = whiteDACValueLong; }
+                if(charRowBits & 0x40) { *(uint32_t*)charPixels[6] = whiteDACValueLong; }
+                if(charRowBits & 0x80) { *(uint32_t*)charPixels[7] = whiteDACValueLong; }
+#else
+                for(int charPixelX = 0; charPixelX < font8x16Width; charPixelX++) {
+                    int pixel = charRowBits & (0x80 >> charPixelX);
+                    if(pixel) {
+                        unsigned char *charPixels = nextRowBuffer + debugCharsRightTick + (charCol * font8x16Width + charPixelX) * debugFontWidthScale;
+#if debugFontWidthScale == 4
+                        *(uint32_t *)charPixels = whiteDACValueLong; 
+#else
+                        for(int col = 0; col < debugFontWidthScale; col++) {
+                            charPixels[col] = whiteDACValue;
+                        }
+#endif
+                    }
+                }
+#endif
+            }
+        }
+    }
+}
 
 void DMA2_Stream2_IRQHandler(void)
 {
@@ -3792,22 +4149,24 @@ void DMA2_Stream2_IRQHandler(void)
 
     // because our lines have 910 samples at 4x the colorburst
     // clock, and lines are 1/227.5 colorburst frequency
-    // colorBurstPhase = (colorBurstPhase + 2) % 4; // Apple //e doesn't do this!
+    // colorBurstPhase = (colorBurstPhase + 2) % 4; // Apple //e doesn't do this
+
+    int whichIsScanning = (DMA2_Stream2->CR & DMA_SxCR_CT) ? 1 : 0;
+
+    unsigned char *nextRowBuffer = (whichIsScanning == 1) ? row0 : row1;
+    if((!scanOnlyFirstField) || (fieldNumber == 0)) { // XXX
+        fillRowBuffer(fieldNumber, rowNumber, colorBurstPhase, nextRowBuffer);
+        if(debugOverlayEnabled) {
+            fillRowDebugOverlay(fieldNumber, rowNumber, nextRowBuffer);
+        }
+        rowCyclesSpent[rowNumber] = TIM2->CNT;
+    }
 
     rowNumber = rowNumber + 1;
     // row to calculate
     if(rowNumber == NTSC_FIELD_LINES) {
         rowNumber = 0;
         fieldNumber++;
-    }
-
-    int whichIsScanning = (DMA2_Stream2->CR & DMA_SxCR_CT) ? 1 : 0;
-
-    unsigned char *nextRowBuffer = (whichIsScanning == 1) ? row0 : row1;
-
-    if((!scanOnlyFirstField) || (fieldNumber == 0)) { // XXX
-        fillRowBuffer(fieldNumber, rowNumber, colorBurstPhase, nextRowBuffer);
-        rowCyclesSpent[rowNumber] = TIM2->CNT;
     }
 
     TIM2->CR1 = 0;            /* stop the timer */
@@ -3861,7 +4220,7 @@ void process_local_key(unsigned char c)
             testMax = strtol(p, NULL, 0);
             printf("testMax set to %d\n", testMax);
 
-        } else if(strncmp(gMonitorCommandBuffer, "burstmin ", 9) == 0) {
+        } else if(strncmp(gMonitorCommandBuffer, "burstmax ", 9) == 0) {
 
             char *p = gMonitorCommandBuffer + 9;
             while(*p == ' ')
@@ -3872,7 +4231,7 @@ void process_local_key(unsigned char c)
             burstPhase270 = burstMax;
             fillBlankLineBuffer(rowBlankLineBuffer);
 
-        } else if(strncmp(gMonitorCommandBuffer, "burstmax ", 9) == 0) {
+        } else if(strncmp(gMonitorCommandBuffer, "burstmin ", 9) == 0) {
 
             char *p = gMonitorCommandBuffer + 9;
             while(*p == ' ')
@@ -4071,7 +4430,6 @@ int main()
     backPorchTicks = lineTicks * NTSC_BACKPORCH;
     eqPulseTicks = lineTicks * NTSC_EQ_PULSE_INTERVAL;
     vsyncPulseTicks = lineTicks * NTSC_VSYNC_BLANK_INTERVAL;
-
     burstPhase0 = syncPorchDACValue - .45 * syncPorchDACValue;
     burstPhase90 = syncPorchDACValue - .45 * syncPorchDACValue;
     burstPhase180 = syncPorchDACValue + .45 * syncPorchDACValue;
@@ -4083,15 +4441,15 @@ int main()
     printf("calculated eqPulseTicks = %d\n", eqPulseTicks);
     printf("calculated vsyncPulseTicks = %d\n", vsyncPulseTicks);
 
-
     LED_beat_heart();
     SERIAL_flush();
 
+#if 0
     SPI_config_for_sd();
     LED_beat_heart();
 
     if(!SDCARD_init())
-        printf("Failed to start access to SD cardSPI!!\n");
+        printf("Failed to start access to SD card SPI!!\n");
     else 
         printf("Opened SD Card\n");
     LED_beat_heart();
@@ -4106,6 +4464,7 @@ int main()
         printf("Mounted FATFS from SD card successfully.\n");
     }
     SERIAL_flush();
+#endif
 
 #if 0 // configure SD, load FAT32, read files
 
@@ -4159,6 +4518,7 @@ int main()
     fillVSyncBuffer(rowVSyncBuffer);
     fillBlankLineBuffer(rowBlankLineBuffer);
     fillRowBuffer(0, 0, 0, row0);
+    rowNumber = 1; // We just filled row0.
 
         // 244 lines
         // 189 columns @ 4 per pixel
@@ -4166,7 +4526,7 @@ int main()
     for(int y = 0; y < 244; y++) {
         unsigned char *imgRow = imgBufferRow(y);
         for(int x = 0; x < 189; x++) {
-            unsigned char pixel = pie_bytes[194 * y + x];
+            unsigned char pixel = 180; // pie_bytes[194 * y + x];
             imgRow[x] = videoDACValue(pixel);
         }
     }
@@ -4174,8 +4534,8 @@ int main()
     // Note that the counter starts counting 1 clock cycle after setting the CEN bit in the TIMx_CR1 register.
     float colorBurstInCoreClocks = SystemCoreClock / 14318180.0;
     // need main clock as close as possible to @ 171.816
-    uint32_t count = (colorBurstInCoreClocks + .5);
-    printf("colorBurstInCoreClocks = %lu, expected %d\n", count, DMA_BEATS);
+    uint32_t DMACountAt14MHz = (colorBurstInCoreClocks + .5);
+    printf("DMACountAt14MHz = %lu, expected %d\n", DMACountAt14MHz, clockConfigs[whichConfig].DMA_BEATS);
 
     HAL_NVIC_SetPriority(DMA2_Stream2_IRQn, 1, 1);
     HAL_NVIC_EnableIRQ(DMA2_Stream2_IRQn);
@@ -4223,7 +4583,7 @@ FIFO control register DMA_SxFCR
     DMA2_Stream2->CR =
         DMA_CHANNEL_6 | 
         DMA_PDATAALIGN_BYTE |
-        DMA_MDATAALIGN_HALFWORD | 
+        DMA_MDATAALIGN_BYTE | // DMA_MDATAALIGN_HALFWORD | 
         DMA_SxCR_DBM |
         DMA_PRIORITY_VERY_HIGH |
         DMA_MINC_ENABLE |
@@ -4232,16 +4592,24 @@ FIFO control register DMA_SxFCR
         0;
 
     // Configure TIM1_CH2 to drive DMA
-    TIM1->CCR2 = count / 2;         /* 50% duty cycle */ 
+    TIM1->CCR2 = DMACountAt14MHz / 2;         /* 50% duty cycle */ 
     TIM1->CCER |= TIM_CCER_CC2E;        /* enable capture/compare CH2 */
     TIM1->DIER |= TIM_DIER_CC2DE;       /* enable capture/compare updates */
 
     // Configure timer TIM1
     TIM1->SR = 0;                       /* reset status */
-    TIM1->ARR = count - 1;
+    TIM1->ARR = DMACountAt14MHz - 1;
 
     DMA2_Stream2->CR |= DMA_SxCR_EN;
     TIM1->CR1 = TIM_CR1_CEN;            /* enable the timer */
+
+    debugOverlayEnabled = 1;
+    memset(debugChars, 0, debugCharsWidth * debugCharsHeight);
+    sprintf(debugChars[0], "PLL_M %lu", clockConfigs[whichConfig].PLL_M);
+    sprintf(debugChars[1], "PLL_N %lu", clockConfigs[whichConfig].PLL_N);
+    sprintf(debugChars[2], "PLL_P %lu", clockConfigs[whichConfig].PLL_P);
+    sprintf(debugChars[3], "DMA_BEATS %lu", clockConfigs[whichConfig].DMA_BEATS);
+    sprintf(debugChars[4], "CB DMA count %lu", DMACountAt14MHz);
 
     // STEP 4: set row buffers from a monochrome image
 

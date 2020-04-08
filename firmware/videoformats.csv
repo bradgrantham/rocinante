@@ -1,0 +1,6 @@
+name, sync settle ns (sync porch 0v to sync tip -.4v), field_ms, line_us, colorburst_ns, comment
+fcc1953, 254.222, 16.68334, 63.5556, 279.365, interleaved fields; field includes half line!; scope solidly locks to "Line Number" 1
+apple2e, ??, 16.69, 63.67, 278.47, field is proportionally shorter missing half line
+vcr, 108, 16.68, 63.59, 280, lines up close to fcc1953 but is it interlaced?
+tape,
+channelf,
