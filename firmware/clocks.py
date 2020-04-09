@@ -5,7 +5,7 @@ HSE = 16000000
 
 clocksByConfig = []
 
-minAcceptableMHz = 140
+minAcceptableMHz = 120
 maxAcceptableMHz = 220
 
 for PLLM in range(2, 64):
@@ -22,7 +22,7 @@ for PLLM in range(2, 64):
                     actual = PLL_OUTPUT / (DMA_BEATS + dbeats) / 4
                     clocksByConfig.append((PLL_OUTPUT, HSE, PLLM, PLLN, PLLP, DMA_BEATS + dbeats, actual, error))
 
-clocksByConfig.sort(key=lambda elem: elem[6])
+clocksByConfig.sort(key=lambda elem: abs(elem[7]))
 
 print("PLL_OUTPUT MHz, HSE, PLLM, PLLN, PLLP, DMA_BEATS, actual color clock MHz, error")
 for (PLL_OUTPUT, HSE, PLLM, PLLN, PLLP, DMA_BEATS, actual, error) in clocksByConfig:
