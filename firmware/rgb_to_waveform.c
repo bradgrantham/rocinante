@@ -32,7 +32,7 @@ void RGBToYIQ(float r, float g, float b, float *y, float *i, float *q)
 /* [0.0, 1.0) */
 float colorBurstPhaseFraction(float phaseFraction)
 {
-    float value = sinf(phaseFraction * M_PI * 2.0f);
+    float value = sinf(phaseFraction * 3.1415926 * 2.0f);
     // fprintf(stderr, "phase %f -> sinf %f\n", phaseFraction, value);
     return value;
 }
