@@ -42,8 +42,10 @@ OBJECTS = \
         logprintf.o \
         sd_spi.o \
         reset_button.o \
+        ff_unicode.o \
         $(NULL)
-        # ff_unicode.o \ # need for ExFAT and LFN support
+
+        # need ff_unicode if ExFAT and LFN support are compiled in
 
 SOURCES = $(OBJECTS:.o=.c)
 DEPS = $(OBJECTS:.o=.d)
