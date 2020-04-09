@@ -129,7 +129,7 @@
   */
   /* This variable is updated in three ways:
       1) by calling CMSIS function SystemCoreClockUpdate()
-      2) by calling HAL API function HAL_RCC_GetHCLKFreq()
+      2) by calling HAL API function HAL_RCC_GetHCLKFreq()  -  Nope, doesn't update anything.
       3) each time HAL_RCC_ClockConfig() is called to configure the system clock frequency 
          Note: If you use this function to configure the system clock; then there
                is no need to call the 2 first functions listed above, since SystemCoreClock

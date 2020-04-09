@@ -80,7 +80,6 @@ static const ClockConfiguration clockConfigs[] =
     {157.18, 16000000, 17, 334, 2, 11, 3.572193, -0.002054}, 
 
 #if 0
-    {157.18, 16000000, 17, 334, 2, 11, 3.572193, -0.002054}, 
     {185.78, 16000000, 18, 418, 2, 13, 3.572650, -0.001926}, 
     {200.89, 16000000, 9, 226, 2, 14, 3.587302, 0.002167}, 
     {143.50, 16000000, 16, 287, 2, 10, 3.587500, 0.002222}, 
@@ -89,7 +88,7 @@ static const ClockConfiguration clockConfigs[] =
     {172.24, 16000000, 17, 366, 2, 12, 3.588235, 0.002428}, 
     {200.94, 16000000, 17, 427, 2, 14, 3.588235, 0.002428}, 
     {201.78, 16000000, 9, 227, 2, 14, 3.603175, 0.006601}, 
-#elif 1
+#elif 0
     {142.61, 16000000, 23, 410, 2, 10, 3.565217, -0.004003},
     {185.41, 16000000, 17, 394, 2, 13, 3.565611, -0.003893},
     {156.89, 16000000, 18, 353, 2, 11, 3.565657, -0.003880},
@@ -558,7 +557,9 @@ static const ClockConfiguration clockConfigs[] =
     {143.47, 16000000, 15, 269, 2, 10, 3.586667, 0.001990},
     {157.82, 16000000, 11, 217, 2, 11, 3.586777, 0.002020},
     {157.18, 16000000, 17, 334, 2, 11, 3.572193, -0.002054},
-    {200.89, 16000000, 9, 226, 2, 14, 3.587302, 0.002167},
+
+    /* 123 */ {200.89, 16000000, 9, 226, 2, 14, 3.587302, 0.002167},
+
     {129.14, 16000000, 21, 339, 2, 9, 3.587302, 0.002167},
     {129.14, 16000000, 7, 113, 2, 9, 3.587302, 0.002167},
     {129.14, 16000000, 14, 226, 2, 9, 3.587302, 0.002167},
@@ -588,10 +589,12 @@ static const ClockConfiguration clockConfigs[] =
     {200.00, 16000000, 15, 375, 2, 14, 3.571429, -0.002267},
     {200.00, 16000000, 16, 400, 2, 14, 3.571429, -0.002267},
     {200.00, 16000000, 17, 425, 2, 14, 3.571429, -0.002267},
-    {172.21, 16000000, 19, 409, 2, 12, 3.587719, 0.002284},
-    {215.27, 16000000, 11, 296, 2, 15, 3.587879, 0.002328},
-    {157.87, 16000000, 15, 296, 2, 11, 3.587879, 0.002328},
-    {172.24, 16000000, 17, 366, 2, 12, 3.588235, 0.002428},
+
+    /* 153 */{172.21, 16000000, 19, 409, 2, 12, 3.587719, 0.002284},
+    /* 154 */{215.27, 16000000, 11, 296, 2, 15, 3.587879, 0.002328},
+    /* 155 */{157.87, 16000000, 15, 296, 2, 11, 3.587879, 0.002328},
+    /* 156 */{172.24, 16000000, 17, 366, 2, 12, 3.588235, 0.002428},
+
     {143.53, 16000000, 17, 305, 2, 10, 3.588235, 0.002428},
     {200.94, 16000000, 17, 427, 2, 14, 3.588235, 0.002428},
     {157.89, 16000000, 19, 375, 2, 11, 3.588517, 0.002506},
@@ -9596,7 +9599,7 @@ unsigned char *row1 = (unsigned char *)0x2001D000;
 #define NTSC_FIELDS		59.94
 #define NTSC_FRONTPORCH		.02
 #define NTSC_BACKPORCH		.075 /* not including COLORBURST */
-#define NTSC_COLORBURST_CYCLES  10
+#define NTSC_COLORBURST_CYCLES  13
 
 unsigned char syncTipDACValue = 0;
 unsigned char syncPorchDACValue = 80;
@@ -10325,10 +10328,11 @@ int main()
     backPorchTicks = lineTicks * NTSC_BACKPORCH;
     eqPulseTicks = lineTicks * NTSC_EQ_PULSE_INTERVAL;
     vsyncPulseTicks = lineTicks * NTSC_VSYNC_BLANK_INTERVAL;
-    burstPhase0 = syncPorchDACValue - .45 * syncPorchDACValue;
-    burstPhase90 = syncPorchDACValue - .45 * syncPorchDACValue;
-    burstPhase180 = syncPorchDACValue + .45 * syncPorchDACValue;
-    burstPhase270 = syncPorchDACValue + .45 * syncPorchDACValue;
+    // I had thought .45?
+    burstPhase0 = syncPorchDACValue - .6 * syncPorchDACValue;
+    burstPhase90 = syncPorchDACValue; //  - .45 * syncPorchDACValue;
+    burstPhase180 = syncPorchDACValue + .6 * syncPorchDACValue;
+    burstPhase270 = syncPorchDACValue; //  + .45 * syncPorchDACValue;
 
     printf("calculated horSyncTicks = %d\n", horSyncTicks);
     printf("calculated frontPorchTicks = %d\n", frontPorchTicks);
@@ -10397,23 +10401,19 @@ int main()
     int counter = 0; 
     for(;;) {
 
-        if(counter % 2 == 0) {
-            whichConfig = 0;
-        } else {
-            whichConfig = counter / 2;
-        }
+        whichConfig = 110;
 
         DMA2_Stream2->CR &= ~DMA_SxCR_EN;       /* disable DMA */
         TIM1->CR1 &= ~TIM_CR1_CEN;            /* disable the timer */
 
         // Unset the RCC and reset it
-        // HAL_RCC_DeInit(); /* EMPTY? WTF???!?!?! */
+        // HAL_RCC_DeInit(); is EMPTY. WTF.
         RCC->CR |= RCC_HSI_ON;
         RCC->CFGR = 0x00000000U;
         uint32_t vl_mask = 0xFFFFFFFFU;
         /* Reset HSEON, PLLSYSON bits */
         CLEAR_BIT(vl_mask, (RCC_CR_HSEON | RCC_CR_HSEBYP | RCC_CR_PLLON | RCC_CR_CSSON));
-        RCC->CR = vl_mask;
+        RCC->CR &= vl_mask;
         RCC->CR = (RCC->CR & ~RCC_CR_HSITRIM_Msk) | (0x10 << RCC_CR_HSITRIM_Pos); /* Set HSITRIM bits to the reset value*/
         RCC->PLLCFGR = RCC_PLLCFGR_RST_VALUE; /* Reset PLLCFGR register */
         RCC->CR &= ~RCC_CR_HSEBYP; /* Reset HSEBYP bit */
@@ -10426,7 +10426,7 @@ int main()
   // *            - All interrupts disabled
 
         SystemClock_Config();
-        SystemCoreClockUpdate();
+        // SystemCoreClockUpdate();
 
         __HAL_RCC_GPIOA_CLK_ENABLE();
         __HAL_RCC_GPIOB_CLK_ENABLE();
@@ -10544,44 +10544,19 @@ int main()
 
         debugOverlayEnabled = 1;
         memset(debugDisplay, 0, debugDisplayWidth * debugDisplayHeight);
-        if(counter % 2 == 0) {
-            int nextConfig = (counter + 1) / 2;
-            if(nextConfig >= clockConfigCount) {
-                sprintf(debugDisplay[0], "END OF CONFIGS");
-                break;
-            }
-            sprintf(debugDisplay[0], "Next Up: %d", nextConfig);
-            sprintf(debugDisplay[1], "CPU clock: %d", (int)(clockConfigs[nextConfig].CPUFreq));
-            sprintf(debugDisplay[2], "%lu, %lu, %lu, %lu",
-                clockConfigs[nextConfig].PLL_M,
-                clockConfigs[nextConfig].PLL_N,
-                clockConfigs[nextConfig].PLL_P,
-                clockConfigs[nextConfig].DMA_BEATS);
-            int clockConfigsWhole = clockConfigs[nextConfig].colorburstClock;
-            sprintf(debugDisplay[3], "color %d.%05d", clockConfigsWhole, (int)((clockConfigs[nextConfig].colorburstClock - clockConfigsWhole) * 100000.0f));
 
-            // for(int i = 0; i < 4; i++) {
-                // debugDisplay[4][i] = '.';
-                // delay_ms(250);
-            // }
-        } else {
-            int debugLine = 0;
-            sprintf(debugDisplay[debugLine++], "PLL_M %lu", clockConfigs[whichConfig].PLL_M);
-            sprintf(debugDisplay[debugLine++], "PLL_N %lu", clockConfigs[whichConfig].PLL_N);
-            sprintf(debugDisplay[debugLine++], "PLL_P %lu", clockConfigs[whichConfig].PLL_P);
-            sprintf(debugDisplay[debugLine++], "(DMA_BEATS %lu)", clockConfigs[whichConfig].DMA_BEATS);
-            uint32_t at14MHz = (colorBurstInCoreClocks + .5);
-            sprintf(debugDisplay[debugLine++], "calcd DMA BEATS %lu", at14MHz);
-            sprintf(debugDisplay[debugLine++], "CPU clock: %d", (int)(clockConfigs[whichConfig].CPUFreq));
-            sprintf(debugDisplay[debugLine++], "SCClock: %lu", SystemCoreClock);
-            int clockConfigsWhole = clockConfigs[whichConfig].colorburstClock;
-            sprintf(debugDisplay[debugLine++], "color %d.%03d", clockConfigsWhole, (int)((clockConfigs[whichConfig].colorburstClock - clockConfigsWhole) * 100000.0f));
-
-            // for(int i = 0; i < 8; i++) {
-                // sprintf(debugDisplay[6], "...%d   ", 4 - i / 2);
-                // delay_ms(250);
-            // }
-        }
+        int debugLine = 0;
+        sprintf(debugDisplay[debugLine++], "Number %d", whichConfig);
+        sprintf(debugDisplay[debugLine++], "PLL_M %lu", clockConfigs[whichConfig].PLL_M);
+        sprintf(debugDisplay[debugLine++], "PLL_N %lu", clockConfigs[whichConfig].PLL_N);
+        sprintf(debugDisplay[debugLine++], "PLL_P %lu", clockConfigs[whichConfig].PLL_P);
+        sprintf(debugDisplay[debugLine++], "(DMA_BEATS %lu)", clockConfigs[whichConfig].DMA_BEATS);
+        uint32_t at14MHz = (colorBurstInCoreClocks + .5);
+        sprintf(debugDisplay[debugLine++], "calcd DMA BEATS %lu", at14MHz);
+        sprintf(debugDisplay[debugLine++], "CPU clock: %d", (int)(clockConfigs[whichConfig].CPUFreq));
+        sprintf(debugDisplay[debugLine++], "SCClock: %lu", SystemCoreClock);
+        int clockConfigsWhole = clockConfigs[whichConfig].colorburstClock;
+        sprintf(debugDisplay[debugLine++], "color %d.%03d", clockConfigsWhole, (int)((clockConfigs[whichConfig].colorburstClock - clockConfigsWhole) * 100000.0f));
 
         { 
             GPIO_InitTypeDef  GPIO_InitStruct;
@@ -10592,15 +10567,19 @@ int main()
             GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
             HAL_GPIO_Init(GPIOC, &GPIO_InitStruct); 
         }
-        while(HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_9)) {
-            delay_ms(50);
-        }
         while(!HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_9)) {
             delay_ms(50);
         }
         delay_ms(250);
 
         counter++;
+        if(counter >= clockConfigCount) {
+            memset(debugDisplay, 0, debugDisplayWidth * debugDisplayHeight);
+            int debugLine = 0;
+            sprintf(debugDisplay[debugLine++], "END OF CONFIGS");
+            sprintf(debugDisplay[debugLine++], "HOORAY!");
+            break;
+        }
     }
     while(1);
 
