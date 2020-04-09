@@ -5,8 +5,8 @@ HSE = 16000000
 
 clocksByConfig = []
 
-minAcceptableMHz = 120
-maxAcceptableMHz = 220
+minAcceptableMHz = 100
+maxAcceptableMHz = 225
 
 for PLLM in range(2, 64):
     # VCO input frequency = PLL input clock frequency / PLLM with 2 <= PLLM <= 63
@@ -20,7 +20,8 @@ for PLLM in range(2, 64):
                 for dbeats in (0, 1):
                     error = (PLL_OUTPUT / (DMA_BEATS + dbeats) - 14318180) / 14318180
                     actual = PLL_OUTPUT / (DMA_BEATS + dbeats) / 4
-                    clocksByConfig.append((PLL_OUTPUT, HSE, PLLM, PLLN, PLLP, DMA_BEATS + dbeats, actual, error))
+                    if actual / 3579545 < 1.05 and 379545 / actual < 1.05:
+                        clocksByConfig.append((PLL_OUTPUT, HSE, PLLM, PLLN, PLLP, DMA_BEATS + dbeats, actual, error))
 
 clocksByConfig.sort(key=lambda elem: abs(elem[7]))
 
