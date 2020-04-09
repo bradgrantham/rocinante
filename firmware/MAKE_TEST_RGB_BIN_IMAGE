@@ -1,0 +1,1 @@
+djpeg ~/Downloads/Calibration_Print_Adobe_RGB.jpg | pnmpad -left 100 -right 100 | pnmscale -x 194 -y 244 > /tmp/test.ppm ; pnmcolormap 256 /tmp/test.ppm >/tmp/colormap.pnm ; pnmremap -mapfile=/tmp/colormap.pnm /tmp/test.ppm > /tmp/test.quant.ppm ; dd if=/tmp/test.quant.ppm bs=1 skip=15 of=/tmp/test.rgb.bin
