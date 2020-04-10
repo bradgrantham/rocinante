@@ -1,6 +1,5 @@
-4/8
-    Clean up row buffer generation
-        row function pointers filled in by mode function?
+4/10
+    lower interrupt priorities, see if that does something
 
 Make a CB xtal into logic, test freq with scope to calibrate scope
     Need Schmidt triggers?

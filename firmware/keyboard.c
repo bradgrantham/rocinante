@@ -66,7 +66,7 @@ void KBD_set_receive()
     HAL_GPIO_Init(KEYBOARD_DATA_PORT, &GPIO_InitStruct); 
 
     /* Enable and set EXTI Line15-10 interrupt */
-    HAL_NVIC_SetPriority(EXTI15_10_IRQn, 2, 0);
+    HAL_NVIC_SetPriority(EXTI15_10_IRQn, 3, 0);
     HAL_NVIC_EnableIRQ(EXTI15_10_IRQn);
 }
 
