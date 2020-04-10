@@ -6960,7 +6960,7 @@ unsigned char *imgBufferPixel(int x, int y) { return imgBufferRow(y) + x; }
 
 // XXX these are in SRAM2 to reduce contention with SRAM1 during DMA
 unsigned char *row0 = (unsigned char *)0x2001C000;
-unsigned char *row1 = (unsigned char *)0x2001D000;
+unsigned char *row1 = (unsigned char *)0x2001C400;
 
 // XXX later put source buffers in CCM
 
@@ -7092,26 +7092,6 @@ void fillRowBuffer(int fieldNumber, int rowNumber, int colorBurstPhase, unsigned
                     } else {
                         tmpRow[col] = blackDACValue;
                     }
-                }
-            }
-        } else if(0) {
-            if(y < 50) {
-                for(int col = horSyncTicks + backPorchTicks; col < lineTicks - frontPorchTicks; col++) { 
-                        tmpRow[col] = blackDACValue;
-                }
-            } else if(y < 100) {
-                for(int col = horSyncTicks + backPorchTicks; col < horSyncTicks + backPorchTicks + 200; col++){
-                        tmpRow[col] = blackDACValue;
-                }
-                for(int col = horSyncTicks + backPorchTicks + 200; col < horSyncTicks + backPorchTicks + 300; col++){
-                        tmpRow[col] = whiteDACValue;
-                }
-                for(int col = horSyncTicks + backPorchTicks + 300; col < lineTicks - frontPorchTicks; col++){
-                        tmpRow[col] = blackDACValue;
-                }
-            } else {
-                for(int col = horSyncTicks + backPorchTicks; col < lineTicks - frontPorchTicks; col++) { 
-                        tmpRow[col] = blackDACValue;
                 }
             }
         } else {
@@ -7428,8 +7408,9 @@ void VIDEO_putchar(char c)
 int __attribute__((section (".ccmram"))) debugOverlayEnabled;
 #define debugDisplayWidth 19
 #define debugDisplayHeight 13
-#define debugDisplayRightTick (80 + horSyncTicks + backPorchTicks)
+#define debugDisplayRightTick (horSyncTicks + backPorchTicks + 48)
 #define debugDisplayTopTick (NTSC_EQPULSE_LINES + NTSC_VSYNC_LINES + NTSC_EQPULSE_LINES + NTSC_VBLANK_LINES + 20)
+/* debugFontWidthScale != 4 looks terrible in a color field because of adjacent color columns; probably need to ensure 0s around any 1 text column */
 #define debugFontWidthScale 4
 #define debugFontHeightScale 1
 char __attribute__((section (".ccmram"))) debugDisplay[debugDisplayHeight][debugDisplayWidth];
@@ -7459,20 +7440,21 @@ void fillRowDebugOverlay(int fieldNumber, int rowNumber, unsigned char* nextRowB
             unsigned char debugChar = debugDisplay[charRow][charCol];
             if(debugChar != 0) {
                 unsigned char charRowBits = font8x16Bits[debugChar * font8x16Height + charPixelY];
-#if debugFontWidthScale == 4 && font8x16Height == 8
-                if(charRowBits & 0x01) { *(uint32_t*)charPixels[0] = whiteDACValueLong; }
-                if(charRowBits & 0x02) { *(uint32_t*)charPixels[1] = whiteDACValueLong; }
-                if(charRowBits & 0x04) { *(uint32_t*)charPixels[2] = whiteDACValueLong; }
-                if(charRowBits & 0x08) { *(uint32_t*)charPixels[3] = whiteDACValueLong; }
-                if(charRowBits & 0x10) { *(uint32_t*)charPixels[4] = whiteDACValueLong; }
-                if(charRowBits & 0x20) { *(uint32_t*)charPixels[5] = whiteDACValueLong; }
-                if(charRowBits & 0x40) { *(uint32_t*)charPixels[6] = whiteDACValueLong; }
-                if(charRowBits & 0x80) { *(uint32_t*)charPixels[7] = whiteDACValueLong; }
+#if debugFontWidthScale == 4 && font8x16Width == 8
+                unsigned char *charPixels = nextRowBuffer + debugDisplayRightTick + (charCol * (font8x16Width + 1)) * debugFontWidthScale;
+                if(charRowBits & 0x80) { ((uint32_t*)charPixels)[0] = whiteDACValueLong; }
+                if(charRowBits & 0x40) { ((uint32_t*)charPixels)[1] = whiteDACValueLong; }
+                if(charRowBits & 0x20) { ((uint32_t*)charPixels)[2] = whiteDACValueLong; }
+                if(charRowBits & 0x10) { ((uint32_t*)charPixels)[3] = whiteDACValueLong; }
+                if(charRowBits & 0x08) { ((uint32_t*)charPixels)[4] = whiteDACValueLong; }
+                if(charRowBits & 0x04) { ((uint32_t*)charPixels)[5] = whiteDACValueLong; }
+                if(charRowBits & 0x02) { ((uint32_t*)charPixels)[6] = whiteDACValueLong; }
+                if(charRowBits & 0x01) { ((uint32_t*)charPixels)[7] = whiteDACValueLong; }
 #else
                 for(int charPixelX = 0; charPixelX < font8x16Width; charPixelX++) {
                     int pixel = charRowBits & (0x80 >> charPixelX);
                     if(pixel) {
-                        unsigned char *charPixels = nextRowBuffer + debugDisplayRightTick + (charCol * font8x16Width + charPixelX) * debugFontWidthScale;
+                        unsigned char *charPixels = nextRowBuffer + debugDisplayRightTick + (charCol * (font8x16Width + 1) + charPixelX) * debugFontWidthScale;
 #if debugFontWidthScale == 4
                         *(uint32_t *)charPixels = whiteDACValueLong; 
 #else
@@ -7528,6 +7510,7 @@ void DMA2_Stream2_IRQHandler(void)
     TIM2->CR1 = 0;            /* stop the timer */
 }
 
+void generateRowBuffers();
 
 void process_local_key(unsigned char c)
 {
@@ -7556,9 +7539,7 @@ void process_local_key(unsigned char c)
                 p++;
             syncPorchDACValue = strtol(p, NULL, 0);
             printf("syncPorchDACValue set to %d\n", syncPorchDACValue);
-            fillEQPulseBuffer(rowEQSyncPulseBuffer);
-            fillVSyncBuffer(rowVSyncBuffer);
-            fillBlankLineBuffer(rowBlankLineBuffer); // XXX
+            generateRowBuffers();
 
         } else if(strncmp(gMonitorCommandBuffer, "testmin ", 8) == 0) {
 
@@ -7801,22 +7782,42 @@ void initRowDMA(uint32_t dmaCount)
     HAL_NVIC_EnableIRQ(DMA2_Stream2_IRQn);
 
     // STEP 2: configure DMA to double buffer write 910 bytes from row0 and then row1 at 14.318180
+#if 0
     DMA2_Stream2->NDTR = ROW_SIZE;              // Number of data items to transfer (from peripherals POV)
     DMA2_Stream2->M0AR = (uint32_t)row0;        // Source buffer address 0
     DMA2_Stream2->M1AR = (uint32_t)row1;        // Source buffer address 1 
     DMA2_Stream2->PAR = (uint32_t)&GPIOC->ODR;  // Destination address
     DMA2_Stream2->FCR = DMA_FIFOMODE_ENABLE |   // Enable FIFO to improve stutter
-        DMA_FIFO_THRESHOLD_1QUARTERFULL;
+        DMA_FIFO_THRESHOLD_1QUARTERFULL;        
     DMA2_Stream2->CR =
         DMA_CHANNEL_6 |                         // which channel is driven by which timer to which peripheral is limited
         DMA_MEMORY_TO_PERIPH |                  // Memory to Peripheral
         DMA_PDATAALIGN_BYTE |                   // BYTES to peripheral
-        DMA_MDATAALIGN_HALFWORD | 
+        DMA_MDATAALIGN_HALFWORD |               // UINT16 from memory
         DMA_SxCR_DBM |                          // double buffer
         DMA_PRIORITY_VERY_HIGH |                // Video data must be highest priority, can't stutter
         DMA_MINC_ENABLE |                       // Increment memory address
         DMA_IT_TC |                             // Interrupt on transfer complete of each buffer 
         0;
+#else // XXX 32-bit aligned DMAs experiment
+    DMA2_Stream2->NDTR = 912;
+    DMA2_Stream2->M0AR = (uint32_t)row0;        // Source buffer address 0
+    DMA2_Stream2->M1AR = (uint32_t)row1;        // Source buffer address 1 
+    DMA2_Stream2->PAR = (uint32_t)&GPIOC->ODR;  // Destination address
+    DMA2_Stream2->FCR = DMA_FIFOMODE_ENABLE |   // Enable FIFO to improve stutter
+        DMA_FIFO_THRESHOLD_1QUARTERFULL;        
+    DMA2_Stream2->CR =
+        DMA_CHANNEL_6 |                         // which channel is driven by which timer to which peripheral is limited
+        DMA_MEMORY_TO_PERIPH |                  // Memory to Peripheral
+        DMA_PDATAALIGN_BYTE |                   // BYTES to peripheral
+        // DMA_MDATAALIGN_WORD | DMA_MBURST_INC4 |
+        DMA_MDATAALIGN_HALFWORD |
+        DMA_SxCR_DBM |                          // double buffer
+        DMA_PRIORITY_VERY_HIGH |                // Video data must be highest priority, can't stutter
+        DMA_MINC_ENABLE |                       // Increment memory address
+        DMA_IT_TC |                             // Interrupt on transfer complete of each buffer 
+        0;
+#endif
 
     // Configure TIM1_CH2 to drive DMA
     TIM1->CCR2 = (dmaCount + 1) / 2;         /* 50% duty cycle */ 
@@ -7880,6 +7881,7 @@ void CCM_RAM_init_vars()
     maxDACValue = 255;
     testMin = 0;
     testMax = 120;
+    memcpy(font8x16Bits, font8x16BitsSrc, sizeof(font8x16BitsSrc));
 }
 
 int main()
@@ -7898,6 +7900,9 @@ int main()
 
     SERIAL_init(); // transmit and receive but global interrupts disabled
     LED_beat_heart();
+
+    memset(row0, syncPorchDACValue, 1024);      // Just in case we experiment with DMA more than 910 bytes
+    memset(row1, syncPorchDACValue, 1024);
 
     printf("\n\nAlice 3 I/O firmware, %s\n", IOBOARD_FIRMWARE_VERSION_STRING);
     printf("System core clock: %lu Hz, %lu MHz\n", SystemCoreClock, SystemCoreClock / 1000000);

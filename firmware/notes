@@ -1,26 +1,21 @@
 4/10
     lower interrupt priorities, see if that does something
+    detect FIFO underrun (try interrupt and try detecting bit in Handler)
+        and add current count to debug output
 
-Make a CB xtal into logic, test freq with scope to calibrate scope
-    Need Schmidt triggers?
-    Plug into GPIO for testing?
-    DMA in, DMA out for colorburst?
-    Just gate for colorburst?
-Order a 14.318180 MHz crystal?  But then what to do about USB?
-Order a range of ceramic caps for filtering?
+4/9
+    observations
+        glitch happens on line proportional to work done for the line (for the next line?)
+        on YIQ images, glitch happens at the same horizontal location (because YIQ work is constant length per line)
+        on lines with no work at low clocks rates, perfect color lock.
+        better at lower clocks, worse at higher clocks, so is there a glitch happening in the colorburst at higher clocks?  Earlier per frame?
+        Almost EVERYTHING is in CCM RAM now, except for font.  Could maybe copy into CCM but getting tight on stack.
+        Drawing lk.ppm, suddenly switches from red to green or green to blue, or about 90 degrees, implying one missed transfer.
+            So the DMA couldn't get memory for N cycles?  Or the GPIO stalled long enough to miss?
 
-H is 63555.56us
+
+for reference, H is 63555.56us
 Scope only locks to my video at line #5
-
-201.78, 16000000, 9, 227, 2, 14, 3.603175, 0.006601, YES
-    Attempting to match the Apple //e phase:
-    This outlier locked color! But MUCH more phase drift, blue to green over 1/2 line
-    250 phase drift in 1/2 line
-185.78, 16000000, 18, 418, 2, 13, 3.572650, -0.001926, YES
-    This outlier the other direction also locked color! Reverse phase drift? orange to magenta
-    -60 phase drift in 1/2 line
-if 3.603175 is 250 drift and 3.572650 is -60 phase drift, I want 3.572650 + 60 * (3.603175 - 3.572650) / 310, or 3.57855806451612903225
-    maybe line
 
 221 capacitor is 220 pF / .22 nF
     3x = .66 nF
