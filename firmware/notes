@@ -4,12 +4,25 @@ Rein it in
         256 * 200 * 256 colors
         512 * 400 * 4 grays
         monochrome 80x24 text - Apple font?
-        selectable mode per line?  Or just optional last 4 lines?
-    serial terminal monochrome, 
+        color text - 8x16 font?
+        VIDEO N
+        LUT c, r, g, b
+        PLOT x, y, c
+        LINE x0, y0, x1, y1, c
+        CLEAR c
+        TEXT #
+        SPLIT {0,1}
+    Fuzix? Or should I just import "sh"?
     Channel F emulator, 9pin headers (bake into controller for Bart)
     Colecovision emulator, 9pin
-    Some kind of 3D uberdemo, realtime scan out, no backing framebuffer
+    Some kind of 3D uberdemo, realtime scan out, buffer of sorted scanline segments?
     Wrap up
+
+What does going nuts look like?
+    export internal FAT as USB (button or command switches modes)
+    loadable executables - UNIX-y
+    network over usb
+    microphone can decode WeFAX or MFSK
 
 4/10
     detect FIFO underrun (try detecting bit in Handler, try interrupt)
