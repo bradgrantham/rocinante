@@ -36,6 +36,10 @@ void colorHSVToRGB3f(float h, float s, float v, float *r, float *g, float *b)
 
 int main()
 {
+    float r, g, b;
+    colorHSVToRGB3f(M_PI / 2, 1, 1, &r, &g, &b);
+    fprintf(stderr, "%f, %f, %f\n", r, g, b);
+
     unsigned char image[512][512][3];
 
     for(int y = 0; y < 512; y++) {

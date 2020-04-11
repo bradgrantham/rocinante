@@ -1,7 +1,21 @@
+Rein it in
+    go figure out guaranteed, overscan left, right, width, height
+    ubasic
+        256 * 200 * 256 colors
+        512 * 400 * 4 grays
+        monochrome 80x24 text - Apple font?
+        selectable mode per line?  Or just optional last 4 lines?
+    serial terminal monochrome, 
+    Channel F emulator, 9pin headers (bake into controller for Bart)
+    Colecovision emulator, 9pin
+    Some kind of 3D uberdemo, realtime scan out, no backing framebuffer
+    Wrap up
+
 4/10
-    lower interrupt priorities, see if that does something
-    detect FIFO underrun (try interrupt and try detecting bit in Handler)
+    detect FIFO underrun (try detecting bit in Handler, try interrupt)
         and add current count to debug output
+    observations
+        Here's a mystery: the porch value is 0x50, and that's at one voltage.  If I fill the color image with 0x50, that shows a slightly different voltage.
 
 4/9
     observations
@@ -13,6 +27,23 @@
         Drawing lk.ppm, suddenly switches from red to green or green to blue, or about 90 degrees, implying one missed transfer.
             So the DMA couldn't get memory for N cycles?  Or the GPIO stalled long enough to miss?
 
+struct VideoModeInfo {
+    unsigned char* baseAddress;
+    enum Kind { PALETTIZED, TEXTPORT }; /* GAMEFIELD (sprite + background)
+    int width, height; /* pixels or text */
+    size_t rowSize; /* bytes */
+    enum PixelFormat { BITMAP, GRAY_4BIT, GRAY_8BIT, PALETTE_4BIT, PALETTE_8BIT} pixelFormat;
+    /* pixels are LSB, so 4BIT pixel N is in byte N/2 bits 0-3, and pixel N+1 is in byte N/2 bits 4-7 */
+    uint32_t paletteSize; /* for convenience, matches pixelFormat */
+    int color; /* for convenience, matches pixelFormat */
+};
+
+int getVideoModeCount();
+int getVideoModeInfo(int n, VideoModeInfo *info);
+int setPaletteEntryF(int a, float r, float g, float b); /* 0 if out of range, 1 if success */
+int setPaletteEntry(int a, unsigned char r, unsigned char g, unsigned char b); /* 0 if out of range, 1 if success */
+int setPixel(int x, int y, int c);
+int setText(int x, int y, int c); /* might offset */
 
 for reference, H is 63555.56us
 Scope only locks to my video at line #5
