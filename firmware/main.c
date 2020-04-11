@@ -84,8 +84,8 @@ static const ClockConfiguration clockConfigs[] =
     // /* 153 */{172.21, 16000000, 19, 409, 2, 12, 3.587719, 0.002284},
     // /* 123 */ {200.89, 16000000, 9, 226, 2, 14, 3.587302, 0.002167},
     // {100.24, 16000000, 17, 213, 2, 7, 3.579832, 0.000080},
-    // {200.47, 16000000, 17, 426, 2, 14, 3.579832, 0.000080},
-    {214.77, 16000000, 13, 349, 2, 15, 3.579487, -0.000016},
+    {200.47, 16000000, 17, 426, 2, 14, 3.579832, 0.000080},
+    // {214.77, 16000000, 13, 349, 2, 15, 3.579487, -0.000016},
 
 #if 0
     {185.78, 16000000, 18, 418, 2, 13, 3.572650, -0.001926}, 
@@ -263,82 +263,7 @@ void errorchar_flush()
 //----------------------------------------------------------------------------
 // File operations
 
-    FATFS gFATVolume;
-
-#if 0
-
-#define DISK_IMAGE_MAX 8
-char gDiskImageFilenames[DISK_IMAGE_MAX][13];
-FIL gDiskImageFiles[DISK_IMAGE_MAX];
-int gDiskImageCount = 0;
-
-int read_disk_image_list()
-{
-    FIL f;
-    FRESULT result = f_open (&f, "disks.txt", FA_READ | FA_OPEN_EXISTING);
-
-    if(result != FR_OK) {
-        logprintf(DEBUG_ERRORS, "ERROR: couldn't open \"disks.txt\" for reading, FatFS result %d\n", result);
-        return 0;
-    }
-
-    while(!f_eof(&f) && (gDiskImageCount < DISK_IMAGE_MAX)) {
-        static char line[80];
-        if(f_gets(line, sizeof(line), &f)) {
-            if(line[strlen(line) - 1] != '\n') {
-                logprintf(DEBUG_WARNINGS, "\"disks.txt\" unexpectedly contained a line longer than 80 characters:\n");
-                logprintf(DEBUG_WARNINGS, "\"%s\"\n", line);
-                return 0;
-            }
-
-            line[strlen(line) - 1] = '\0';
-
-            if(strlen(line) > 12) {
-                logprintf(DEBUG_WARNINGS, "Unexpectedly long disk image name \"%s\" ignored\n", line);
-            } else {
-                strcpy(gDiskImageFilenames[gDiskImageCount], line);
-                gDiskImageCount++;
-            }
-        }
-    }
-
-    if(!f_eof(&f)) {
-        logprintf(DEBUG_WARNINGS, "Maximum disk images reached (%d), further contents of \"disks.txt\" ignored\n", DISK_IMAGE_MAX);
-    }
-
-    f_close(&f);
-    return 1;
-}
-
-int open_disk_images()
-{
-    int success = 1;
-    int i;
-
-    for(i = 0; i < gDiskImageCount; i++) {
-        FRESULT result = f_open (&gDiskImageFiles[i], gDiskImageFilenames[i], FA_READ | FA_WRITE | FA_OPEN_EXISTING);
-
-        if(result != FR_OK) {
-            logprintf(DEBUG_ERRORS, "ERROR: couldn't open disk image \"%s\" for rw, FatFS result %d\n", gDiskImageFilenames[i], result);
-            success = 0;
-            break;
-        }
-
-        if(f_size(&gDiskImageFiles[i]) != BLOCKS_PER_DISK * SD_BLOCK_SIZE) {
-            logprintf(DEBUG_ERRORS, "ERROR: expected disk image \"%s\" to be 8MB, is %d bytes\n", gDiskImageFilenames[i], f_size(&gDiskImageFiles[i]));
-            success = 0;
-            break;
-        }
-    }
-
-    if(!success)
-        for(int j = 0; j < i; j++)
-            f_close(&gDiskImageFiles[j]);
-
-    return success;
-}
-
-#endif
+FATFS gFATVolume;
 
 char gMonitorCommandBuffer[80];
 unsigned char gMonitorCommandBufferLength = 0;
@@ -362,6 +287,8 @@ volatile unsigned char gSerialInputToMonitor = 1;
 unsigned char sd_buffer[SD_BLOCK_SIZE];
 
 uint32_t __attribute__((section (".ccmram"))) rowCyclesSpent[262];
+uint32_t __attribute__((section (".ccmram"))) DMAFIFOUnderruns;
+uint32_t __attribute__((section (".ccmram"))) DMATransferErrors;
 typedef enum { VIDEO_COLOR_TEST, VIDEO_IMAGE, VIDEO_IMAGE_PALETTIZED } VideoMode;
 VideoMode __attribute__((section (".ccmram"))) videoMode;
 int withColorBurst = 1;
@@ -451,6 +378,10 @@ void console_queue_init()
 #define NTSC_SYNC_BLACK_VOLTAGE   .339f
 #define NTSC_SYNC_WHITE_VOLTAGE   1.0f  /* VCR had .912v */
 
+#define DAC_VALUE_LIMIT 0xF0
+
+
+int showScanoutStats = 0;
 unsigned char __attribute__((section (".ccmram"))) syncTipDACValue;
 unsigned char __attribute__((section (".ccmram"))) syncPorchDACValue;
 unsigned char __attribute__((section (".ccmram"))) blackDACValue;
@@ -461,18 +392,19 @@ unsigned char __attribute__((section (".ccmram"))) maxDACValue;
 
 unsigned char voltageToDACValue(float voltage)
 {
-    if(voltage >= MAX_DAC_VOLTAGE) {
-        return 0xff;
-    }
     if(voltage < 0.0f) {
         return 0x0;
     }
-    return (unsigned char)(voltage / MAX_DAC_VOLTAGE * 255);
+    uint32_t value = (uint32_t)(voltage / MAX_DAC_VOLTAGE * 255);
+    if(value >= DAC_VALUE_LIMIT) {
+        return DAC_VALUE_LIMIT;
+    }
+    return value;
 }
 
 // XXX I Don't think there's initialization code in crt0 for ccmram
-int __attribute__((section (".ccmram"))) rowNumber;
-int __attribute__((section (".ccmram"))) fieldNumber;
+volatile int __attribute__((section (".ccmram"))) rowNumber;
+volatile int __attribute__((section (".ccmram"))) fieldNumber;
 
 int eqPulseTicks;
 int vsyncPulseTicks;
@@ -1049,6 +981,15 @@ void DMA2_Stream2_IRQHandler(void)
     // DMA2->LISR &= ~DMA_TCIF;
     DMA2->LIFCR |= DMA_LIFCR_CTCIF2;
 
+    if(DMA2->LISR &= DMA_FLAG_FEIF2_6) {
+        DMA2->LIFCR |= DMA_LIFCR_CFEIF2;
+        DMAFIFOUnderruns++;
+    }
+    if(DMA2->LISR &= DMA_FLAG_TEIF2_6) {
+        DMA2->LIFCR |= DMA_LIFCR_CTEIF2;
+        DMATransferErrors++;
+    }
+
     // Configure timer TIM2
     TIM2->SR = 0;                       /* reset status */
     TIM2->ARR = 0xFFFFFFFF;
@@ -1151,13 +1092,20 @@ void process_local_key(unsigned char c)
 
             videoMode = VIDEO_IMAGE;
 
+        } else if(strcmp(gMonitorCommandBuffer, "stats") == 0) {
+
+            showScanoutStats = !showScanoutStats;
+            if(!showScanoutStats) {
+                debugOverlayEnabled = 0;
+            }
+
         } else if(strcmp(gMonitorCommandBuffer, "yiq") == 0) {
 
             videoMode = VIDEO_IMAGE_PALETTIZED;
 
         } else if(strcmp(gMonitorCommandBuffer, "text") == 0) {
 
-            gOutputDevices |= OUTPUT_TO_VIDEO;
+            gOutputDevices = gOutputDevices ^ OUTPUT_TO_VIDEO;
 
         } else if(strcmp(gMonitorCommandBuffer, "rowcycles") == 0) {
 
@@ -1422,9 +1370,12 @@ void initRowDMA(uint32_t dmaCount)
     rowNumber = 1; // Next up is row 1
     fieldNumber = 0; 
 
+    // Clear FIFO and transfer error flags
+    DMA2->LIFCR |= DMA_LIFCR_CTCIF2;
+    DMA2->LIFCR |= DMA_LIFCR_CTEIF2;
+
     DMA2_Stream2->CR |= DMA_SxCR_EN;    /* enable DMA */
     TIM1->CR1 = TIM_CR1_CEN;            /* enable the timer */
-
 }
 
 void initVideoSignalParameters(float clock)
@@ -1461,6 +1412,8 @@ void generateRowBuffers()
 void CCM_RAM_init_vars()
 {
     // XXX Initialize CCM RAM variables here.
+    DMAFIFOUnderruns = 0;
+    DMATransferErrors = 0;
     videoMode = VIDEO_COLOR_TEST;
     debugOverlayEnabled = 0;
     syncTipDACValue = voltageToDACValue(NTSC_SYNC_TIP_VOLTAGE);
@@ -1566,7 +1519,32 @@ int main()
 
     initRowDMA(DMACountAt14MHz);
 
-    if(0) {
+    // Wait for a click to progress to the next clock config
+    { 
+        GPIO_InitTypeDef  GPIO_InitStruct;
+
+        GPIO_InitStruct.Pin = GPIO_PIN_9;
+        GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+        GPIO_InitStruct.Pull = GPIO_PULLDOWN;
+        GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+        HAL_GPIO_Init(GPIOC, &GPIO_InitStruct); 
+    }
+
+    // If button is pushed down, enter clock config inspector
+    if(HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_9)) {
+
+        debugOverlayEnabled = 1;
+        memset(debugDisplay, 0, debugDisplayWidth * debugDisplayHeight);
+
+        int debugLine = 0;
+        sprintf(debugDisplay[debugLine++], "Release button");
+        sprintf(debugDisplay[debugLine++], "For ClockConfig");
+        sprintf(debugDisplay[debugLine++], "Inspector");
+
+        delay_ms(50);
+        while(HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_9));
+        delay_ms(50);
+
         int counter = 0; 
         for(;;) {
 
@@ -1648,6 +1626,15 @@ int main()
     }
 
     for(;;) {
+
+        if(showScanoutStats) {
+            debugOverlayEnabled = 1;
+            uint32_t currentField = fieldNumber;
+            while(currentField == fieldNumber); // Wait for VBLANK
+            memset(debugDisplay, 0, debugDisplayWidth * debugDisplayHeight);
+            sprintf(debugDisplay[debugDisplayHeight - 2], "FIFO unders %lu", DMAFIFOUnderruns);
+            sprintf(debugDisplay[debugDisplayHeight - 1], "DMA errors %lu", DMATransferErrors);
+        }
         int key;
 
         SERIAL_try_to_transmit_buffers();
