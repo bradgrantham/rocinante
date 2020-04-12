@@ -1,20 +1,24 @@
 Rein it in
-    go figure out guaranteed, overscan left, right, width, height
-    ubasic
-        256 * 200 * 256 colors
-        512 * 400 * 4 grays
+    go figure out underscan, overscan left, right, width, height
+    video modes
+        underscan/overscan 4-cycle 256 colors (res?)
+        underscan/overscan 2-cycle 4 grays  (res?)
+        underscan/overscan byte HAM  (res?)
         monochrome 80x24 text - Apple font?
-        color text - 8x16 font?
-        VIDEO N
-        LUT c, r, g, b
-        PLOT x, y, c
-        LINE x0, y0, x1, y1, c
-        CLEAR c
-        TEXT #
-        SPLIT {0,1}
-    Fuzix? Or should I just import "sh"?
+        color text? - 8x16 font?
+    BASIC
+        video N # set video mode N
+        lut c, r, g, b # calculate lut entry c for int r, g, b
+        plot x, y, c    # plot pixel x, y with lut c
+        line x0, y0, x1, y1, c # plot line
+        clear c # clear screen to LUT color
+        text N # text mode
+        split {0,1} # split screen graphics and text (dependent on the modes?)
+        handle a bunch of old BASIC programs like STARTREK, WUMPUS, ...?
+        implement lunar lander
     Channel F emulator, 9pin headers (bake into controller for Bart)
     Colecovision emulator, 9pin
+    Fuzix? Or should I just import "sh"?
     Some kind of 3D uberdemo, realtime scan out, buffer of sorted scanline segments?
     Wrap up
 
@@ -22,11 +26,22 @@ What does going nuts look like?
     export internal FAT as USB (button or command switches modes)
     loadable executables - UNIX-y
     network over usb
-    microphone can decode WeFAX or MFSK
+    stereo audio output
+    1/8inch jack audio input can decode WeFAX or MFSK
+
+4/12
+    Observations
+        While playing the khan segment, I got 7 FIFO underruns.  But that was over the course of many seconds
+        Do I just have an electrical issue?  Like when enough of the chip fires at once, I get a brownout?
+	    That would explain the noise while the CPU is operating.
+	    The noise is just brightness variations and not loss of pixels or sync.
+
+4/11
+    VTOR - vector table TBLOFF
+    putting VTOR in SRAM1 didn't do anything
+    while(1) WFI nor WFE did anything
 
 4/10
-    detect FIFO underrun (try detecting bit in Handler, try interrupt)
-        and add current count to debug output
     observations
         Here's a mystery: the porch value is 0x50, and that's at one voltage.  If I fill the color image with 0x50, that shows a slightly different voltage.
 
