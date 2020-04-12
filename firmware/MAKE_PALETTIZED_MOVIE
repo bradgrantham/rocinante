@@ -1,0 +1,1 @@
+seq 1 17921 | while read num ; do n=`printf %05d $num` ; djpeg image$n.jpg | pnmpad -top 50 -bottom 50 | pnmscale -x 194 -y 244 > scaled.ppm ; pnmcolormap 254 scaled.ppm > colormap.pnm ; head -2 colormap.pnm ; (dd bs=1 if=colormap.pnm skip=13 ; pnmremap -mapfile=colormap.pnm scaled.ppm | dd bs=1 skip=15 ) | makepalettized > frame$n ; done
