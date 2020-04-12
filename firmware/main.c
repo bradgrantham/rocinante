@@ -268,28 +268,18 @@ FATFS gFATVolume;
 char gMonitorCommandBuffer[80];
 unsigned char gMonitorCommandBufferLength = 0;
 
-void usage()
-{
-    printf("help       - this help message\n");
-    printf("debug N    - set debug level\n");
-    printf("sdreset    - reset SD\n");
-    printf("dumpkbd    - toggle dumping keyboard\n");
-    printf("version    - print firmware build version\n");
-    printf("read N     - read and dump block N\n");
-    printf("panic      - force panic\n");
-    printf("flashinfo  - force flashing the info LED\n");
-}
-
 #define IOBOARD_FIRMWARE_VERSION_STRING XSTR(IOBOARD_FIRMWARE_VERSION)
 
 volatile unsigned char gSerialInputToMonitor = 1;
 
 unsigned char sd_buffer[SD_BLOCK_SIZE];
 
+uint32_t /* __attribute__((section (".ccmram"))) */ vectorTable[100] __attribute__ ((aligned (512)));
+
 uint32_t __attribute__((section (".ccmram"))) rowCyclesSpent[262];
 uint32_t __attribute__((section (".ccmram"))) DMAFIFOUnderruns;
 uint32_t __attribute__((section (".ccmram"))) DMATransferErrors;
-typedef enum { VIDEO_COLOR_TEST, VIDEO_IMAGE, VIDEO_IMAGE_PALETTIZED } VideoMode;
+typedef enum { VIDEO_COLOR_TEST, VIDEO_GRAYSCALE, VIDEO_PALETTIZED } VideoMode;
 VideoMode __attribute__((section (".ccmram"))) videoMode;
 int withColorBurst = 1;
 
@@ -423,7 +413,8 @@ unsigned char __attribute__((section (".ccmram"))) rowBlankLineBuffer[ROW_SIZE];
 #define PALETTE_WHITE 255
 #define PALETTE_BLACK 254
 unsigned char __attribute__((section (".ccmram"))) imgBuffer[256 * 200];
-uint32_t __attribute__((section (".ccmram"))) paletteUInt32[256];
+uint32_t __attribute__((section (".ccmram"))) paletteUInt32[2][256];
+unsigned char __attribute__((section (".ccmram"))) rowPalette[256];
 
 unsigned char *imgBufferRow(int row) { return imgBuffer + row * 200; }
         // 244 lines
@@ -550,7 +541,7 @@ void fillRowBuffer(int fieldNumber, int rowNumber, unsigned char *rowBuffer)
                 }
                 break;
             }
-            case VIDEO_IMAGE: {
+            case VIDEO_GRAYSCALE: {
                 unsigned char *imgRow = imgBufferRow(y);
                 unsigned char *rowOut = tmpRow + (horSyncTicks + backPorchTicks + 3) / 4 * 4 + 20 * 4;
                 uint32_t* rowWords = (uint32_t*)rowOut;
@@ -561,13 +552,14 @@ void fillRowBuffer(int fieldNumber, int rowNumber, unsigned char *rowBuffer)
                 }
                 break;
             }
-            case VIDEO_IMAGE_PALETTIZED: {
+            case VIDEO_PALETTIZED: {
                 unsigned char *imgRow = imgBufferRow(y);
+                uint32_t* palette = paletteUInt32[rowPalette[y]];
                 unsigned char *rowOut = tmpRow + (horSyncTicks + backPorchTicks + 3) / 4 * 4;
                 uint32_t* rowWords = (uint32_t*)rowOut;
                 for(int col = 0; col < 189; col++) {
                     unsigned char pixel = *imgRow++;
-                    uint32_t word = paletteUInt32[pixel];
+                    uint32_t word = palette[pixel];
                     *rowWords++ = word;
                 }
                 break;
@@ -646,8 +638,9 @@ void colorHSVToRGB3f(float h, float s, float v, float *r, float *g, float *b)
 
 void showSolidFramebuffer(uint32_t word)
 {
-    paletteUInt32[0] = word;
+    paletteUInt32[0][0] = word;
     for(int y = 0; y < 224; y++) {
+        rowPalette[y] = 0;
         unsigned char *imgRow = imgBufferRow(y);
 
         for(int x = 0; x < 194; x++) {
@@ -666,11 +659,12 @@ void showVectorScopeImage(int phaseDegrees)
         colorHSVToRGB3f(hueRadians, 1, 1, &r, &g, &b);
         float y, i, q;
         RGBToYIQ(r, g, b, &y, &i, &q);
-        paletteUInt32[a] = colorTo4Samples(y, i, q);
+        paletteUInt32[0][a] = colorTo4Samples(y, i, q);
     }
 
     for(int y = 0; y < 224; y++) {
         unsigned char *imgRow = imgBufferRow(y);
+        rowPalette[y] = 0;
 
         for(int x = 0; x < 194; x++) {
             float u = (x - 194.0f / 2.0f) / 194.0f; /* left to right */
@@ -681,6 +675,56 @@ void showVectorScopeImage(int phaseDegrees)
             imgRow[x] = (unsigned char)(hue / (M_PI * 2) * MAX_PALETTE_ENTRIES);
         }
     }
+}
+
+unsigned char whichPalette = 0;
+
+int readPalettized(const char *filename, float *duration)
+{
+    // Configure timer TIM5 - Only TIM2 and TIM5 are 32-bit
+    TIM5->SR = 0;                       /* reset status */
+    TIM5->ARR = 0xFFFFFFFF;
+    TIM5->CNT = 0;
+    TIM5->CR1 = TIM_CR1_CEN;            /* enable the timer */
+
+    FIL file;
+    FRESULT result = f_open (&file, filename, FA_READ | FA_OPEN_EXISTING);
+    if(result) {
+        logprintf(DEBUG_ERRORS, "ERROR: couldn't open \"%s\" for reading, FatFS result %d\n", filename, result);
+        return 1;
+    }
+
+    UINT wasread;
+    result = f_read(&file, paletteUInt32[whichPalette], sizeof(uint32_t) * 254, &wasread);
+    if(result) {
+        logprintf(DEBUG_ERRORS, "ERROR: couldn't read palette from \"%s\", result %d\n", filename, result);
+        return 1;
+    }
+
+    static unsigned char rowTmp[194];
+    for(int y = 0; y < 224; y++) {
+        result = f_read(&file, rowTmp, 194, &wasread);
+        // XXX wait until end of visible pixels?
+        rowPalette[y] = whichPalette;
+        memcpy(imgBufferRow(y), rowTmp, 194);
+
+        if(result) {
+            logprintf(DEBUG_ERRORS, "ERROR: couldn't read row %d from \"%s\", result %d\n", filename, y, result);
+            return 1;
+        }
+    }
+    uint32_t clocks = TIM5->CNT;
+    TIM5->CR1 = 0;            /* stop the timer */
+
+    uint32_t hundredthsSeconds = clocks / (SystemCoreClock / 100);
+    if(0) {
+        printf("image load took %lu.%02lu seconds (%lu clocks)\n", hundredthsSeconds / 100, hundredthsSeconds % 100, clocks);
+    }
+    *duration = hundredthsSeconds / 100.0f;
+
+    whichPalette = (whichPalette + 1) % 2;
+
+    return 0;
 }
 
 int readImage(const char *filename)
@@ -704,7 +748,6 @@ int readImage(const char *filename)
     }
 
     for(int y = 0; y < 224; y++) {
-        fread(rgbRow, sizeof(rgbRow), 1, stdin);
         UINT wasread;
         result = f_read(&file, rgbRow, sizeof(rgbRow), &wasread);
 
@@ -714,6 +757,7 @@ int readImage(const char *filename)
         }
 
         unsigned char *imgRow = imgBufferRow(y);
+        rowPalette[y] = whichPalette;
 
         for(int x = 0; x < 194; x++) {
             unsigned char r = rgbRow[x][0];
@@ -735,7 +779,7 @@ int readImage(const char *filename)
                     palette[c][2] = b;
                     float y, i, q;
                     RGBToYIQ(r / 255.0f, g / 255.0f, b / 255.0f, &y, &i, &q);
-                    paletteUInt32[c] = colorTo4Samples(y, i, q);
+                    paletteUInt32[whichPalette][c] = colorTo4Samples(y, i, q);
                     paletteNext++;
                 }
             }
@@ -746,6 +790,8 @@ int readImage(const char *filename)
     TIM5->CR1 = 0;            /* stop the timer */
     uint32_t hundredthsSeconds = clocks / (SystemCoreClock / 100);
     printf("image load took %lu.%02lu seconds (%lu clocks)\n", hundredthsSeconds / 100, hundredthsSeconds % 100, clocks);
+
+    whichPalette = (whichPalette + 1) % 2;
 
     return 0;
 }
@@ -977,10 +1023,6 @@ void fillRowDebugOverlay(int fieldNumber, int rowNumber, unsigned char* nextRowB
 
 void DMA2_Stream2_IRQHandler(void)
 {
-    // Clear interrupt flag
-    // DMA2->LISR &= ~DMA_TCIF;
-    DMA2->LIFCR |= DMA_LIFCR_CTCIF2;
-
     if(DMA2->LISR &= DMA_FLAG_FEIF2_6) {
         DMA2->LIFCR |= DMA_LIFCR_CFEIF2;
         DMAFIFOUnderruns++;
@@ -1020,9 +1062,403 @@ void DMA2_Stream2_IRQHandler(void)
 
     rowCyclesSpent[rowNumber] = TIM2->CNT;
     TIM2->CR1 = 0;            /* stop the timer */
+
+    // Clear interrupt flag
+    // DMA2->LISR &= ~DMA_TCIF;
+    DMA2->LIFCR |= DMA_LIFCR_CTCIF2;
 }
 
+
+//----------------------------------------------------------------------------
+// Text command interface
+
 void generateRowBuffers();
+
+// XXX changes bytes in p to NULs
+int splitString(char *p, char **words, int wordsCapacity)
+{
+    int count = 0;
+
+    while(*p == ' ') { p++; } /* skip initial spaces */
+
+    /* while haven't filled to capacity and p is not a space or NUL */
+    while(count < wordsCapacity && *p) {
+        words[count++] = p; /* store pointer to word */
+        if(count != wordsCapacity) {
+            while(*p && (*p != ' ')) { p++; } /* skip until NUL or space */
+            if(!*p) { /* if p is NUL, done */
+                return count;
+            }
+            *p++ = '\0';
+            while(*p == ' ') { p++; } /* skip spaces */
+        } 
+    }
+    return count;
+}
+
+enum {
+    COMMAND_CONTINUE = 0,
+    COMMAND_STOP,
+};
+
+int doCommandStream(char **words, int wordCount)
+{
+    videoMode = VIDEO_PALETTIZED;
+
+    char *formatName = words[1];
+    int start = strtol(words[2], NULL, 0);
+    int end = strtol(words[3], NULL, 0);
+
+    char formattedName[512];
+    float displayTime = 0;
+    float endTime = (end - start) / 30.0;
+    do {
+        int frameNumber = start + (int)(displayTime * 30.0);
+        sprintf(formattedName, formatName, frameNumber);
+        // Must have been quantized to 256 colors!
+        // while(rowNumber < 224); // Wait for VBLANK-ish
+        float duration;
+        if(readPalettized(formattedName, &duration)) {
+            printf("failed to show \"%s\"\n", formattedName); 
+            break;
+        }
+        displayTime += duration;
+    } while(displayTime < endTime);
+    return COMMAND_CONTINUE;
+}
+
+int doCommandSDReset(char **words, int wordCount)
+{
+    printf("Resetting SD card...\n");
+
+    if(!SDCARD_init()) {
+        printf("Failed to start access to SD card as SPI\n");
+    }
+    return COMMAND_CONTINUE;
+}
+
+int doCommandVideoTest(char **words, int wordCount)
+{
+    videoMode = VIDEO_COLOR_TEST;
+    return COMMAND_CONTINUE;
+}
+
+int doCommandGrayscale(char **words, int wordCount)
+{
+    videoMode = VIDEO_GRAYSCALE;
+    return COMMAND_CONTINUE;
+}
+
+int doCommandScanoutStats(char **words, int wordCount)
+{
+    showScanoutStats = !showScanoutStats;
+    if(!showScanoutStats) {
+        debugOverlayEnabled = 0;
+    }
+    return COMMAND_CONTINUE;
+}
+
+int doCommandVideoYIQ(char **words, int wordCount)
+{
+    videoMode = VIDEO_PALETTIZED;
+    return COMMAND_CONTINUE;
+}
+
+int doCommandVideoText(char **words, int wordCount)
+{
+    gOutputDevices = gOutputDevices ^ OUTPUT_TO_VIDEO;
+    return COMMAND_CONTINUE;
+}
+
+int doCommandScanoutCycles(char **words, int wordCount)
+{
+    for(int i = 0; i < 262; i++) {
+        printf("row %3d: %8lu cycles, %lu microseconds", i, rowCyclesSpent[i],
+            rowCyclesSpent[i] / (SystemCoreClock / 1000000));
+        if(rowCyclesSpent[i] > 10677) {
+            printf(", overrun by %lu%%\n", rowCyclesSpent[i] * 100 / 10677 - 100);
+        } else { 
+            printf(", %lu%% remained\n", (10677 - rowCyclesSpent[i]) * 100 / 10677);
+        }
+    }
+
+    return COMMAND_CONTINUE;
+}
+
+int doCommandLS(char **words, int wordCount)
+{
+    FRESULT res;
+    DIR dir;
+    static FILINFO fno;
+
+    res = f_opendir(&dir, "/");                       /* Open the directory */
+    if (res == FR_OK) {
+        for (;;) {
+            res = f_readdir(&dir, &fno);                   /* Read a directory item */
+            if(res != FR_OK) {
+                printf("failed to readdir - %d\n", res);
+                break;
+            }
+            if (fno.fname[0] == 0) break;  /* Break on end of dir */
+            if (fno.fattrib & AM_DIR) {                    /* It is a directory */
+                printf("/%s/\n", fno.fname);
+            } else {                                       /* It is a file. */
+                printf("/%s\n", fno.fname);
+            }
+        }
+        f_closedir(&dir);
+    } else {
+        printf("failed to f_opendir - %d\n", res);
+    }
+    return COMMAND_CONTINUE;
+}
+
+int doCommandSolidFill(char **words, int wordCount)
+{
+    uint32_t fill = strtoul(words[1], NULL, 0);
+    videoMode = VIDEO_PALETTIZED;
+    printf("solid image with %08lXl word\n", fill);
+    showSolidFramebuffer(fill);
+    return COMMAND_CONTINUE;
+}
+
+int doCommandScopeFill(char **words, int wordCount)
+{
+    videoMode = VIDEO_PALETTIZED;
+    int degrees = strtol(words[1], NULL, 0);
+    printf("vector scope image at %d degrees phase\n", degrees);
+    showVectorScopeImage(degrees);
+    return COMMAND_CONTINUE;
+}
+
+int doCommandShowImage(char **words, int wordCount)
+{
+    videoMode = VIDEO_PALETTIZED;
+
+    // Must have been quantized to 256 colors!
+    if(readImage(words[1])) {
+        printf("failed to show \"%s\"\n", words[1]); 
+    }
+    return COMMAND_CONTINUE;
+}
+
+int doCommandTestSDSpeed(char **words, int wordCount)
+{
+    const int megabytes = 2;
+    printf("will read %d megabyte of SD\n", megabytes);
+
+    SERIAL_flush();
+
+    int then = HAL_GetTick();
+    for(int i = 0; i < megabytes * 1024 * 1024 / SD_BLOCK_SIZE; i++)
+        SDCARD_readblock(i, sd_buffer);
+    int now = HAL_GetTick();
+
+    int kilobytes = megabytes * 1024;
+    int millis = now - then;
+    int kb_per_second = kilobytes * 1000 / millis;
+
+    printf("done, %d KB per second\n", kb_per_second);
+
+    return COMMAND_CONTINUE;
+}
+
+int doCommandDumpKbdData(char **words, int wordCount)
+{
+    gDumpKeyboardData = !gDumpKeyboardData;
+    if(gDumpKeyboardData)
+        printf("Dumping keyboard data...\n");
+    else
+        printf("Not dumping keyboard data...\n");
+    return COMMAND_CONTINUE;
+}
+
+int doCommandFlashInfoLED(char **words, int wordCount)
+{
+    for(int i = 0; i < 8; i++) {
+        LED_set_info(1);
+        delay_ms(125);
+        LED_set_info(0);
+        delay_ms(125);
+    }
+    return COMMAND_CONTINUE;
+}
+
+int doCommandPanic(char **words, int wordCount)
+{
+    printf("panicking now\n");
+    panic();
+    return COMMAND_CONTINUE; /* notreached */
+}
+
+int doCommandShowVersion(char **words, int wordCount)
+{
+    printf("%s\n", IOBOARD_FIRMWARE_VERSION_STRING);
+    return COMMAND_CONTINUE;
+}
+
+int doCommandSetDebugLevel(char **words, int wordCount)
+{
+    gDebugLevel = strtol(words[1], NULL, 0);
+    printf("Debug level set to %d\n", gDebugLevel);
+    return COMMAND_CONTINUE;
+}
+
+int doCommandReadBlock(char **words, int wordCount)
+{
+    int n = strtol(words[1], NULL, 0);
+    if(SDCARD_readblock(n, sd_buffer)) {
+        dump_buffer_hex(4, sd_buffer, sizeof(sd_buffer));
+    }
+    return COMMAND_CONTINUE;
+}
+
+
+// Return COMMAND_CONTINUE to continue execution, return other to report an error and
+// terminate operation of a script.
+typedef int (*ProcessCommandFunc)(char **words, int wordcount);
+
+typedef struct Command {
+    const char *word;   /* the command itself */
+    int minWords;      /* including command, like argc */
+    ProcessCommandFunc go;
+    const char *form;   /* command form for usage message */
+    const char *help;   /* human-readable guidance for command */
+} Command;
+
+Command commands[] = {
+    {
+        "stream", 4, doCommandStream, "name M N",
+        "stream images from templated name (e.g. 'frame%05d') from number M to N"
+    },
+    {
+        "sdreset", 1, doCommandSDReset, "",
+        "reset SD card"
+    },
+    {
+        "videotest", 1, doCommandVideoTest, "",
+        "switch to video test mode"
+    },
+    {
+        "grayscale", 1, doCommandGrayscale, "",
+        "switch to grayscale image mode"
+    },
+    {
+        "stats", 1, doCommandScanoutStats, "",
+        "toggle viewing of scanout error statistics"
+    },
+    {
+        "yiq", 1, doCommandVideoYIQ, "",
+        "switch to YIQ palettized video mode"
+    },
+    {
+        "text", 1, doCommandVideoText, "",
+        "toggle text into bitmap mode"
+    },
+    {
+        "rowcycles", 1, doCommandScanoutCycles, "",
+        "print time spent in each row operation"
+    },
+    {
+        "ls", 1, doCommandLS, "",
+        "list files on SD"
+    },
+    {
+        "solid", 2, doCommandSolidFill, "fillword",
+        "fill video with specified long int"
+    },
+    {
+        "scope", 2, doCommandScopeFill, "degrees",
+        "fill with scope signal with degree offset"
+    },
+    {
+        "show", 2, doCommandShowImage, "name",
+        "show 194x224 24-bit RGB image blob (must be quantized to 254)"
+    },
+    {
+        "sdspeed", 1, doCommandTestSDSpeed, "",
+        "test SD read speed"
+    },
+    {
+        "dumpkbd", 1, doCommandDumpKbdData, "",
+        "dump keyboard data"
+    },
+    {
+        "flashinfo", 1, doCommandFlashInfoLED, "",
+        "flash the info LED"
+    },
+    {
+        "panic", 1, doCommandPanic, "",
+        "panic"
+    },
+    {
+        "version", 1, doCommandShowVersion, "",
+        "display build version string"
+    },
+    {
+        "debug", 2, doCommandSetDebugLevel, "N",
+        "set debugging level to N"
+    },
+    {
+        "read", 2, doCommandReadBlock, "read N",
+        "read and dump out SD block N"
+    },
+};
+static const int commandsCount = sizeof(commands) / sizeof(commands[0]);
+
+void usage()
+{
+    int maxNeeded = 0;
+    for(int which = 0; which < commandsCount; which++) {
+        Command *cmd = commands + which;
+        int needed = strlen(cmd->word) + 1 + strlen(cmd->form);
+        maxNeeded = (needed > maxNeeded) ? needed : maxNeeded;
+    }
+    for(int which = 0; which < commandsCount; which++) {
+        Command *cmd = commands + which;
+        printf("%s %s", cmd->word, cmd->form);
+        // XXX some day be smarter about word wrap etc
+        printf("%*s - %s\n", maxNeeded - strlen(cmd->word) - 1 - strlen(cmd->form), "", cmd->help);
+    }
+}
+
+#define CommandWordsMax 10
+
+int processCommandLine(char *line)
+{
+    static char *words[CommandWordsMax];
+
+    int wordsCount = splitString(line, words, CommandWordsMax);
+
+    if(wordsCount == 0) {
+        return COMMAND_CONTINUE;
+    }
+
+    if(wordsCount == CommandWordsMax) {
+        printf("(warning, parsing command filled word storage)\n");
+        printf("(arguments %d and after were combined)\n", CommandWordsMax);
+    }
+
+    int found = 0;
+    for(int which = 0; which < commandsCount; which++) {
+        Command *cmd = commands + which;
+        if(strcmp(words[0], cmd->word) == 0) {
+            found = 1;
+            if(wordsCount < cmd->minWords) {
+                printf("expected at least %d words for command \"%s\", parsed only %d\n", cmd->minWords, cmd->word, wordsCount);
+                usage();
+            } else {
+                return cmd->go(words, wordsCount);
+            }
+        }
+    }
+
+    if(!found) {
+        printf("Unknown command \"%s\"\n", words[0]);
+        usage();
+    }
+    return COMMAND_CONTINUE; // XXX COMMAND_UNKNOWN?
+}
 
 void process_local_key(unsigned char c)
 {
@@ -1031,229 +1467,7 @@ void process_local_key(unsigned char c)
         putchar('\n');
         gMonitorCommandBuffer[gMonitorCommandBufferLength] = 0;
 
-        if((strcmp(gMonitorCommandBuffer, "help") == 0) ||
-           (strcmp(gMonitorCommandBuffer, "h") == 0) ||
-           (strcmp(gMonitorCommandBuffer, "?") == 0)) {
-
-            usage();
-
-        } else if(strcmp(gMonitorCommandBuffer, "sdreset") == 0) {
-
-            printf("Resetting SD card...\n");
-
-            if(!SDCARD_init())
-                printf("Failed to start access to SD card as SPI\n");
-
-        } else if(strncmp(gMonitorCommandBuffer, "porch ", 6) == 0) {
-
-            char *p = gMonitorCommandBuffer + 5;
-            while(*p == ' ')
-                p++;
-            syncPorchDACValue = strtol(p, NULL, 0);
-            printf("syncPorchDACValue set to %d\n", syncPorchDACValue);
-            generateRowBuffers();
-
-        } else if(strncmp(gMonitorCommandBuffer, "burstmax ", 9) == 0) {
-
-            char *p = gMonitorCommandBuffer + 9;
-            while(*p == ' ')
-                p++;
-            int burstMax = strtol(p, NULL, 0);
-            printf("burstMax set to %d\n", burstMax);
-            burstPhase180 = burstMax;
-            burstPhase270 = burstMax;
-            fillBlankLineBuffer(rowBlankLineBuffer);
-
-        } else if(strncmp(gMonitorCommandBuffer, "burstmin ", 9) == 0) {
-
-            char *p = gMonitorCommandBuffer + 9;
-            while(*p == ' ')
-                p++;
-            int burstMin = strtol(p, NULL, 0);
-            printf("burstMin set to %d\n", burstMin);
-            burstPhase0 = burstMin;
-            burstPhase90 = burstMin;
-            fillBlankLineBuffer(rowBlankLineBuffer); // XXX
-
-        } else if(strncmp(gMonitorCommandBuffer, "burst ", 6) == 0) {
-
-            char *p = gMonitorCommandBuffer + 5;
-            while(*p == ' ')
-                p++;
-            withColorBurst = strtol(p, NULL, 0);
-            printf("withColorBurst set to %d\n", withColorBurst);
-            fillBlankLineBuffer(rowBlankLineBuffer); // XXX
-
-        } else if(strcmp(gMonitorCommandBuffer, "videotest") == 0) {
-
-            videoMode = VIDEO_COLOR_TEST;
-
-        } else if(strcmp(gMonitorCommandBuffer, "videoimage") == 0) {
-
-            videoMode = VIDEO_IMAGE;
-
-        } else if(strcmp(gMonitorCommandBuffer, "stats") == 0) {
-
-            showScanoutStats = !showScanoutStats;
-            if(!showScanoutStats) {
-                debugOverlayEnabled = 0;
-            }
-
-        } else if(strcmp(gMonitorCommandBuffer, "yiq") == 0) {
-
-            videoMode = VIDEO_IMAGE_PALETTIZED;
-
-        } else if(strcmp(gMonitorCommandBuffer, "text") == 0) {
-
-            gOutputDevices = gOutputDevices ^ OUTPUT_TO_VIDEO;
-
-        } else if(strcmp(gMonitorCommandBuffer, "rowcycles") == 0) {
-
-            for(int i = 0; i < 262; i++) {
-                printf("row %3d: %8lu cycles, %lu microseconds", i, rowCyclesSpent[i],
-                    rowCyclesSpent[i] / (SystemCoreClock / 1000000));
-                if(rowCyclesSpent[i] > 10677) {
-                    printf(", overrun by %lu%%\n", rowCyclesSpent[i] * 100 / 10677 - 100);
-                } else { 
-                    printf(", %lu%% remained\n", (10677 - rowCyclesSpent[i]) * 100 / 10677);
-                }
-            }
-
-        } else if(strncmp(gMonitorCommandBuffer, "ls", 2) == 0) {
-
-            FRESULT res;
-            DIR dir;
-            static FILINFO fno;
-
-            res = f_opendir(&dir, "/");                       /* Open the directory */
-            if (res == FR_OK) {
-                for (;;) {
-                    res = f_readdir(&dir, &fno);                   /* Read a directory item */
-                    if(res != FR_OK) {
-                        printf("failed to readdir - %d\n", res);
-                        break;
-                    }
-                    if (fno.fname[0] == 0) break;  /* Break on end of dir */
-                    if (fno.fattrib & AM_DIR) {                    /* It is a directory */
-                        printf("/%s/\n", fno.fname);
-                    } else {                                       /* It is a file. */
-                        printf("/%s\n", fno.fname);
-                    }
-                }
-                f_closedir(&dir);
-            } else {
-                printf("failed to f_opendir - %d\n", res);
-            }
-
-        } else if(strncmp(gMonitorCommandBuffer, "solid ", 6) == 0) {
-
-            if(videoMode == VIDEO_COLOR_TEST) {
-                videoMode = VIDEO_IMAGE_PALETTIZED;
-            }
-
-            char *p = gMonitorCommandBuffer + 6;
-            while(*p == ' ')
-                p++;
-            uint32_t word = strtoul(p, NULL, 0);
-            printf("solid image with %lu word\n", word);
-            showSolidFramebuffer(word);
-
-        } else if(strncmp(gMonitorCommandBuffer, "scope ", 6) == 0) {
-
-            if(videoMode == VIDEO_COLOR_TEST) {
-                videoMode = VIDEO_IMAGE_PALETTIZED;
-            }
-
-            char *p = gMonitorCommandBuffer + 6;
-            while(*p == ' ')
-                p++;
-            int degrees = strtol(p, NULL, 0);
-            printf("vector scope image at %d degrees phase\n", degrees);
-            showVectorScopeImage(degrees);
-
-        } else if(strncmp(gMonitorCommandBuffer, "show ", 5) == 0) {
-
-            if(videoMode == VIDEO_COLOR_TEST) {
-                videoMode = VIDEO_IMAGE_PALETTIZED;
-            }
-
-            char *p = gMonitorCommandBuffer + 5;
-            while(*p == ' ')
-                p++;
-
-            // Must have been quantized to 256 colors!
-            if(readImage(p)) {
-                printf("failed to show \"%s\"\n", p); 
-            }
-
-        } else if(strcmp(gMonitorCommandBuffer, "sdspeed") == 0) {
-
-            const int megabytes = 2;
-            printf("will read %d megabyte of SD\n", megabytes);
-
-            SERIAL_flush();
-
-            int then = HAL_GetTick();
-            for(int i = 0; i < megabytes * 1024 * 1024 / SD_BLOCK_SIZE; i++)
-                SDCARD_readblock(i, sd_buffer);
-            int now = HAL_GetTick();
-
-            int kilobytes = megabytes * 1024;
-            int millis = now - then;
-            int kb_per_second = kilobytes * 1000 / millis;
-
-            printf("done, %d KB per second\n", kb_per_second);
-
-        } else if(strcmp(gMonitorCommandBuffer, "dumpkbd") == 0) {
-
-            gDumpKeyboardData = !gDumpKeyboardData;
-            if(gDumpKeyboardData)
-                printf("Dumping keyboard data...\n");
-            else
-                printf("Not dumping keyboard data...\n");
-
-        } else if(strcmp(gMonitorCommandBuffer, "flashinfo") == 0) {
-
-            for(int i = 0; i < 8; i++) {
-                LED_set_info(1);
-                delay_ms(125);
-                LED_set_info(0);
-                delay_ms(125);
-            }
-
-        } else if(strcmp(gMonitorCommandBuffer, "panic") == 0) {
-
-            printf("panicking now\n");
-            panic();
-
-        } else if(strcmp(gMonitorCommandBuffer, "version") == 0) {
-
-            printf("%s\n", IOBOARD_FIRMWARE_VERSION_STRING);
-
-        } else if(strncmp(gMonitorCommandBuffer, "debug ", 6) == 0) {
-
-            char *p = gMonitorCommandBuffer + 5;
-            while(*p == ' ')
-                p++;
-            gDebugLevel = strtol(p, NULL, 0);
-            printf("Debug level set to %d\n", gDebugLevel);
-
-        } else if(strncmp(gMonitorCommandBuffer, "read ", 5) == 0) {
-
-            char *p = gMonitorCommandBuffer + 4;
-            while(*p == ' ')
-                p++;
-            int n = strtol(p, NULL, 0);
-            if(SDCARD_readblock(n, sd_buffer)) {
-                dump_buffer_hex(4, sd_buffer, sizeof(sd_buffer));
-            }
-
-        } else {
-
-            printf("Unknown command.\n");
-            usage();
-        }
-
+        processCommandLine(gMonitorCommandBuffer);
         printf("* ");
         gMonitorCommandBufferLength = 0;
 
@@ -1278,12 +1492,6 @@ void process_local_key(unsigned char c)
         }
     // TODO - upload data, write block
     }
-}
-
-void stopRowDMA()
-{
-    DMA2_Stream2->CR &= ~DMA_SxCR_EN;       /* disable DMA */
-    TIM1->CR1 &= ~TIM_CR1_CEN;            /* disable the timer */
 }
 
 void DeInitRCCAndPLL()
@@ -1317,7 +1525,7 @@ void initRowDMA(uint32_t dmaCount)
     GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
     HAL_GPIO_Init(GPIOC, &GPIO_InitStruct); 
 
-    HAL_NVIC_SetPriority(DMA2_Stream2_IRQn, 2, 1);
+    HAL_NVIC_SetPriority(DMA2_Stream2_IRQn, 0, 1);
     HAL_NVIC_EnableIRQ(DMA2_Stream2_IRQn);
 
     // STEP 2: configure DMA to double buffer write 910 bytes from row0 and then row1 at 14.318180
@@ -1338,19 +1546,18 @@ void initRowDMA(uint32_t dmaCount)
         DMA_MINC_ENABLE |                       // Increment memory address
         DMA_IT_TC |                             // Interrupt on transfer complete of each buffer 
         0;
-#else // XXX 32-bit aligned DMAs experiment
+#else // XXX 32-bit aligned DMAs experiment - seems to work
     DMA2_Stream2->NDTR = 912;
     DMA2_Stream2->M0AR = (uint32_t)row0;        // Source buffer address 0
     DMA2_Stream2->M1AR = (uint32_t)row1;        // Source buffer address 1 
     DMA2_Stream2->PAR = (uint32_t)&GPIOC->ODR;  // Destination address
     DMA2_Stream2->FCR = DMA_FIFOMODE_ENABLE |   // Enable FIFO to improve stutter
-        DMA_FIFO_THRESHOLD_1QUARTERFULL;        
+        DMA_FIFO_THRESHOLD_FULL;        
     DMA2_Stream2->CR =
         DMA_CHANNEL_6 |                         // which channel is driven by which timer to which peripheral is limited
         DMA_MEMORY_TO_PERIPH |                  // Memory to Peripheral
         DMA_PDATAALIGN_BYTE |                   // BYTES to peripheral
-        // DMA_MDATAALIGN_WORD | DMA_MBURST_INC4 |
-        DMA_MDATAALIGN_HALFWORD |
+        DMA_MDATAALIGN_WORD | DMA_MBURST_INC4 |
         DMA_SxCR_DBM |                          // double buffer
         DMA_PRIORITY_VERY_HIGH |                // Video data must be highest priority, can't stutter
         DMA_MINC_ENABLE |                       // Increment memory address
@@ -1371,11 +1578,17 @@ void initRowDMA(uint32_t dmaCount)
     fieldNumber = 0; 
 
     // Clear FIFO and transfer error flags
-    DMA2->LIFCR |= DMA_LIFCR_CTCIF2;
+    DMA2->LIFCR |= DMA_LIFCR_CFEIF2;
     DMA2->LIFCR |= DMA_LIFCR_CTEIF2;
 
     DMA2_Stream2->CR |= DMA_SxCR_EN;    /* enable DMA */
     TIM1->CR1 = TIM_CR1_CEN;            /* enable the timer */
+}
+
+void stopRowDMA()
+{
+    DMA2_Stream2->CR &= ~DMA_SxCR_EN;       /* disable DMA */
+    TIM1->CR1 &= ~TIM_CR1_CEN;            /* disable the timer */
 }
 
 void initVideoSignalParameters(float clock)
@@ -1422,21 +1635,27 @@ void CCM_RAM_init_vars()
     whiteDACValue = voltageToDACValue(NTSC_SYNC_WHITE_VOLTAGE);
     maxDACValue = 255;
     memcpy(font8x16Bits, font8x16BitsSrc, sizeof(font8x16BitsSrc));
-    paletteUInt32[255] = 
+    paletteUInt32[1][255] = paletteUInt32[0][255] = 
         (whiteDACValue <<  0) |
         (whiteDACValue <<  8) |
         (whiteDACValue << 16) |
         (whiteDACValue << 24);
-    paletteUInt32[254] = 
+    paletteUInt32[1][254] = paletteUInt32[0][254] = 
         (blackDACValue <<  0) |
         (blackDACValue <<  8) |
         (blackDACValue << 16) |
         (blackDACValue << 24);
+    memset(rowPalette, 0, sizeof(rowPalette));
 }
 
 int main()
 {
     HAL_Init();
+
+    uint32_t* oldVectorTable = (uint32_t*)SCB->VTOR;
+    memcpy(vectorTable, oldVectorTable, sizeof(vectorTable));
+    SCB->VTOR = (uint32_t)vectorTable; // This didn't help glitching, and can't be in *data* CCM RAM
+
     SystemClock_Config(); // XXX resets all CCM variables.
 
     LED_init();
