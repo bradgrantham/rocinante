@@ -6,8 +6,28 @@ In the Alice 3, we used a dedicated Propeller to output a textport to VGA freque
 
 DAC
 
-color
+# Color
 
-framebuffer implementation
+Every NTSC scanline has a “colorburst” in the off-screen part of the line, at 3.579545 MHz.  This burst has the same *average* amplitude as the off-screen blank part of the line, and was much higher frequency than the usual pixel frequency, so B/W sets would just ignore it.
+
+A color scanline was separated into luminance and chroma before transmission. A 3.579545MHz signal encoded the chroma with it’s phase (the hue; e.g. blue is 347 degrees, red is 103, green is 241) and it’s amplitude (saturation; 0 is gray, 1 is full color).  The luminance signal (0 to 1) and chroma (-1 to +1 scaled by the saturation) were added together for broadcast or composite cables.
+
+Color TVs knew to separate out the high-frequency component and turn that back into hue, saturation, and value (luminance or brightness).  B/W sets would not separate the high-frequency color signal so would just display the average signal so it would just show up as grayscale.
+
+I think there’s some subtlety there to broadcast and where the signals lie in spectrum allocated to the channel.  The video alludes to it.  I don’t understand radio, so I’ll just wave my hands.
+
+I just implemented all that in a microcontroller (mentioned in the other channel) and it’s bonkers.
+
+You already saw this picture, Drew, but in case anyone else is following, here’s a picture I’ve turned into NTSC video.  The green lines happen because I get a glitch sometimes in which causes the pixels are offset by 1/4 of a 3.579545MHz wave, so the colors are all rotated around the color wheel.  It’s pissing me off, because I haven’t been able to make it go away, but it’s pretty cool because it illustrates NTSC and the color signal phase!
+
+# DAC
+
+8 pins from a microcontroller are connected through resistors to form a (really bad) analog signal which I make slightly better with capacitors.
+
+# Signal generation
+
+I think I’ve done something stupid in the interests of being completely controllable by software.
+
+I’m pretty sure a framebuffer from the 70's and 80's would turn RGB into YUV (“YIQ” for NTSC) and use logic to indicate when horizontal and digital sync signals should be.  Those would feed an analog circuit that would output a much higher quality analog signal.
 
 
