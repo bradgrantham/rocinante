@@ -28,9 +28,6 @@
 #include "keyboard.h"
 #include "reset_button.h"
 
-const int gStandaloneARM = 1;
-int gSnoopVideo = 1;
-
 static int gDumpKeyboardData = 0;
 
 void panic_worse()
@@ -238,21 +235,11 @@ void __io_putchar( char c )
         SERIAL_enqueue_one_char(c);
     if(gOutputDevices & OUTPUT_TO_VIDEO)
         VIDEO_putchar(c);
-    if(!gStandaloneARM && (gOutputDevices & OUTPUT_TO_VIDEO)) {
-        // if(c == '\n') // XXX
-            // BUS_write_IO(VIDEO_BOARD_OUTPUT_ADDR, '\r');
-        // BUS_write_IO(VIDEO_BOARD_OUTPUT_ADDR, c);
-    }
 }
 
 void errorchar(char c)
 {
     SERIAL_enqueue_one_char(c);
-    if(!gStandaloneARM) {
-        // if(c == '\n') // XXX
-            // BUS_write_IO(VIDEO_BOARD_OUTPUT_ADDR, '\r');
-        // BUS_write_IO(VIDEO_BOARD_OUTPUT_ADDR, c);
-    }
 }
 
 void errorchar_flush()
@@ -279,8 +266,12 @@ uint32_t /* __attribute__((section (".ccmram"))) */ vectorTable[100] __attribute
 uint32_t __attribute__((section (".ccmram"))) rowCyclesSpent[262];
 uint32_t __attribute__((section (".ccmram"))) DMAFIFOUnderruns;
 uint32_t __attribute__((section (".ccmram"))) DMATransferErrors;
-typedef enum { VIDEO_COLOR_TEST, VIDEO_GRAYSCALE, VIDEO_PALETTIZED } VideoMode;
+typedef enum { VIDEO_COLOR_TEST, VIDEO_GRAYSCALE, VIDEO_PALETTIZED, VIDEO_SCAN_TEST } VideoMode;
 VideoMode __attribute__((section (".ccmram"))) videoMode;
+int __attribute__((section (".ccmram"))) videoScanTestLeft;
+int __attribute__((section (".ccmram"))) videoScanTestRight;
+int __attribute__((section (".ccmram"))) videoScanTestTop;
+int __attribute__((section (".ccmram"))) videoScanTestBottom;
 int withColorBurst = 1;
 
 void check_exceptional_conditions()
@@ -441,7 +432,6 @@ void fillEQPulseBuffer(unsigned char *rowBuffer)
 void fillVSyncBuffer(unsigned char *rowBuffer)
 {
     for (int col = 0; col < lineTicks; col++) {
-        // if (col < lineTicks/2-vsyncPulseTicks || (col > lineTicks/2 && col < vsyncPulseTicks)) {
         if (col < vsyncPulseTicks || (col > lineTicks/2 && col < lineTicks/2 + vsyncPulseTicks)) {
             rowBuffer[col] = syncTipDACValue;
         } else {
@@ -561,6 +551,14 @@ void fillRowBuffer(int fieldNumber, int rowNumber, unsigned char *rowBuffer)
                     unsigned char pixel = *imgRow++;
                     uint32_t word = palette[pixel];
                     *rowWords++ = word;
+                }
+                break;
+            }
+            case VIDEO_SCAN_TEST: {
+                if(rowNumber >= videoScanTestTop && rowNumber <= videoScanTestBottom) {
+                    for(int row = videoScanTestLeft; row < videoScanTestRight; row++) {
+                        tmpRow[row] = 200;
+                    }
                 }
                 break;
             }
@@ -799,11 +797,11 @@ int readImage(const char *filename)
 //----------------------------------------------------------------------------
 // DMA and debug scanout specifics
 
-int fontWidth = 5, fontHeight = 7;
-unsigned char fontMask = 0xfc;
-int fontOffset = 32;
+static const int fontWidth = 5, fontHeight = 7;
+// static const unsigned char fontMask = 0xfc;
+static const int fontOffset = 32;
 
-unsigned char fontBytes[] = {
+static const unsigned char fontBytes[] = {
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x20, 0x20, 0x20, 0x20, 0x00, 0x20, 0x00,
     0x50, 0x50, 0x50, 0x00, 0x00, 0x00, 0x00,
@@ -923,7 +921,7 @@ void VIDEO_putchar(char c)
     } else {
 
         if(c >= fontOffset) {
-            unsigned char *glyph = fontBytes + fontHeight * (c - fontOffset);
+            const unsigned char *glyph = fontBytes + fontHeight * (c - fontOffset);
             for(int gx = 0; gx < fontWidth + 1; gx++) {
                 for(int gy = 0; gy < fontHeight + 1; gy++) {
                     int v;
@@ -968,7 +966,7 @@ char __attribute__((section (".ccmram"))) debugDisplay[debugDisplayHeight][debug
 
 #include "8x16.h"
 // static int font8x16Width = 8, font8x16Height = 16;
-// static unsigned char font8x16Bits[] = {
+// static unsigned char font8x16Bits[] = /* was a bracket here */
 
 /* 8x16 font, 4x width, doubled height */
 
@@ -1313,6 +1311,32 @@ int doCommandReadBlock(char **words, int wordCount)
     return COMMAND_CONTINUE;
 }
 
+int doCommandTestRect(char **words, int wordCount)
+{
+    videoMode = VIDEO_SCAN_TEST;
+    do {
+        SERIAL_poll_continue();
+        unsigned char isEmpty = queue_isempty(&mon_queue.q);
+        if(!isEmpty) {
+            unsigned char c = queue_deq(&mon_queue.q);
+            switch(c) {
+                case 'l': videoScanTestLeft--; break;
+                case 'L': videoScanTestLeft++; break;
+                case 'r': videoScanTestRight--; break;
+                case 'R': videoScanTestRight++; break;
+                case 't': videoScanTestTop--; break;
+                case 'T': videoScanTestTop++; break;
+                case 'b': videoScanTestBottom--; break;
+                case 'B': videoScanTestBottom++; break;
+                case 'q': break; break;
+            }
+            printf("rect is %d, %d, %d, %d\n", videoScanTestLeft, videoScanTestRight, videoScanTestTop, videoScanTestBottom);
+            SERIAL_flush();
+        }
+        delay_ms(10);
+    } while(1);
+    return COMMAND_CONTINUE;
+}
 
 // Return COMMAND_CONTINUE to continue execution, return other to report an error and
 // terminate operation of a script.
@@ -1327,6 +1351,10 @@ typedef struct Command {
 } Command;
 
 Command commands[] = {
+    {
+        "rect", 1, doCommandTestRect, "",
+        "run interactive over/underscan test"
+    },
     {
         "stream", 4, doCommandStream, "name M N",
         "stream images from templated name (e.g. 'frame%05d') from number M to N"
@@ -1646,6 +1674,10 @@ void CCM_RAM_init_vars()
         (blackDACValue << 16) |
         (blackDACValue << 24);
     memset(rowPalette, 0, sizeof(rowPalette));
+    videoScanTestLeft = 200;
+    videoScanTestRight = 700;
+    videoScanTestTop = 50;
+    videoScanTestBottom = 450;
 }
 
 int main()
