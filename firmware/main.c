@@ -269,7 +269,7 @@ volatile unsigned char gSerialInputToMonitor = 1;
 
 unsigned char sd_buffer[SD_BLOCK_SIZE];
 
-int __attribute__((section (".ccmram"))) showSpikeAtHandlerEnd = 1;
+int __attribute__((section (".ccmram"))) markHandlerInSamples = 0;
 
 uint32_t __attribute__((section (".ccmram"))) rowCyclesSpent[262];
 uint32_t __attribute__((section (".ccmram"))) DMAFIFOUnderruns;
@@ -392,9 +392,9 @@ unsigned char voltageToDACValue(float voltage)
 #define NTSC_SYNC_WHITE_VOLTAGE   1.0f  /* VCR had .912v */
 
 // These are in CCM to reduce contention with SRAM1 during DMA 
-unsigned char __attribute__((section (".ccmram"))) NTSCEqSyncPulseLine[1024];
-unsigned char __attribute__((section (".ccmram"))) NTSCVsyncLine[1024];
-unsigned char __attribute__((section (".ccmram"))) NTSCBlankLine[1024];
+unsigned char __attribute__((section (".ccmram"))) NTSCEqSyncPulseLine[ROW_SAMPLES];
+unsigned char __attribute__((section (".ccmram"))) NTSCVsyncLine[ROW_SAMPLES];
+unsigned char __attribute__((section (".ccmram"))) NTSCBlankLine[ROW_SAMPLES];
 
 unsigned char __attribute__((section (".ccmram"))) NTSCSyncTip;
 unsigned char __attribute__((section (".ccmram"))) NTSCSyncPorch;
@@ -413,18 +413,18 @@ int NTSCBackPorchClocks;
 #define MAX_PALETTE_ENTRIES 254
 #define PALETTE_WHITE 255
 #define PALETTE_BLACK 254
-unsigned char __attribute__((section (".ccmram"))) imgBuffer[256 * 200];
+unsigned char __attribute__((section (".ccmram"))) imgBuffer[224 * 200];
 uint32_t __attribute__((section (".ccmram"))) paletteUInt32[2][256];
 unsigned char __attribute__((section (".ccmram"))) rowPalette[256];
 
 unsigned char *imgBufferRow(int row) { return imgBuffer + row * 200; }
-        // 244 lines
+        // 224 lines
         // 189 columns @ 4 per pixel
 unsigned char *imgBufferPixel(int x, int y) { return imgBufferRow(y) + x; }
 
 // XXX these are in SRAM2 to reduce contention with SRAM1 during DMA
-unsigned char __attribute__((section (".sram2"))) row0[1024];
-unsigned char __attribute__((section (".sram2"))) row1[1024];
+unsigned char __attribute__((section (".sram2"))) row0[ROW_SAMPLES];
+unsigned char __attribute__((section (".sram2"))) row1[ROW_SAMPLES];
 unsigned char __attribute__((section (".sram2"))) audio0[512];
 unsigned char __attribute__((section (".sram2"))) audio1[512];
 
@@ -511,17 +511,17 @@ void NTSCFillRowBuffer(int fieldNumber, int rowNumber, unsigned char *rowBuffer)
     if(rowNumber < NTSC_EQPULSE_LINES) {
 
         // XXX should just change DMA source address but then these need to be in SRAM2
-        memcpy(rowBuffer, NTSCEqSyncPulseLine, 1024);
+        memcpy(rowBuffer, NTSCEqSyncPulseLine, sizeof(NTSCEqSyncPulseLine));
 
     } else if(rowNumber - NTSC_EQPULSE_LINES < NTSC_VSYNC_LINES) {
 
         // XXX should just change DMA source address but then these need to be in SRAM2
-        memcpy(rowBuffer, NTSCVsyncLine, 1024);
+        memcpy(rowBuffer, NTSCVsyncLine, sizeof(NTSCVsyncLine));
 
     } else if(rowNumber - (NTSC_EQPULSE_LINES + NTSC_VSYNC_LINES) < NTSC_EQPULSE_LINES) {
 
         // XXX should just change DMA source address but then these need to be in SRAM2
-        memcpy(rowBuffer, NTSCEqSyncPulseLine, 1024);
+        memcpy(rowBuffer, NTSCEqSyncPulseLine, sizeof(NTSCEqSyncPulseLine));
 
     } else if(rowNumber - (NTSC_EQPULSE_LINES + NTSC_VSYNC_LINES + NTSC_EQPULSE_LINES) < NTSC_VBLANK_LINES) {
 
@@ -530,11 +530,13 @@ void NTSCFillRowBuffer(int fieldNumber, int rowNumber, unsigned char *rowBuffer)
          */
 
         // XXX should just change DMA source address, then this needs to be in SRAM2
-        memcpy(rowBuffer, NTSCBlankLine, 1024);
+        memcpy(rowBuffer, NTSCBlankLine, sizeof(NTSCBlankLine));
 
     } else {
 
-        memcpy(rowBuffer, NTSCBlankLine, 1024);
+        // XXX copying a lot of bytes here that are immediately overwritten...
+        memcpy(rowBuffer, NTSCBlankLine, sizeof(NTSCBlankLine));
+
         // 244 lines
         // 189 columns @ 4 per pixel
         int y = rowNumber - (NTSC_EQPULSE_LINES + NTSC_VSYNC_LINES + NTSC_EQPULSE_LINES + NTSC_VBLANK_LINES);
@@ -559,25 +561,29 @@ void NTSCFillRowBuffer(int fieldNumber, int rowNumber, unsigned char *rowBuffer)
                 break;
             }
             case VIDEO_GRAYSCALE: {
-                unsigned char *imgRow = imgBufferRow(y);
-                unsigned char *rowOut = rowBuffer + (NTSCHSyncClocks + NTSCBackPorchClocks + 3) / 4 * 4 + 20 * 4;
-                uint32_t* rowWords = (uint32_t*)rowOut;
-                for(int col = 0; col < 189; col++) {
-                    unsigned char v = *imgRow++;
-                    uint32_t colorWord = (v << 0) | (v << 8) | (v << 16) | (v << 24);
-                    *rowWords++ = colorWord;
+                if(y < 224) {
+                    unsigned char *imgRow = imgBufferRow(y);
+                    unsigned char *rowOut = rowBuffer + (NTSCHSyncClocks + NTSCBackPorchClocks + 3) / 4 * 4 + 20 * 4;
+                    uint32_t* rowWords = (uint32_t*)rowOut;
+                    for(int col = 0; col < 189; col++) {
+                        unsigned char v = *imgRow++;
+                        uint32_t colorWord = (v << 0) | (v << 8) | (v << 16) | (v << 24);
+                        *rowWords++ = colorWord;
+                    }
                 }
                 break;
             }
             case VIDEO_PALETTIZED: {
-                unsigned char *imgRow = imgBufferRow(y);
-                uint32_t* palette = paletteUInt32[rowPalette[y]];
-                unsigned char *rowOut = rowBuffer + (NTSCHSyncClocks + NTSCBackPorchClocks + 3) / 4 * 4;
-                uint32_t* rowWords = (uint32_t*)rowOut;
-                for(int col = 0; col < 189; col++) {
-                    unsigned char pixel = *imgRow++;
-                    uint32_t word = palette[pixel];
-                    *rowWords++ = word;
+                if(y < 224) {
+                    unsigned char *imgRow = imgBufferRow(y);
+                    uint32_t* palette = paletteUInt32[rowPalette[y]];
+                    unsigned char *rowOut = rowBuffer + (NTSCHSyncClocks + NTSCBackPorchClocks + 3) / 4 * 4;
+                    uint32_t* rowWords = (uint32_t*)rowOut;
+                    for(int col = 0; col < 189; col++) {
+                        unsigned char pixel = *imgRow++;
+                        uint32_t word = palette[pixel];
+                        *rowWords++ = word;
+                    }
                 }
                 break;
             }
@@ -1164,7 +1170,7 @@ int doCommandVideoText(char **words, int wordCount)
 
 int doCommandShowLineEnd(char **words, int wordCount)
 {
-    showSpikeAtHandlerEnd = !showSpikeAtHandlerEnd;
+    markHandlerInSamples = !markHandlerInSamples;
     return COMMAND_CONTINUE;
 }
 
@@ -1534,6 +1540,10 @@ volatile int __attribute__((section (".ccmram"))) fieldNumber;
 
 void DMA2_Stream2_IRQHandler(void)
 {
+    if(markHandlerInSamples) {
+        for(int i = 0; i < 28; i++) { GPIOC->ODR = 0xFFFFFFF8; }
+    }
+
     if(DMA2->LISR &= DMA_FLAG_FEIF2_6) {
         DMA2->LIFCR |= DMA_LIFCR_CFEIF2;
         DMAFIFOUnderruns++;
@@ -1579,10 +1589,8 @@ void DMA2_Stream2_IRQHandler(void)
     DMA2->LIFCR |= DMA_LIFCR_CTCIF2;
 
     // A little pulse so we know where we are on the line
-    if(showSpikeAtHandlerEnd) {
-        for(int i = 0; i < 14; i++) { GPIOC->ODR = 0xFFFFFF60; }
-        for(int i = 0; i < 28; i++) { GPIOC->ODR = 0xFFFFFFF0; }
-        for(int i = 0; i < 14; i++) { GPIOC->ODR = 0xFFFFFF60; }
+    if(markHandlerInSamples) {
+        for(int i = 0; i < 28; i++) { GPIOC->ODR = 0xFFFFFFE8; }
     }
     /* wait until a little later to return */
     // while(DMA2_Stream2->NDTR > 200); // Causes dark banding - clocks drifted?  Or voltage drop?
