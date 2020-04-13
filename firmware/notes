@@ -1,12 +1,13 @@
 Rein it in
-    go figure out underscan, overscan left, right, width, height
-    video modes
-        underscan/overscan 4-cycle 256 colors (res?)
-        underscan/overscan 2-cycle 4 grays  (res?)
-        underscan/overscan byte HAM  (res?)
-        monochrome 80x24 text - Apple font?
-        color text? - 8x16 font?
+    serial should interrupt and fill a buffer like keyboard does
+    audio
+        22050Hz?  11025Hz?  8000Hz?
+        write audio sample immediately on entry to line ISR?  Then calculate next one right after that, then do video calculation?
+            Then audio resampling would happen at the line rate for whatever video mode is current...
+        Do DMA at 22050 from double-buffered 512-byte buffers?  Could conflict with video but should be able to set priority lower.
+    CP/M emulation
     BASIC
+        just implement 80x24 text mode for now
         video N # set video mode N
         lut c, r, g, b # calculate lut entry c for int r, g, b
         plot x, y, c    # plot pixel x, y with lut c
@@ -16,6 +17,24 @@ Rein it in
         split {0,1} # split screen graphics and text (dependent on the modes?)
         handle a bunch of old BASIC programs like STARTREK, WUMPUS, ...?
         implement lunar lander
+        Life: https://www.atariarchives.org/basicgames/showpage.php?page=100
+        Lunar Lander: https://www.atariarchives.org/basicgames/showpage.php?page=106
+        Sine Wave: https://www.atariarchives.org/basicgames/showpage.php?page=146
+        Super Star Trek: https://www.atariarchives.org/basicgames/showpage.php?page=157
+        Sine Wave: https://www.atariarchives.org/basicgames/showpage.php?page=167
+    video modes
+        underscan/overscan 1-cycle monochrome (res?)
+        underscan/overscan 4-cycle 256 colors (res?)
+        underscan/overscan 2-cycle 4 grays  (res?)
+        underscan/overscan byte HAM  (res?)
+        monochrome 80x24 text - Apple font?
+            196, 832, 44, 236
+        TMS 9918A mode - expose the chip I/O
+            TMS pixels area is 192 lines high
+        Apple //e mode - give pointers to memory and soft switches
+        DCT mode
+        scanline edge rendered mode - make RGB-to-byte as fast as possible
+        virtual terminal layered on text mode
     Channel F emulator, 9pin headers (bake into controller for Bart)
     Colecovision emulator, 9pin
     Fuzix? Or should I just import "sh"?
@@ -55,23 +74,71 @@ What does going nuts look like?
         Drawing lk.ppm, suddenly switches from red to green or green to blue, or about 90 degrees, implying one missed transfer.
             So the DMA couldn't get memory for N cycles?  Or the GPIO stalled long enough to miss?
 
-struct VideoModeInfo {
+Video modes
+    80x24 text at 8x16 is 640x384
+    80x24 text at 8x8 is 640x192
+    underscan rects
+        one rect is 196, 830, 44, 236 (shorter but wider) - PROBABLY CHOOSE THIS ONE
+            to be /4, use 196, 828, 44, 236
+            636 by 192, 122112 pixels in frame, 15264 bytes at 1-bit monochrome
+                Apple 2 560x192 DHGR would fit in here
+            318 double pixels wide, 61056 pixels in frame
+            159 quad pixels wide, 30528 pixels in frame
+        one rect is 209, 819, 40, 244 (slightly narrower but taller)
+            to be /4, use 208, 820, 40, 244
+            612 by 204, 124848 pixels in frame, 15606 bytes at 1-bit monochrome
+                could get by with 512 x 200 in this mode
+                Apple 2 560x192 DHGR would fit in here
+            306 double pixels wide, 62424 pixels in frame
+            153 quad pixels wide, 31212 pixels in frame 
+        to get to 640 for 80x8 font, could do 196, 832, 44, 236
+            height of font has to also be 8 at 192 pixels tall (matches Apple 2)
+    overscan rect is 167, 862, 27, 257
+        to be /4, 164, 864, 27, 257
+        700 x 230, 20125 bytes at 1-bit monochome
+        350 double pixels wide, 80500 pixels in frame, would need to be 4-bit
+        175 quad pixels wide, 40250 pixels in frame, could support 8 bit
+
+enum VideoModeType {
+    VIDEO_RASTER,
+    VIDEO_TEXTPORT,
+    VIDEO_WOZ,
+    VIDEO_TMS9918A,
+};
+
+struct VideoRasterInfo
+{
     unsigned char* baseAddress;
-    enum Kind { PALETTIZED, TEXTPORT }; /* GAMEFIELD (sprite + background)
     int width, height; /* pixels or text */
     size_t rowSize; /* bytes */
     enum PixelFormat { BITMAP, GRAY_4BIT, GRAY_8BIT, PALETTE_4BIT, PALETTE_8BIT} pixelFormat;
     /* pixels are LSB, so 4BIT pixel N is in byte N/2 bits 0-3, and pixel N+1 is in byte N/2 bits 4-7 */
     uint32_t paletteSize; /* for convenience, matches pixelFormat */
     int color; /* for convenience, matches pixelFormat */
+    int overscan;       /* true if pixels can be offscreen */
+};
+
+struct VideoTextportInfo {
+    unsigned char* baseAddress;
+    int width, height; /* pixels or text */
+    size_t rowSize; /* bytes */
+    uint32_t paletteSize; /* for convenience, matches pixelFormat */
+        /* RICH means second byte is text byte then byte with (fc << 5) || (bc << 2) || attr */
+        /* attr can be 0b00 for normal, 0b01 for flashing, */
+    enum TextAttributes { TEXT_8BIT_WHITE_ON_BLACK, TEXT_8BIT_BLACK_ON_WHITE, TEXT_16BIT_8_3_3_2_RICH } attributes;
 };
 
 int getVideoModeCount();
-int getVideoModeInfo(int n, VideoModeInfo *info);
+
+enum VideoModeType getVideoModeType(int n);
+int getVideoRasterInfo(int n, VideoModeInfo *info);
+
 int setPaletteEntryF(int a, float r, float g, float b); /* 0 if out of range, 1 if success */
 int setPaletteEntry(int a, unsigned char r, unsigned char g, unsigned char b); /* 0 if out of range, 1 if success */
-int setPixel(int x, int y, int c);
-int setText(int x, int y, int c); /* might offset */
+int setRasterPixel(int x, int y, int c);
+int setTextportCharacter(int x, int y, int c); /* might offset */
+int setTextportCursor(int x, int y);
+int setTextportCursorType(enum { SOLID, FLASH, UNDERLINE } );
 
 for reference, H is 63555.56us
 Scope only locks to my video at line #5
