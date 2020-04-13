@@ -78,22 +78,9 @@ unsigned int whichConfig = 0;
 static const ClockConfiguration clockConfigs[] =
 {
     // Base mode we know works
-    // /* 153 */{172.21, 16000000, 19, 409, 2, 12, 3.587719, 0.002284},
-    // /* 123 */ {200.89, 16000000, 9, 226, 2, 14, 3.587302, 0.002167},
-    // {100.24, 16000000, 17, 213, 2, 7, 3.579832, 0.000080},
     {200.47, 16000000, 17, 426, 2, 14, 3.579832, 0.000080},
     // {214.77, 16000000, 13, 349, 2, 15, 3.579487, -0.000016},
 
-#if 0
-    {185.78, 16000000, 18, 418, 2, 13, 3.572650, -0.001926}, 
-    {200.89, 16000000, 9, 226, 2, 14, 3.587302, 0.002167}, 
-    {143.50, 16000000, 16, 287, 2, 10, 3.587500, 0.002222}, 
-    {172.21, 16000000, 19, 409, 2, 12, 3.587719, 0.002284}, 
-    {215.27, 16000000, 11, 296, 2, 15, 3.587879, 0.002328}, 
-    {172.24, 16000000, 17, 366, 2, 12, 3.588235, 0.002428}, 
-    {200.94, 16000000, 17, 427, 2, 14, 3.588235, 0.002428}, 
-    {201.78, 16000000, 9, 227, 2, 14, 3.603175, 0.006601}, 
-#elif 1
     {157.50, 16000000, 16, 315, 2, 11, 3.579545, 0.000000},
     {114.55, 16000000, 22, 315, 2, 8, 3.579545, 0.000000},
     {186.13, 16000000, 15, 349, 2, 13, 3.579487, -0.000016},
@@ -144,7 +131,6 @@ static const ClockConfiguration clockConfigs[] =
     {157.60, 16000000, 20, 394, 2, 11, 3.581818, 0.000635},
     {143.27, 16000000, 11, 197, 2, 10, 3.581818, 0.000635},
     {143.27, 16000000, 22, 394, 2, 10, 3.581818, 0.000635},
-#endif
 };
 static const unsigned int clockConfigCount = sizeof(clockConfigs) / sizeof(clockConfigs[0]);
 
@@ -194,7 +180,7 @@ static void SystemClock_Config(void)
     panic();
   }
 
-  // 415 comes up by default with D$ and I$ enabled and prefetch enabled
+  // 415 comes up by default with D$ and I$ enabled and prefetch enabled, or HAL_Init sets them
   // FLASH->ACR |= FLASH_ACR_PRFTEN
   // FLASH->ACR &= ~FLASH_ACR_PRFTEN;
 
@@ -217,6 +203,28 @@ static void SystemClock_Config(void)
     delay_init();
 
     CCM_RAM_init_vars();
+}
+
+void DeInitRCCAndPLL()
+{
+    // Unset the RCC and reset it
+    // HAL_RCC_DeInit(); is EMPTY. WTF.
+    RCC->CR |= RCC_HSI_ON;
+    RCC->CFGR = 0x00000000U;
+    uint32_t vl_mask = 0xFFFFFFFFU;
+    /* Reset HSEON, PLLSYSON bits */
+    CLEAR_BIT(vl_mask, (RCC_CR_HSEON | RCC_CR_HSEBYP | RCC_CR_PLLON | RCC_CR_CSSON));
+    RCC->CR &= vl_mask;
+    RCC->CR = (RCC->CR & ~RCC_CR_HSITRIM_Msk) | (0x10 << RCC_CR_HSITRIM_Pos); /* Set HSITRIM bits to the reset value*/
+    RCC->PLLCFGR = RCC_PLLCFGR_RST_VALUE; /* Reset PLLCFGR register */
+    RCC->CR &= ~RCC_CR_HSEBYP; /* Reset HSEBYP bit */
+  /* Disable all interrupts */
+    RCC->CIR = 0x00000000U;
+// *            - HSI ON and used as system clock source
+// *            - HSE and PLL OFF
+// *            - AHB, APB1 and APB2 prescaler set to 1.
+// *            - CSS, MCO1 and MCO2 OFF
+// *            - All interrupts disabled
 }
 
 //----------------------------------------------------------------------------
@@ -272,7 +280,8 @@ int __attribute__((section (".ccmram"))) videoScanTestLeft;
 int __attribute__((section (".ccmram"))) videoScanTestRight;
 int __attribute__((section (".ccmram"))) videoScanTestTop;
 int __attribute__((section (".ccmram"))) videoScanTestBottom;
-int withColorBurst = 1;
+int __attribute__((section (".ccmram"))) CCMRAMTestValue = 314159;
+int withColorburst = 1;
 
 void check_exceptional_conditions()
 {
@@ -336,40 +345,11 @@ void console_queue_init()
 }
 
 //----------------------------------------------------------------------------
-// Video goop
-
-#define ROW_SIZE        910     /* number of samples we target, 4x colorburst yields 227.5 cycles */
-
-#define NTSC_COLORBURST_FREQUENCY       3579545
-#define NTSC_EQPULSE_LINES	3
-#define NTSC_VSYNC_LINES	3
-#define NTSC_VBLANK_LINES	9
-#define NTSC_FIELD_LINES	262
-#define NTSC_PIXEL_LINES	(NTSC_FIELD_LINES - NTSC_VBLANK_LINES - NTSC_VSYNC_LINES - NTSC_EQPULSE_LINES * 2)
-#define NTSC_EQ_PULSE_INTERVAL	.04
-#define NTSC_VSYNC_BLANK_INTERVAL	.43
-#define NTSC_HOR_SYNC_DUR	.075
-#define NTSC_FIELDS		59.94
-#define NTSC_FRONTPORCH		.02
-#define NTSC_BACKPORCH		.075 /* not including COLORBURST */
-#define NTSC_COLORBURST_CYCLES  10
-
-#define NTSC_SYNC_TIP_VOLTAGE   0.0f
-#define NTSC_SYNC_PORCH_VOLTAGE   .285f
-#define NTSC_SYNC_BLACK_VOLTAGE   .339f
-#define NTSC_SYNC_WHITE_VOLTAGE   1.0f  /* VCR had .912v */
+// DAC
 
 #define DAC_VALUE_LIMIT 0xF0
 
-
-int showScanoutStats = 0;
-unsigned char __attribute__((section (".ccmram"))) syncTipDACValue;
-unsigned char __attribute__((section (".ccmram"))) syncPorchDACValue;
-unsigned char __attribute__((section (".ccmram"))) blackDACValue;
-unsigned char __attribute__((section (".ccmram"))) whiteDACValue;
-unsigned char __attribute__((section (".ccmram"))) maxDACValue;
-
-#define MAX_DAC_VOLTAGE  1.22f
+#define MAX_DAC_VOLTAGE 1.22f
 
 unsigned char voltageToDACValue(float voltage)
 {
@@ -383,23 +363,53 @@ unsigned char voltageToDACValue(float voltage)
     return value;
 }
 
-// XXX I Don't think there's initialization code in crt0 for ccmram
-volatile int __attribute__((section (".ccmram"))) rowNumber;
-volatile int __attribute__((section (".ccmram"))) fieldNumber;
+//----------------------------------------------------------------------------
+// NTSC Video goop
 
-int eqPulseTicks;
-int vsyncPulseTicks;
-int horSyncTicks;
-int lineTicks;
-int fieldTicks;
-int frontPorchTicks;
-int backPorchTicks;
+
+/* Number of samples we target, 4x colorburst yields 227.5 cycles */
+/* But we cheat and actually scan out 912 cycles to be a multiple of 16 */
+#define ROW_SIZE        910    
+
+#define NTSC_COLORBURST_FREQUENCY       3579545
+#define NTSC_EQPULSE_LINES	3
+#define NTSC_VSYNC_LINES	3
+#define NTSC_VBLANK_LINES	9
+#define NTSC_FIELD_LINES	262
+#define NTSC_PIXEL_LINES	(NTSC_FIELD_LINES - NTSC_VBLANK_LINES - NTSC_VSYNC_LINES - NTSC_EQPULSE_LINES * 2)
+#define NTSC_EQ_PULSE_INTERVAL	.04
+#define NTSC_VSYNC_BLANK_INTERVAL	.43
+#define NTSC_HOR_SYNC_DUR	.075
+#define NTSC_FIELDS		59.94
+#define NTSC_FRONTPORCH		.02
+/* BACKPORCH including COLORBURST */
+#define NTSC_BACKPORCH		.075
+#define NTSC_COLORBURST_CYCLES  10
+
+#define NTSC_SYNC_TIP_VOLTAGE   0.0f
+#define NTSC_SYNC_PORCH_VOLTAGE   .285f
+#define NTSC_SYNC_BLACK_VOLTAGE   .339f
+#define NTSC_SYNC_WHITE_VOLTAGE   1.0f  /* VCR had .912v */
 
 // These are in CCM to reduce contention with SRAM1 during DMA 
+unsigned char __attribute__((section (".ccmram"))) NTSCEqSyncPulseLine[ROW_SIZE];
+unsigned char __attribute__((section (".ccmram"))) NTSCVsyncLine[ROW_SIZE];
+unsigned char __attribute__((section (".ccmram"))) NTSCBlankLine[ROW_SIZE];
 
-unsigned char __attribute__((section (".ccmram"))) rowEQSyncPulseBuffer[ROW_SIZE];
-unsigned char __attribute__((section (".ccmram"))) rowVSyncBuffer[ROW_SIZE];
-unsigned char __attribute__((section (".ccmram"))) rowBlankLineBuffer[ROW_SIZE];
+unsigned char __attribute__((section (".ccmram"))) NTSCSyncTip;
+unsigned char __attribute__((section (".ccmram"))) NTSCSyncPorch;
+unsigned char __attribute__((section (".ccmram"))) NTSCBlack;
+unsigned char __attribute__((section (".ccmram"))) NTSCWhite;
+unsigned char __attribute__((section (".ccmram"))) NTSCMaxAllowed;
+
+int NTSCEqPulseClocks;
+int NTSCVSyncClocks;
+int NTSCHSyncClocks;
+int NTSCLineClocks;
+int NTSCFieldClocks;
+int NTSCFrontPorchClocks;
+int NTSCBackPorchClocks;
+
 #define MAX_PALETTE_ENTRIES 254
 #define PALETTE_WHITE 255
 #define PALETTE_BLACK 254
@@ -413,70 +423,89 @@ unsigned char *imgBufferRow(int row) { return imgBuffer + row * 200; }
 unsigned char *imgBufferPixel(int x, int y) { return imgBufferRow(y) + x; }
 
 // XXX these are in SRAM2 to reduce contention with SRAM1 during DMA
-unsigned char *row0 = (unsigned char *)0x2001C000;
-unsigned char *row1 = (unsigned char *)0x2001C400;
+unsigned char __attribute__((section (".sram2"))) row0[1024];
+unsigned char __attribute__((section (".sram2"))) row1[1024];
+unsigned char __attribute__((section (".sram2"))) audio0[512];
+unsigned char __attribute__((section (".sram2"))) audio1[512];
 
-// XXX later put source buffers in CCM
+unsigned char NTSCColorburst0;
+unsigned char NTSCColorburst90;
+unsigned char NTSCColorburst180;
+unsigned char NTSCColorburst270;
 
-void fillEQPulseBuffer(unsigned char *rowBuffer)
+void NTSCCalculateParameters(float clock)
 {
-    for (int col = 0; col < lineTicks; col++) {
-        if (col < eqPulseTicks || (col > lineTicks/2 && col < lineTicks/2 + eqPulseTicks)) {
-            rowBuffer[col] = syncTipDACValue;
+    // Calculate values for a scanline
+    NTSCFieldClocks = floorf(clock * 1000000.0 / NTSC_FIELDS + 0.5);
+    NTSCLineClocks = floorf((double)NTSCFieldClocks / NTSC_FIELD_LINES + 0.5);
+    NTSCLineClocks = ROW_SIZE; // XXX
+    NTSCHSyncClocks = floorf(NTSCLineClocks * NTSC_HOR_SYNC_DUR + 0.5);
+    NTSCFrontPorchClocks = NTSCLineClocks * NTSC_FRONTPORCH;
+    NTSCBackPorchClocks = NTSCLineClocks * NTSC_BACKPORCH;
+    NTSCEqPulseClocks = NTSCLineClocks * NTSC_EQ_PULSE_INTERVAL;
+    NTSCVSyncClocks = NTSCLineClocks * NTSC_VSYNC_BLANK_INTERVAL;
+
+    // Calculate the four values for the colorburst that we'll repeat to make a wave
+    NTSCColorburst0 = NTSCSyncPorch;
+    NTSCColorburst90 = NTSCSyncPorch - .6 * NTSCSyncPorch;
+    NTSCColorburst180 = NTSCSyncPorch;
+    NTSCColorburst270 = NTSCSyncPorch + .6 * NTSCSyncPorch;
+}
+
+void NTSCFillEqPulseLine(unsigned char *rowBuffer)
+{
+    for (int col = 0; col < NTSCLineClocks; col++) {
+        if (col < NTSCEqPulseClocks || (col > NTSCLineClocks/2 && col < NTSCLineClocks/2 + NTSCEqPulseClocks)) {
+            rowBuffer[col] = NTSCSyncTip;
         } else {
-            rowBuffer[col] = syncPorchDACValue;
+            rowBuffer[col] = NTSCSyncPorch;
         }
     }
 }
 
-void fillVSyncBuffer(unsigned char *rowBuffer)
+void NTSCFillVSyncLine(unsigned char *rowBuffer)
 {
-    for (int col = 0; col < lineTicks; col++) {
-        if (col < vsyncPulseTicks || (col > lineTicks/2 && col < lineTicks/2 + vsyncPulseTicks)) {
-            rowBuffer[col] = syncTipDACValue;
+    for (int col = 0; col < NTSCLineClocks; col++) {
+        if (col < NTSCVSyncClocks || (col > NTSCLineClocks/2 && col < NTSCLineClocks/2 + NTSCVSyncClocks)) {
+            rowBuffer[col] = NTSCSyncTip;
         } else {
-            rowBuffer[col] = syncPorchDACValue;
+            rowBuffer[col] = NTSCSyncPorch;
         }
     }
 }
 
-unsigned char burstPhase0;
-unsigned char burstPhase90;
-unsigned char burstPhase180;
-unsigned char burstPhase270;
-
-void addColorBurst(unsigned char *rowBuffer)
+// Haven't accelerated because not yet done in scan ISR
+void NTSCAddColorburst(unsigned char *rowBuffer)
 {
-    static const int startOfColorBurstTicks = 80; // XXX magic number for current clock
+    static const int startOfColorburstClocks = 80; // XXX magic number for current clock
 
-    for(int col = startOfColorBurstTicks; col < startOfColorBurstTicks + NTSC_COLORBURST_CYCLES * 4; col++) {
-        switch((col - startOfColorBurstTicks) % 4) {
-            case 0: rowBuffer[col] = burstPhase0; break;
-            case 1: rowBuffer[col] = burstPhase90; break;
-            case 2: rowBuffer[col] = burstPhase180; break;
-            case 3: rowBuffer[col] = burstPhase270; break;
+    for(int col = startOfColorburstClocks; col < startOfColorburstClocks + NTSC_COLORBURST_CYCLES * 4; col++) {
+        switch((col - startOfColorburstClocks) % 4) {
+            case 0: rowBuffer[col] = NTSCColorburst0; break;
+            case 1: rowBuffer[col] = NTSCColorburst90; break;
+            case 2: rowBuffer[col] = NTSCColorburst180; break;
+            case 3: rowBuffer[col] = NTSCColorburst270; break;
         }
     }
 }
 
-void fillBlankLineBuffer(unsigned char *rowBuffer)
+void NTSCFillBlankLine(unsigned char *rowBuffer, int withColorburst)
 {
-    for (int col = 0; col < lineTicks; col++) {
-        if (col < horSyncTicks) {
-            rowBuffer[col] = syncTipDACValue;
+    for (int col = 0; col < NTSCLineClocks; col++) {
+        if (col < NTSCHSyncClocks) {
+            rowBuffer[col] = NTSCSyncTip;
         } else {
-            rowBuffer[col] = syncPorchDACValue;
+            rowBuffer[col] = NTSCSyncPorch;
         }
     }
-    if(withColorBurst) {
-        addColorBurst(rowBuffer);
+    if(withColorburst) {
+        NTSCAddColorburst(rowBuffer);
     }
 }
 
-unsigned char __attribute__((section (".ccmram"))) tmpRow[910];
+unsigned char __attribute__((section (".ccmram"))) tmpRow[910]; // XXX is this helping or just taking more cycles?
 
-/* Phase is 0, 1, 2, or 3 since our sample clock is 4X the colorburst frequency */
-void fillRowBuffer(int fieldNumber, int rowNumber, unsigned char *rowBuffer)
+void NTSCFillRowBuffer(int fieldNumber, int rowNumber, unsigned char *rowBuffer)
 {
     /*
      * Rows 0 through 8 are equalizing pulse, then vsync, then equalizing pulse
@@ -484,17 +513,17 @@ void fillRowBuffer(int fieldNumber, int rowNumber, unsigned char *rowBuffer)
     if(rowNumber < NTSC_EQPULSE_LINES) {
 
         // XXX should just change DMA source address but then these need to be in SRAM2
-        memcpy(rowBuffer, rowEQSyncPulseBuffer, ROW_SIZE);
+        memcpy(rowBuffer, NTSCEqSyncPulseLine, ROW_SIZE);
 
     } else if(rowNumber - NTSC_EQPULSE_LINES < NTSC_VSYNC_LINES) {
 
         // XXX should just change DMA source address but then these need to be in SRAM2
-        memcpy(rowBuffer, rowVSyncBuffer, ROW_SIZE);
+        memcpy(rowBuffer, NTSCVsyncLine, ROW_SIZE);
 
     } else if(rowNumber - (NTSC_EQPULSE_LINES + NTSC_VSYNC_LINES) < NTSC_EQPULSE_LINES) {
 
         // XXX should just change DMA source address but then these need to be in SRAM2
-        memcpy(rowBuffer, rowEQSyncPulseBuffer, ROW_SIZE);
+        memcpy(rowBuffer, NTSCEqSyncPulseLine, ROW_SIZE);
 
     } else if(rowNumber - (NTSC_EQPULSE_LINES + NTSC_VSYNC_LINES + NTSC_EQPULSE_LINES) < NTSC_VBLANK_LINES) {
 
@@ -503,11 +532,11 @@ void fillRowBuffer(int fieldNumber, int rowNumber, unsigned char *rowBuffer)
          */
 
         // XXX should just change DMA source address, then this needs to be in SRAM2
-        memcpy(rowBuffer, rowBlankLineBuffer, ROW_SIZE);
+        memcpy(rowBuffer, NTSCBlankLine, ROW_SIZE);
 
     } else {
 
-        memcpy(tmpRow, rowBlankLineBuffer, ROW_SIZE);
+        memcpy(tmpRow, NTSCBlankLine, ROW_SIZE);
         // 244 lines
         // 189 columns @ 4 per pixel
         int y = rowNumber - (NTSC_EQPULSE_LINES + NTSC_VSYNC_LINES + NTSC_EQPULSE_LINES + NTSC_VBLANK_LINES);
@@ -515,11 +544,11 @@ void fillRowBuffer(int fieldNumber, int rowNumber, unsigned char *rowBuffer)
         switch(videoMode) {
             case VIDEO_COLOR_TEST: {
                 if(y > 20 && y < 230) {
-                    unsigned char *rowOut = tmpRow + (horSyncTicks + backPorchTicks + 3) / 4 * 4 + 20 * 4;
+                    unsigned char *rowOut = tmpRow + (NTSCHSyncClocks + NTSCBackPorchClocks + 3) / 4 * 4 + 20 * 4;
                     uint32_t* rowWords = (uint32_t*)rowOut;
-                    unsigned char v = blackDACValue + (whiteDACValue - blackDACValue) / 2;
-                    unsigned char a = whiteDACValue;
-                    unsigned char c = blackDACValue;
+                    unsigned char v = NTSCBlack + (NTSCWhite - NTSCBlack) / 2;
+                    unsigned char a = NTSCWhite;
+                    unsigned char c = NTSCBlack;
                     uint32_t colorWord = (v << 0) | (v << 8) | (v << 16) | (v << 24); // little endian
                     for(int col = 20; col < 50; col++) {
                         *rowWords++ = colorWord;
@@ -533,7 +562,7 @@ void fillRowBuffer(int fieldNumber, int rowNumber, unsigned char *rowBuffer)
             }
             case VIDEO_GRAYSCALE: {
                 unsigned char *imgRow = imgBufferRow(y);
-                unsigned char *rowOut = tmpRow + (horSyncTicks + backPorchTicks + 3) / 4 * 4 + 20 * 4;
+                unsigned char *rowOut = tmpRow + (NTSCHSyncClocks + NTSCBackPorchClocks + 3) / 4 * 4 + 20 * 4;
                 uint32_t* rowWords = (uint32_t*)rowOut;
                 for(int col = 0; col < 189; col++) {
                     unsigned char v = *imgRow++;
@@ -545,7 +574,7 @@ void fillRowBuffer(int fieldNumber, int rowNumber, unsigned char *rowBuffer)
             case VIDEO_PALETTIZED: {
                 unsigned char *imgRow = imgBufferRow(y);
                 uint32_t* palette = paletteUInt32[rowPalette[y]];
-                unsigned char *rowOut = tmpRow + (horSyncTicks + backPorchTicks + 3) / 4 * 4;
+                unsigned char *rowOut = tmpRow + (NTSCHSyncClocks + NTSCBackPorchClocks + 3) / 4 * 4;
                 uint32_t* rowWords = (uint32_t*)rowOut;
                 for(int col = 0; col < 189; col++) {
                     unsigned char pixel = *imgRow++;
@@ -568,6 +597,20 @@ void fillRowBuffer(int fieldNumber, int rowNumber, unsigned char *rowBuffer)
     // if(rowNumber == 0) { rowBuffer[0] = 255;}
 }
 
+void NTSCGenerateLineBuffers()
+{
+    // one line = (1 / 3579545) * (455/2)
+
+    // front porch is (.165) * (1 / 15734) / (1 / 3579545) = 37.53812921062726565701 cycles (37.5)
+    //     74 cycles at double clock
+    // pixels is (1 - .165) * (1 / 15734) / (1 / 3579545) = 189.96568418711380557696 cycles (190)
+    //     280 cycles at double clock
+
+    NTSCFillEqPulseLine(NTSCEqSyncPulseLine);
+    NTSCFillVSyncLine(NTSCVsyncLine);
+    NTSCFillBlankLine(NTSCBlankLine, withColorburst);
+}
+
 // This is transcribed from the NTSC spec, double-checked.
 void RGBToYIQ(float r, float g, float b, float *y, float *i, float *q)
 {
@@ -576,7 +619,7 @@ void RGBToYIQ(float r, float g, float b, float *y, float *i, float *q)
     *q = .41f * (b - *y) + .48f * (r - *y);
 }
 
-unsigned char colorToDACValue(float y, float i, float q, float tcycles)
+unsigned char NTSCYIQToDAC(float y, float i, float q, float tcycles)
 {
 // This is transcribed from the NTSC spec, double-checked.
     float wt = tcycles * M_PI * 2;
@@ -588,20 +631,20 @@ unsigned char colorToDACValue(float y, float i, float q, float tcycles)
     if(signal < -1.0f) { signal = -1.0f; }
     if(signal > 1.0f) { signal = 1.0f; }
 
-    return blackDACValue + signal * (maxDACValue - blackDACValue);
+    return NTSCBlack + signal * (NTSCMaxAllowed - NTSCBlack);
 }
 
-uint32_t colorTo4Samples(float y, float i, float q)
+uint32_t NTSCYIQToUInt32(float y, float i, float q)
 {
-    unsigned char b0 = colorToDACValue(y, i, q,  .0f);
-    unsigned char b1 = colorToDACValue(y, i, q, .25f);
-    unsigned char b2 = colorToDACValue(y, i, q, .50f);
-    unsigned char b3 = colorToDACValue(y, i, q, .75f);
+    unsigned char b0 = NTSCYIQToDAC(y, i, q,  .0f);
+    unsigned char b1 = NTSCYIQToDAC(y, i, q, .25f);
+    unsigned char b2 = NTSCYIQToDAC(y, i, q, .50f);
+    unsigned char b3 = NTSCYIQToDAC(y, i, q, .75f);
 
     return (b0 << 0) | (b1 << 8) | (b2 << 16) | (b3 << 24);
 }
 
-void colorHSVToRGB3f(float h, float s, float v, float *r, float *g, float *b)
+void HSVToRGB3f(float h, float s, float v, float *r, float *g, float *b)
 {
     if(s < .00001) {
         *r = v; *g = v; *b = v;
@@ -654,10 +697,10 @@ void showVectorScopeImage(int phaseDegrees)
         float hueDegrees = a * 360.0f / MAX_PALETTE_ENTRIES;
         float r, g, b;
         float hueRadians = hueDegrees / 180.0f * M_PI;
-        colorHSVToRGB3f(hueRadians, 1, 1, &r, &g, &b);
+        HSVToRGB3f(hueRadians, 1, 1, &r, &g, &b);
         float y, i, q;
         RGBToYIQ(r, g, b, &y, &i, &q);
-        paletteUInt32[0][a] = colorTo4Samples(y, i, q);
+        paletteUInt32[0][a] = NTSCYIQToUInt32(y, i, q);
     }
 
     for(int y = 0; y < 224; y++) {
@@ -667,7 +710,7 @@ void showVectorScopeImage(int phaseDegrees)
         for(int x = 0; x < 194; x++) {
             float u = (x - 194.0f / 2.0f) / 194.0f; /* left to right */
             float v = - (y - 224.0f / 2.0f) / 224.0f; /* bottom to top */
-            float degrees = atan2f(v, u) / M_PI * 180.0f;// HSV Red would be all the way to the right, Yellow-Green up
+            float degrees = atan2f(v, u) / M_PI * 180.0f; // HSV Red would be all the way to the right, Yellow-Green up
             float vectorScopeDegrees = degrees; // - 103.0f;
             float hue = fmodf((360.0f + vectorScopeDegrees + phaseDegrees) / 180.0f * M_PI, M_PI * 2);
             imgRow[x] = (unsigned char)(hue / (M_PI * 2) * MAX_PALETTE_ENTRIES);
@@ -777,7 +820,7 @@ int readImage(const char *filename)
                     palette[c][2] = b;
                     float y, i, q;
                     RGBToYIQ(r / 255.0f, g / 255.0f, b / 255.0f, &y, &i, &q);
-                    paletteUInt32[whichPalette][c] = colorTo4Samples(y, i, q);
+                    paletteUInt32[whichPalette][c] = NTSCYIQToUInt32(y, i, q);
                     paletteNext++;
                 }
             }
@@ -956,7 +999,7 @@ void VIDEO_putchar(char c)
 int __attribute__((section (".ccmram"))) debugOverlayEnabled;
 #define debugDisplayWidth 19
 #define debugDisplayHeight 13
-#define debugDisplayRightTick (horSyncTicks + backPorchTicks + 48)
+#define debugDisplayRightTick (NTSCHSyncClocks + NTSCBackPorchClocks + 48)
 #define debugDisplayTopTick (NTSC_EQPULSE_LINES + NTSC_VSYNC_LINES + NTSC_EQPULSE_LINES + NTSC_VBLANK_LINES + 20)
 /* debugFontWidthScale != 4 looks terrible in a color field because of adjacent color columns; probably need to ensure 0s around any 1 text column */
 #define debugFontWidthScale 4
@@ -972,11 +1015,11 @@ char __attribute__((section (".ccmram"))) debugDisplay[debugDisplayHeight][debug
 
 void fillRowDebugOverlay(int fieldNumber, int rowNumber, unsigned char* nextRowBuffer)
 {
-    uint32_t whiteDACValueLong =
-        (whiteDACValue <<  0) |
-        (whiteDACValue <<  8) |
-        (whiteDACValue << 16) |
-        (whiteDACValue << 24);
+    uint32_t NTSCWhiteLong =
+        (NTSCWhite <<  0) |
+        (NTSCWhite <<  8) |
+        (NTSCWhite << 16) |
+        (NTSCWhite << 24);
     int debugFontScanlineHeight = font8x16Height * debugFontHeightScale;
 
     int rowWithinDebugArea = rowNumber - debugDisplayTopTick;
@@ -991,24 +1034,24 @@ void fillRowDebugOverlay(int fieldNumber, int rowNumber, unsigned char* nextRowB
                 unsigned char charRowBits = font8x16Bits[debugChar * font8x16Height + charPixelY];
 #if debugFontWidthScale == 4 && font8x16Width == 8
                 unsigned char *charPixels = nextRowBuffer + debugDisplayRightTick + (charCol * (font8x16Width + debugCharGapPixels)) * debugFontWidthScale;
-                if(charRowBits & 0x80) { ((uint32_t*)charPixels)[0] = whiteDACValueLong; }
-                if(charRowBits & 0x40) { ((uint32_t*)charPixels)[1] = whiteDACValueLong; }
-                if(charRowBits & 0x20) { ((uint32_t*)charPixels)[2] = whiteDACValueLong; }
-                if(charRowBits & 0x10) { ((uint32_t*)charPixels)[3] = whiteDACValueLong; }
-                if(charRowBits & 0x08) { ((uint32_t*)charPixels)[4] = whiteDACValueLong; }
-                if(charRowBits & 0x04) { ((uint32_t*)charPixels)[5] = whiteDACValueLong; }
-                if(charRowBits & 0x02) { ((uint32_t*)charPixels)[6] = whiteDACValueLong; }
-                if(charRowBits & 0x01) { ((uint32_t*)charPixels)[7] = whiteDACValueLong; }
+                if(charRowBits & 0x80) { ((uint32_t*)charPixels)[0] = NTSCWhiteLong; }
+                if(charRowBits & 0x40) { ((uint32_t*)charPixels)[1] = NTSCWhiteLong; }
+                if(charRowBits & 0x20) { ((uint32_t*)charPixels)[2] = NTSCWhiteLong; }
+                if(charRowBits & 0x10) { ((uint32_t*)charPixels)[3] = NTSCWhiteLong; }
+                if(charRowBits & 0x08) { ((uint32_t*)charPixels)[4] = NTSCWhiteLong; }
+                if(charRowBits & 0x04) { ((uint32_t*)charPixels)[5] = NTSCWhiteLong; }
+                if(charRowBits & 0x02) { ((uint32_t*)charPixels)[6] = NTSCWhiteLong; }
+                if(charRowBits & 0x01) { ((uint32_t*)charPixels)[7] = NTSCWhiteLong; }
 #else
                 for(int charPixelX = 0; charPixelX < font8x16Width; charPixelX++) {
                     int pixel = charRowBits & (0x80 >> charPixelX);
                     if(pixel) {
                         unsigned char *charPixels = nextRowBuffer + debugDisplayRightTick + (charCol * (font8x16Width + debugCharGapPixels) + charPixelX) * debugFontWidthScale;
 #if debugFontWidthScale == 4
-                        *(uint32_t *)charPixels = whiteDACValueLong; 
+                        *(uint32_t *)charPixels = NTSCWhiteLong; 
 #else
                         for(int col = 0; col < debugFontWidthScale; col++) {
-                            charPixels[col] = whiteDACValue;
+                            charPixels[col] = NTSCWhite;
                         }
 #endif
                     }
@@ -1019,58 +1062,12 @@ void fillRowDebugOverlay(int fieldNumber, int rowNumber, unsigned char* nextRowB
     }
 }
 
-void DMA2_Stream2_IRQHandler(void)
-{
-    if(DMA2->LISR &= DMA_FLAG_FEIF2_6) {
-        DMA2->LIFCR |= DMA_LIFCR_CFEIF2;
-        DMAFIFOUnderruns++;
-    }
-    if(DMA2->LISR &= DMA_FLAG_TEIF2_6) {
-        DMA2->LIFCR |= DMA_LIFCR_CTEIF2;
-        DMATransferErrors++;
-    }
-
-    // Configure timer TIM2
-    TIM2->SR = 0;                       /* reset status */
-    TIM2->ARR = 0xFFFFFFFF;
-    TIM2->CNT = 0;
-    TIM2->CR1 = TIM_CR1_CEN;            /* enable the timer */
-
-    // because our lines have 910 samples at 4x the colorburst
-    // clock, and lines are 1/227.5 colorburst frequency
-
-    int whichIsScanning = (DMA2_Stream2->CR & DMA_SxCR_CT) ? 1 : 0;
-
-    unsigned char *nextRowBuffer = (whichIsScanning == 1) ? row0 : row1;
-
-    fillRowBuffer(fieldNumber, rowNumber, nextRowBuffer);
-    if(debugOverlayEnabled) {
-        fillRowDebugOverlay(fieldNumber, rowNumber, nextRowBuffer);
-    }
-
-    rowNumber = rowNumber + 1;
-    // row to calculate
-    if(rowNumber == NTSC_FIELD_LINES) {
-        rowNumber = 0;
-        fieldNumber++;
-    }
-
-    /* wait until a little later to return */
-    // while(TIM2->CNT < SystemCoreClock * 7 / (227 * 262 * 10) );
-
-    rowCyclesSpent[rowNumber] = TIM2->CNT;
-    TIM2->CR1 = 0;            /* stop the timer */
-
-    // Clear interrupt flag
-    // DMA2->LISR &= ~DMA_TCIF;
-    DMA2->LIFCR |= DMA_LIFCR_CTCIF2;
-}
-
-
 //----------------------------------------------------------------------------
 // Text command interface
 
-void generateRowBuffers();
+int showScanoutStats = 0;
+
+void NTSCGenerateLineBuffers();
 
 // XXX changes bytes in p to NULs
 int splitString(char *p, char **words, int wordsCapacity)
@@ -1428,7 +1425,7 @@ Command commands[] = {
         "set debugging level to N"
     },
     {
-        "read", 2, doCommandReadBlock, "read N",
+        "read", 2, doCommandReadBlock, "N",
         "read and dump out SD block N"
     },
 };
@@ -1522,33 +1519,66 @@ void process_local_key(unsigned char c)
     }
 }
 
-void DeInitRCCAndPLL()
+// Scanout DMA
+
+// XXX I Don't think there's initialization code in crt0 for ccmram
+volatile int __attribute__((section (".ccmram"))) rowNumber;
+volatile int __attribute__((section (".ccmram"))) fieldNumber;
+
+void DMA2_Stream2_IRQHandler(void)
 {
-    // Unset the RCC and reset it
-    // HAL_RCC_DeInit(); is EMPTY. WTF.
-    RCC->CR |= RCC_HSI_ON;
-    RCC->CFGR = 0x00000000U;
-    uint32_t vl_mask = 0xFFFFFFFFU;
-    /* Reset HSEON, PLLSYSON bits */
-    CLEAR_BIT(vl_mask, (RCC_CR_HSEON | RCC_CR_HSEBYP | RCC_CR_PLLON | RCC_CR_CSSON));
-    RCC->CR &= vl_mask;
-    RCC->CR = (RCC->CR & ~RCC_CR_HSITRIM_Msk) | (0x10 << RCC_CR_HSITRIM_Pos); /* Set HSITRIM bits to the reset value*/
-    RCC->PLLCFGR = RCC_PLLCFGR_RST_VALUE; /* Reset PLLCFGR register */
-    RCC->CR &= ~RCC_CR_HSEBYP; /* Reset HSEBYP bit */
-  /* Disable all interrupts */
-    RCC->CIR = 0x00000000U;
-// *            - HSI ON and used as system clock source
-// *            - HSE and PLL OFF
-// *            - AHB, APB1 and APB2 prescaler set to 1.
-// *            - CSS, MCO1 and MCO2 OFF
-// *            - All interrupts disabled
+    if(DMA2->LISR &= DMA_FLAG_FEIF2_6) {
+        DMA2->LIFCR |= DMA_LIFCR_CFEIF2;
+        DMAFIFOUnderruns++;
+    }
+    if(DMA2->LISR &= DMA_FLAG_TEIF2_6) {
+        DMA2->LIFCR |= DMA_LIFCR_CTEIF2;
+        DMATransferErrors++;
+    }
+
+    // Configure timer TIM2
+    TIM2->SR = 0;                       /* reset status */
+    TIM2->ARR = 0xFFFFFFFF;
+    TIM2->CNT = 0;
+    TIM2->CR1 = TIM_CR1_CEN;            /* enable the timer */
+
+    // because our lines have 910 samples at 4x the colorburst
+    // clock, and lines are 1/227.5 colorburst frequency
+
+    int whichIsScanning = (DMA2_Stream2->CR & DMA_SxCR_CT) ? 1 : 0;
+
+    unsigned char *nextRowBuffer = (whichIsScanning == 1) ? row0 : row1;
+
+    NTSCFillRowBuffer(fieldNumber, rowNumber, nextRowBuffer);
+    if(debugOverlayEnabled) {
+        fillRowDebugOverlay(fieldNumber, rowNumber, nextRowBuffer);
+    }
+
+    rowNumber = rowNumber + 1;
+    // row to calculate
+    if(rowNumber == NTSC_FIELD_LINES) {
+        rowNumber = 0;
+        fieldNumber++;
+    }
+
+    /* wait until a little later to return */
+    // while(TIM2->CNT < SystemCoreClock * 7 / (227 * 262 * 10) );
+
+    rowCyclesSpent[rowNumber] = TIM2->CNT;
+    TIM2->CR1 = 0;            /* stop the timer */
+
+    // Clear interrupt flag
+    // DMA2->LISR &= ~DMA_TCIF;
+    DMA2->LIFCR |= DMA_LIFCR_CTCIF2;
 }
 
-void initRowDMA(uint32_t dmaCount)
+
+void DMAStartScanout(uint32_t dmaCount)
 {
+    // Configure DAC
     GPIO_InitTypeDef  GPIO_InitStruct = {0};
     GPIO_InitStruct.Pull = GPIO_NOPULL;
-    GPIO_InitStruct.Pin = 0x1FF;
+    GPIO_InitStruct.Pin = 0xFF;
     GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
     GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
     HAL_GPIO_Init(GPIOC, &GPIO_InitStruct); 
@@ -1556,26 +1586,8 @@ void initRowDMA(uint32_t dmaCount)
     HAL_NVIC_SetPriority(DMA2_Stream2_IRQn, 0, 1);
     HAL_NVIC_EnableIRQ(DMA2_Stream2_IRQn);
 
-    // STEP 2: configure DMA to double buffer write 910 bytes from row0 and then row1 at 14.318180
-#if 0
-    DMA2_Stream2->NDTR = ROW_SIZE;              // Number of data items to transfer (from peripherals POV)
-    DMA2_Stream2->M0AR = (uint32_t)row0;        // Source buffer address 0
-    DMA2_Stream2->M1AR = (uint32_t)row1;        // Source buffer address 1 
-    DMA2_Stream2->PAR = (uint32_t)&GPIOC->ODR;  // Destination address
-    DMA2_Stream2->FCR = DMA_FIFOMODE_ENABLE |   // Enable FIFO to improve stutter
-        DMA_FIFO_THRESHOLD_1QUARTERFULL;        
-    DMA2_Stream2->CR =
-        DMA_CHANNEL_6 |                         // which channel is driven by which timer to which peripheral is limited
-        DMA_MEMORY_TO_PERIPH |                  // Memory to Peripheral
-        DMA_PDATAALIGN_BYTE |                   // BYTES to peripheral
-        DMA_MDATAALIGN_HALFWORD |               // UINT16 from memory
-        DMA_SxCR_DBM |                          // double buffer
-        DMA_PRIORITY_VERY_HIGH |                // Video data must be highest priority, can't stutter
-        DMA_MINC_ENABLE |                       // Increment memory address
-        DMA_IT_TC |                             // Interrupt on transfer complete of each buffer 
-        0;
-#else // XXX 32-bit aligned DMAs experiment - seems to work
-    DMA2_Stream2->NDTR = 912;
+    // Configure DMA
+    DMA2_Stream2->NDTR = 912;                   // Should be 910 but fudge here to get multiple of 16
     DMA2_Stream2->M0AR = (uint32_t)row0;        // Source buffer address 0
     DMA2_Stream2->M1AR = (uint32_t)row1;        // Source buffer address 1 
     DMA2_Stream2->PAR = (uint32_t)&GPIOC->ODR;  // Destination address
@@ -1591,7 +1603,6 @@ void initRowDMA(uint32_t dmaCount)
         DMA_MINC_ENABLE |                       // Increment memory address
         DMA_IT_TC |                             // Interrupt on transfer complete of each buffer 
         0;
-#endif
 
     // Configure TIM1_CH2 to drive DMA
     TIM1->CCR2 = (dmaCount + 1) / 2;         /* 50% duty cycle */ 
@@ -1613,41 +1624,10 @@ void initRowDMA(uint32_t dmaCount)
     TIM1->CR1 = TIM_CR1_CEN;            /* enable the timer */
 }
 
-void stopRowDMA()
+void DMAStopScanout()
 {
     DMA2_Stream2->CR &= ~DMA_SxCR_EN;       /* disable DMA */
     TIM1->CR1 &= ~TIM_CR1_CEN;            /* disable the timer */
-}
-
-void initVideoSignalParameters(float clock)
-{
-    fieldTicks = floorf(clock * 1000000.0 / NTSC_FIELDS + 0.5);
-    lineTicks = floorf((double)fieldTicks / NTSC_FIELD_LINES + 0.5);
-    lineTicks = ROW_SIZE; // XXX
-    horSyncTicks = floorf(lineTicks * NTSC_HOR_SYNC_DUR + 0.5);
-    frontPorchTicks = lineTicks * NTSC_FRONTPORCH;
-    backPorchTicks = lineTicks * NTSC_BACKPORCH;
-    eqPulseTicks = lineTicks * NTSC_EQ_PULSE_INTERVAL;
-    vsyncPulseTicks = lineTicks * NTSC_VSYNC_BLANK_INTERVAL;
-
-    burstPhase0 = syncPorchDACValue;
-    burstPhase90 = syncPorchDACValue - .6 * syncPorchDACValue;
-    burstPhase180 = syncPorchDACValue;
-    burstPhase270 = syncPorchDACValue + .6 * syncPorchDACValue;
-}
-
-void generateRowBuffers()
-{
-    // one line = (1 / 3579545) * (455/2)
-
-    // front porch is (.165) * (1 / 15734) / (1 / 3579545) = 37.53812921062726565701 cycles (37.5)
-    //     74 cycles at double clock
-    // pixels is (1 - .165) * (1 / 15734) / (1 / 3579545) = 189.96568418711380557696 cycles (190)
-    //     280 cycles at double clock
-
-    fillEQPulseBuffer(rowEQSyncPulseBuffer);
-    fillVSyncBuffer(rowVSyncBuffer);
-    fillBlankLineBuffer(rowBlankLineBuffer);
 }
 
 void CCM_RAM_init_vars()
@@ -1657,22 +1637,22 @@ void CCM_RAM_init_vars()
     DMATransferErrors = 0;
     videoMode = VIDEO_COLOR_TEST;
     debugOverlayEnabled = 0;
-    syncTipDACValue = voltageToDACValue(NTSC_SYNC_TIP_VOLTAGE);
-    syncPorchDACValue = voltageToDACValue(NTSC_SYNC_PORCH_VOLTAGE);
-    blackDACValue = voltageToDACValue(NTSC_SYNC_BLACK_VOLTAGE);
-    whiteDACValue = voltageToDACValue(NTSC_SYNC_WHITE_VOLTAGE);
-    maxDACValue = 255;
+    NTSCSyncTip = voltageToDACValue(NTSC_SYNC_TIP_VOLTAGE);
+    NTSCSyncPorch = voltageToDACValue(NTSC_SYNC_PORCH_VOLTAGE);
+    NTSCBlack = voltageToDACValue(NTSC_SYNC_BLACK_VOLTAGE);
+    NTSCWhite = voltageToDACValue(NTSC_SYNC_WHITE_VOLTAGE);
+    NTSCMaxAllowed = 255;
     memcpy(font8x16Bits, font8x16BitsSrc, sizeof(font8x16BitsSrc));
     paletteUInt32[1][255] = paletteUInt32[0][255] = 
-        (whiteDACValue <<  0) |
-        (whiteDACValue <<  8) |
-        (whiteDACValue << 16) |
-        (whiteDACValue << 24);
+        (NTSCWhite <<  0) |
+        (NTSCWhite <<  8) |
+        (NTSCWhite << 16) |
+        (NTSCWhite << 24);
     paletteUInt32[1][254] = paletteUInt32[0][254] = 
-        (blackDACValue <<  0) |
-        (blackDACValue <<  8) |
-        (blackDACValue << 16) |
-        (blackDACValue << 24);
+        (NTSCBlack <<  0) |
+        (NTSCBlack <<  8) |
+        (NTSCBlack << 16) |
+        (NTSCBlack << 24);
     memset(rowPalette, 0, sizeof(rowPalette));
     videoScanTestLeft = 200;
     videoScanTestRight = 700;
@@ -1702,21 +1682,22 @@ int main()
     SERIAL_init(); // transmit and receive but global interrupts disabled
     LED_beat_heart();
 
-    memset(row0, syncPorchDACValue, 1024);      // Just in case we experiment with DMA more than 910 bytes
-    memset(row1, syncPorchDACValue, 1024);
+    memset(row0, NTSCSyncPorch, 1024);      // Just in case we experiment with DMA more than 910 bytes
+    memset(row1, NTSCSyncPorch, 1024);
 
     printf("\n\nAlice 3 I/O firmware, %s\n", IOBOARD_FIRMWARE_VERSION_STRING);
     printf("System core clock: %lu Hz, %lu MHz\n", SystemCoreClock, SystemCoreClock / 1000000);
+    printf("Test value for initializing CCMRAM is %d, expected 314159\n", CCMRAMTestValue);
 
     float clock = 14.318180;
-    initVideoSignalParameters(clock);
+    NTSCCalculateParameters(clock);
 
-    printf("calculated lineTicks = %d\n", lineTicks);
-    printf("calculated horSyncTicks = %d\n", horSyncTicks);
-    printf("calculated frontPorchTicks = %d\n", frontPorchTicks);
-    printf("calculated backPorchTicks = %d\n", backPorchTicks);
-    printf("calculated eqPulseTicks = %d\n", eqPulseTicks);
-    printf("calculated vsyncPulseTicks = %d\n", vsyncPulseTicks);
+    printf("calculated NTSCLineClocks = %d\n", NTSCLineClocks);
+    printf("calculated NTSCHSyncClocks = %d\n", NTSCHSyncClocks);
+    printf("calculated NTSCFrontPorchClocks = %d\n", NTSCFrontPorchClocks);
+    printf("calculated NTSCBackPorchClocks = %d\n", NTSCBackPorchClocks);
+    printf("calculated NTSCEqPulseClocks = %d\n", NTSCEqPulseClocks);
+    printf("calculated NTSCVSyncClocks = %d\n", NTSCVSyncClocks);
 
     {
         int q;
@@ -1759,8 +1740,8 @@ int main()
     printf("* ");
     SERIAL_flush();
 
-    generateRowBuffers();
-    fillRowBuffer(0, 0, row0);
+    NTSCGenerateLineBuffers();
+    NTSCFillRowBuffer(0, 0, row0);
 
     float colorBurstInCoreClocks = SystemCoreClock / 14318180.0;
     // need main clock as close as possible to @ 171.816
@@ -1768,7 +1749,7 @@ int main()
     // printf("DMACountAt14MHz = %lu, expected %d\n", DMACountAt14MHz, clockConfigs[whichConfig].DMA_BEATS);
     DMACountAt14MHz = clockConfigs[whichConfig].DMA_BEATS; // (colorBurstInCoreClocks + .5);
 
-    initRowDMA(DMACountAt14MHz);
+    DMAStartScanout(DMACountAt14MHz);
 
     // Wait for a click to progress to the next clock config
     { 
@@ -1801,7 +1782,7 @@ int main()
 
             whichConfig = counter;
 
-            stopRowDMA();
+            DMAStopScanout();
 
             // Probably will break UART and SD and GPIOs:
             DeInitRCCAndPLL();
@@ -1826,7 +1807,7 @@ int main()
             // printf("DMACountAt14MHz = %lu, expected %d\n", DMACountAt14MHz, clockConfigs[whichConfig].DMA_BEATS);
             DMACountAt14MHz = clockConfigs[whichConfig].DMA_BEATS; // (colorBurstInCoreClocks + .5);
 
-            initRowDMA(DMACountAt14MHz);
+            DMAStartScanout(DMACountAt14MHz);
 
             debugOverlayEnabled = 1;
             memset(debugDisplay, 0, debugDisplayWidth * debugDisplayHeight);
@@ -1878,6 +1859,7 @@ int main()
 
     for(;;) {
 
+        // Should be in VBlank callback so is continuously updated
         if(showScanoutStats) {
             debugOverlayEnabled = 1;
             uint32_t currentField = fieldNumber;

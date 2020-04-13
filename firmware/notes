@@ -1,5 +1,6 @@
 Rein it in
     serial should interrupt and fill a buffer like keyboard does
+    setup a software interrupt for VBlank processing (e.g. update scanout stats, audio goop) and trigger it from row=262
     audio
         22050Hz?  11025Hz?  8000Hz?
         write audio sample immediately on entry to line ISR?  Then calculate next one right after that, then do video calculation?
