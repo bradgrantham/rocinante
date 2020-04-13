@@ -367,9 +367,9 @@ unsigned char voltageToDACValue(float voltage)
 // NTSC Video goop
 
 
-/* Number of samples we target, 4x colorburst yields 227.5 cycles */
-/* But we cheat and actually scan out 912 cycles to be a multiple of 16 */
-#define ROW_SIZE        910    
+// Number of samples we target, 4x colorburst yields 227.5 cycles, or 910 samples at 14.318180MHz
+// But we cheat and actually scan out 912 cycles to be a multiple of 16, so lines are .22% too long.
+#define ROW_SAMPLES        912
 
 #define NTSC_COLORBURST_FREQUENCY       3579545
 #define NTSC_EQPULSE_LINES	3
@@ -392,9 +392,9 @@ unsigned char voltageToDACValue(float voltage)
 #define NTSC_SYNC_WHITE_VOLTAGE   1.0f  /* VCR had .912v */
 
 // These are in CCM to reduce contention with SRAM1 during DMA 
-unsigned char __attribute__((section (".ccmram"))) NTSCEqSyncPulseLine[ROW_SIZE];
-unsigned char __attribute__((section (".ccmram"))) NTSCVsyncLine[ROW_SIZE];
-unsigned char __attribute__((section (".ccmram"))) NTSCBlankLine[ROW_SIZE];
+unsigned char __attribute__((section (".ccmram"))) NTSCEqSyncPulseLine[1024];
+unsigned char __attribute__((section (".ccmram"))) NTSCVsyncLine[1024];
+unsigned char __attribute__((section (".ccmram"))) NTSCBlankLine[1024];
 
 unsigned char __attribute__((section (".ccmram"))) NTSCSyncTip;
 unsigned char __attribute__((section (".ccmram"))) NTSCSyncPorch;
@@ -437,8 +437,8 @@ void NTSCCalculateParameters(float clock)
 {
     // Calculate values for a scanline
     NTSCFieldClocks = floorf(clock * 1000000.0 / NTSC_FIELDS + 0.5);
-    NTSCLineClocks = floorf((double)NTSCFieldClocks / NTSC_FIELD_LINES + 0.5);
-    NTSCLineClocks = ROW_SIZE; // XXX
+    // NTSCLineClocks = floorf((double)NTSCFieldClocks / NTSC_FIELD_LINES + 0.5);
+    NTSCLineClocks = ROW_SAMPLES;
     NTSCHSyncClocks = floorf(NTSCLineClocks * NTSC_HOR_SYNC_DUR + 0.5);
     NTSCFrontPorchClocks = NTSCLineClocks * NTSC_FRONTPORCH;
     NTSCBackPorchClocks = NTSCLineClocks * NTSC_BACKPORCH;
@@ -503,8 +503,6 @@ void NTSCFillBlankLine(unsigned char *rowBuffer, int withColorburst)
     }
 }
 
-unsigned char __attribute__((section (".ccmram"))) tmpRow[910]; // XXX is this helping or just taking more cycles?
-
 void NTSCFillRowBuffer(int fieldNumber, int rowNumber, unsigned char *rowBuffer)
 {
     /*
@@ -513,17 +511,17 @@ void NTSCFillRowBuffer(int fieldNumber, int rowNumber, unsigned char *rowBuffer)
     if(rowNumber < NTSC_EQPULSE_LINES) {
 
         // XXX should just change DMA source address but then these need to be in SRAM2
-        memcpy(rowBuffer, NTSCEqSyncPulseLine, ROW_SIZE);
+        memcpy(rowBuffer, NTSCEqSyncPulseLine, 1024);
 
     } else if(rowNumber - NTSC_EQPULSE_LINES < NTSC_VSYNC_LINES) {
 
         // XXX should just change DMA source address but then these need to be in SRAM2
-        memcpy(rowBuffer, NTSCVsyncLine, ROW_SIZE);
+        memcpy(rowBuffer, NTSCVsyncLine, 1024);
 
     } else if(rowNumber - (NTSC_EQPULSE_LINES + NTSC_VSYNC_LINES) < NTSC_EQPULSE_LINES) {
 
         // XXX should just change DMA source address but then these need to be in SRAM2
-        memcpy(rowBuffer, NTSCEqSyncPulseLine, ROW_SIZE);
+        memcpy(rowBuffer, NTSCEqSyncPulseLine, 1024);
 
     } else if(rowNumber - (NTSC_EQPULSE_LINES + NTSC_VSYNC_LINES + NTSC_EQPULSE_LINES) < NTSC_VBLANK_LINES) {
 
@@ -532,11 +530,11 @@ void NTSCFillRowBuffer(int fieldNumber, int rowNumber, unsigned char *rowBuffer)
          */
 
         // XXX should just change DMA source address, then this needs to be in SRAM2
-        memcpy(rowBuffer, NTSCBlankLine, ROW_SIZE);
+        memcpy(rowBuffer, NTSCBlankLine, 1024);
 
     } else {
 
-        memcpy(tmpRow, NTSCBlankLine, ROW_SIZE);
+        memcpy(rowBuffer, NTSCBlankLine, 1024);
         // 244 lines
         // 189 columns @ 4 per pixel
         int y = rowNumber - (NTSC_EQPULSE_LINES + NTSC_VSYNC_LINES + NTSC_EQPULSE_LINES + NTSC_VBLANK_LINES);
@@ -544,7 +542,7 @@ void NTSCFillRowBuffer(int fieldNumber, int rowNumber, unsigned char *rowBuffer)
         switch(videoMode) {
             case VIDEO_COLOR_TEST: {
                 if(y > 20 && y < 230) {
-                    unsigned char *rowOut = tmpRow + (NTSCHSyncClocks + NTSCBackPorchClocks + 3) / 4 * 4 + 20 * 4;
+                    unsigned char *rowOut = rowBuffer + (NTSCHSyncClocks + NTSCBackPorchClocks + 3) / 4 * 4 + 20 * 4;
                     uint32_t* rowWords = (uint32_t*)rowOut;
                     unsigned char v = NTSCBlack + (NTSCWhite - NTSCBlack) / 2;
                     unsigned char a = NTSCWhite;
@@ -562,7 +560,7 @@ void NTSCFillRowBuffer(int fieldNumber, int rowNumber, unsigned char *rowBuffer)
             }
             case VIDEO_GRAYSCALE: {
                 unsigned char *imgRow = imgBufferRow(y);
-                unsigned char *rowOut = tmpRow + (NTSCHSyncClocks + NTSCBackPorchClocks + 3) / 4 * 4 + 20 * 4;
+                unsigned char *rowOut = rowBuffer + (NTSCHSyncClocks + NTSCBackPorchClocks + 3) / 4 * 4 + 20 * 4;
                 uint32_t* rowWords = (uint32_t*)rowOut;
                 for(int col = 0; col < 189; col++) {
                     unsigned char v = *imgRow++;
@@ -574,7 +572,7 @@ void NTSCFillRowBuffer(int fieldNumber, int rowNumber, unsigned char *rowBuffer)
             case VIDEO_PALETTIZED: {
                 unsigned char *imgRow = imgBufferRow(y);
                 uint32_t* palette = paletteUInt32[rowPalette[y]];
-                unsigned char *rowOut = tmpRow + (NTSCHSyncClocks + NTSCBackPorchClocks + 3) / 4 * 4;
+                unsigned char *rowOut = rowBuffer + (NTSCHSyncClocks + NTSCBackPorchClocks + 3) / 4 * 4;
                 uint32_t* rowWords = (uint32_t*)rowOut;
                 for(int col = 0; col < 189; col++) {
                     unsigned char pixel = *imgRow++;
@@ -586,13 +584,12 @@ void NTSCFillRowBuffer(int fieldNumber, int rowNumber, unsigned char *rowBuffer)
             case VIDEO_SCAN_TEST: {
                 if(rowNumber >= videoScanTestTop && rowNumber <= videoScanTestBottom) {
                     for(int row = videoScanTestLeft; row < videoScanTestRight; row++) {
-                        tmpRow[row] = 200;
+                        rowBuffer[row] = 200;
                     }
                 }
                 break;
             }
         }
-        memcpy(rowBuffer, tmpRow, ROW_SIZE);
     }
     // if(rowNumber == 0) { rowBuffer[0] = 255;}
 }
@@ -1552,7 +1549,7 @@ void DMA2_Stream2_IRQHandler(void)
     TIM2->CNT = 0;
     TIM2->CR1 = TIM_CR1_CEN;            /* enable the timer */
 
-    // because our lines have 910 samples at 4x the colorburst
+    // because our lines have 912 samples at 4x the colorburst
     // clock, and lines are 1/227.5 colorburst frequency
 
     int whichIsScanning = (DMA2_Stream2->CR & DMA_SxCR_CT) ? 1 : 0;
@@ -1705,8 +1702,8 @@ int main()
     SERIAL_init(); // transmit and receive but global interrupts disabled
     LED_beat_heart();
 
-    memset(row0, NTSCSyncPorch, 1024);      // Just in case we experiment with DMA more than 910 bytes
-    memset(row1, NTSCSyncPorch, 1024);
+    memset(row0, NTSCSyncPorch, sizeof(row0));
+    memset(row1, NTSCSyncPorch, sizeof(row1));
 
     printf("\n\nAlice 3 I/O firmware, %s\n", IOBOARD_FIRMWARE_VERSION_STRING);
     printf("System core clock: %lu Hz, %lu MHz\n", SystemCoreClock, SystemCoreClock / 1000000);
