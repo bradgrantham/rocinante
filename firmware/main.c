@@ -269,7 +269,7 @@ volatile unsigned char gSerialInputToMonitor = 1;
 
 unsigned char sd_buffer[SD_BLOCK_SIZE];
 
-uint32_t /* __attribute__((section (".ccmram"))) */ vectorTable[100] __attribute__ ((aligned (512)));
+int __attribute__((section (".ccmram"))) showSpikeAtHandlerEnd = 1;
 
 uint32_t __attribute__((section (".ccmram"))) rowCyclesSpent[262];
 uint32_t __attribute__((section (".ccmram"))) DMAFIFOUnderruns;
@@ -1165,6 +1165,12 @@ int doCommandVideoText(char **words, int wordCount)
     return COMMAND_CONTINUE;
 }
 
+int doCommandShowLineEnd(char **words, int wordCount)
+{
+    showSpikeAtHandlerEnd = !showSpikeAtHandlerEnd;
+    return COMMAND_CONTINUE;
+}
+
 int doCommandScanoutCycles(char **words, int wordCount)
 {
     for(int i = 0; i < 262; i++) {
@@ -1373,6 +1379,10 @@ Command commands[] = {
         "toggle viewing of scanout error statistics"
     },
     {
+        "showend", 1, doCommandShowLineEnd, "",
+        "put out a marker in the DAC at line processing end"
+    },
+    {
         "yiq", 1, doCommandVideoYIQ, "",
         "switch to YIQ palettized video mode"
     },
@@ -1570,6 +1580,15 @@ void DMA2_Stream2_IRQHandler(void)
     // Clear interrupt flag
     // DMA2->LISR &= ~DMA_TCIF;
     DMA2->LIFCR |= DMA_LIFCR_CTCIF2;
+
+    // A little pulse so we know where we are on the line
+    if(showSpikeAtHandlerEnd) {
+        for(int i = 0; i < 14; i++) { GPIOC->ODR = 0xFFFFFF60; }
+        for(int i = 0; i < 28; i++) { GPIOC->ODR = 0xFFFFFFF0; }
+        for(int i = 0; i < 14; i++) { GPIOC->ODR = 0xFFFFFF60; }
+    }
+    /* wait until a little later to return */
+    // while(DMA2_Stream2->NDTR > 200); // Causes dark banding - clocks drifted?  Or voltage drop?
 }
 
 
@@ -1583,6 +1602,7 @@ void DMAStartScanout(uint32_t dmaCount)
     GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
     HAL_GPIO_Init(GPIOC, &GPIO_InitStruct); 
 
+    // Enable DMA interrupt handler
     HAL_NVIC_SetPriority(DMA2_Stream2_IRQn, 0, 1);
     HAL_NVIC_EnableIRQ(DMA2_Stream2_IRQn);
 
@@ -1606,8 +1626,9 @@ void DMAStartScanout(uint32_t dmaCount)
 
     // Configure TIM1_CH2 to drive DMA
     TIM1->CCR2 = (dmaCount + 1) / 2;         /* 50% duty cycle */ 
+    TIM1->CCMR1 |= TIM_CCMR1_OC2FE;    /* fast enable...? */
     TIM1->CCER |= TIM_CCER_CC2E;        /* enable capture/compare CH2 */
-    TIM1->DIER |= TIM_DIER_CC2DE;       /* enable capture/compare updates */
+    TIM1->DIER |= TIM_DIER_CC2DE;       /* enable capture/compare updates DMA */
 
     // Configure timer TIM1
     TIM1->SR = 0;                       /* reset status */
@@ -1659,6 +1680,8 @@ void CCM_RAM_init_vars()
     videoScanTestTop = 50;
     videoScanTestBottom = 450;
 }
+
+uint32_t /* __attribute__((section (".ccmram"))) */ vectorTable[100] __attribute__ ((aligned (512)));
 
 int main()
 {
