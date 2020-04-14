@@ -49,9 +49,22 @@ What does going nuts look like?
     stereo audio output
     1/8inch jack audio input can decode WeFAX or MFSK
 
+4/13
+    On a hunch that maybe AHB doesn't do uchar writes directly and
+      instead fetched a long, masked, or'd, and wrote a long, I tried
+      doing word writes to GPIOC->ODR from DMA.  This would
+      have been very inconvenient (altering ALL of GPIOC at once) but
+      also would have meant using much more memory (a uint32_t per
+      sample even though only 8 bits are used).  It didn't help, and
+      in fact seemed worse.  Color didn't lock, jitter seemed as
+      bad as uchar, and fillRowBuffer took MUCH longer (like 50% of the ISR).
+    Tried half transfer and circular DMA buffer instead of DBM.  No
+      change.  I think this is expected - DBM and Circular are probably
+      implemented with the same logic except Circular updates always
+      from M0AR.
 4/12
     Observations
-        While playing the khan segment, I got 7 FIFO underruns.  But that was over the course of many seconds
+        While playing the khan segment, I got 7 FIFO underruns.  But that was over the course of many seconds.
         Do I just have an electrical issue?  Like when enough of the chip fires at once, I get a brownout?
 	    That would explain the noise while the CPU is operating.
 	    The noise is just brightness variations and not loss of pixels or sync.
