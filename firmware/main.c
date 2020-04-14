@@ -274,7 +274,7 @@ int __attribute__((section (".ccmram"))) markHandlerInSamples = 0;
 uint32_t __attribute__((section (".ccmram"))) rowCyclesSpent[262];
 uint32_t __attribute__((section (".ccmram"))) DMAFIFOUnderruns;
 uint32_t __attribute__((section (".ccmram"))) DMATransferErrors;
-typedef enum { VIDEO_COLOR_TEST, VIDEO_GRAYSCALE, VIDEO_PALETTIZED, VIDEO_SCAN_TEST } VideoMode;
+typedef enum { VIDEO_COLOR_TEST, VIDEO_GRAYSCALE, VIDEO_PALETTIZED, VIDEO_SCAN_TEST, VIDEO_MODE} VideoMode;
 VideoMode __attribute__((section (".ccmram"))) videoMode;
 int __attribute__((section (".ccmram"))) videoScanTestLeft;
 int __attribute__((section (".ccmram"))) videoScanTestRight;
@@ -410,10 +410,12 @@ int NTSCFieldClocks;
 int NTSCFrontPorchClocks;
 int NTSCBackPorchClocks;
 
+unsigned char __attribute__((section (".ccmram"))) imgBuffer[224 * 200];
+
 #define MAX_PALETTE_ENTRIES 254
 #define PALETTE_WHITE 255
 #define PALETTE_BLACK 254
-unsigned char __attribute__((section (".ccmram"))) imgBuffer[224 * 200];
+
 uint32_t __attribute__((section (".ccmram"))) paletteUInt32[2][256];
 unsigned char __attribute__((section (".ccmram"))) rowPalette[256];
 
@@ -423,16 +425,83 @@ unsigned char *imgBufferRow(int row) { return imgBuffer + row * 200; }
 unsigned char *imgBufferPixel(int x, int y) { return imgBufferRow(y) + x; }
 
 // XXX these are in SRAM2 to reduce contention with SRAM1 during DMA
-unsigned char __attribute__((section (".sram2"))) row0[ROW_SAMPLES];
-unsigned char __attribute__((section (".sram2"))) row1[ROW_SAMPLES];
+#define SWATCH_SIZE     1
+unsigned char __attribute__((section (".sram2"))) row0[ROW_SAMPLES * 8];
+unsigned char __attribute__((section (".sram2"))) row1[ROW_SAMPLES * 8];
 unsigned char __attribute__((section (".sram2"))) audio0[512];
 unsigned char __attribute__((section (".sram2"))) audio1[512];
 
-#define TMP_ROW_IN_SRAM1
+#undef TMP_ROW_IN_SRAM1
 
 #ifdef TMP_ROW_IN_SRAM1
 unsigned char rowTmp[ROW_SAMPLES]; // SRAM1, will dma to SRAM2
 #endif
+
+// This is transcribed from the NTSC spec, double-checked.
+void RGBToYIQ(float r, float g, float b, float *y, float *i, float *q)
+{
+    *y = .30f * r + .59f * g + .11f * b;
+    *i = -.27f * (b - *y) + .74f * (r - *y);
+    *q = .41f * (b - *y) + .48f * (r - *y);
+}
+
+unsigned char NTSCYIQToDAC(float y, float i, float q, float tcycles)
+{
+// This is transcribed from the NTSC spec, double-checked.
+    float wt = tcycles * M_PI * 2;
+    float sine = sinf(wt + 33.0f / 180.0f * M_PI);
+    float cosine = cosf(wt + 33.0f / 180.0f * M_PI);
+    float signal = y + q * sine + i * cosine;
+// end of transcription
+
+    if(signal < -1.0f) { signal = -1.0f; }
+    if(signal > 1.0f) { signal = 1.0f; }
+
+    return NTSCBlack + signal * (NTSCMaxAllowed - NTSCBlack);
+}
+
+uint32_t NTSCYIQToUInt32(float y, float i, float q)
+{
+    unsigned char b0 = NTSCYIQToDAC(y, i, q,  .0f);
+    unsigned char b1 = NTSCYIQToDAC(y, i, q, .25f);
+    unsigned char b2 = NTSCYIQToDAC(y, i, q, .50f);
+    unsigned char b3 = NTSCYIQToDAC(y, i, q, .75f);
+
+    return (b0 << 0) | (b1 << 8) | (b2 << 16) | (b3 << 24);
+}
+
+void HSVToRGB3f(float h, float s, float v, float *r, float *g, float *b)
+{
+    if(s < .00001) {
+        *r = v; *g = v; *b = v;
+    } else {
+    	int i;
+	float p, q, t, f;
+
+	h = fmodf(h, M_PI * 2);	/* wrap just in case */
+
+        i = floorf(h / (M_PI / 3));
+
+	/*
+	 * would have used "f = fmod(h, M_PI / 3);", but fmod seems to have
+	 * a bug under Linux.
+	 */
+
+	f = h / (M_PI / 3) - floorf(h / (M_PI / 3));
+
+	p = v * (1 - s);
+	q = v * (1 - s * f);
+	t = v * (1 - s * (1 - f));
+	switch(i) {
+	    case 0: *r = v; *g = t; *b = p; break;
+	    case 1: *r = q; *g = v; *b = p; break;
+	    case 2: *r = p; *g = v; *b = t; break;
+	    case 3: *r = p; *g = q; *b = v; break;
+	    case 4: *r = t; *g = p; *b = v; break;
+	    case 5: *r = v; *g = p; *b = q; break;
+	}
+    }
+}
 
 unsigned char NTSCColorburst0;
 unsigned char NTSCColorburst90;
@@ -508,6 +577,539 @@ void NTSCFillBlankLine(unsigned char *rowBuffer, int withColorburst)
         NTSCAddColorburst(rowBuffer);
     }
 }
+
+void NTSCGenerateLineBuffers()
+{
+    // one line = (1 / 3579545) * (455/2)
+
+    // front porch is (.165) * (1 / 15734) / (1 / 3579545) = 37.53812921062726565701 cycles (37.5)
+    //     74 cycles at double clock
+    // pixels is (1 - .165) * (1 / 15734) / (1 / 3579545) = 189.96568418711380557696 cycles (190)
+    //     280 cycles at double clock
+
+    NTSCFillEqPulseLine(NTSCEqSyncPulseLine);
+    NTSCFillVSyncLine(NTSCVsyncLine);
+    NTSCFillBlankLine(NTSCBlankLine, withColorburst);
+}
+
+//----------------------------------------------------------------------------
+// Video modes 
+
+#define font8x8Width 8
+#define font8x8Height 8
+
+unsigned char /* __attribute__((section (".ccmram"))) */ font8x8Bits[] = {
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0C, 0x12, 0x10,
+    0x7C, 0x10, 0x12, 0x7C, 0x00, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08,
+    0x08, 0x00, 0x04, 0x08, 0x3C, 0x42, 0x7E, 0x40, 0x3C, 0x00, 0x24,
+    0x00, 0x42, 0x42, 0x42, 0x42, 0x3C, 0x00, 0x08, 0x14, 0x08, 0x14,
+    0x22, 0x3E, 0x22, 0x00, 0x00, 0x00, 0x00, 0x7E, 0x02, 0x02, 0x00,
+    0x00, 0x14, 0x00, 0x1C, 0x22, 0x22, 0x22, 0x1C, 0x00, 0x1D, 0x22,
+    0x26, 0x2A, 0x32, 0x22, 0x5C, 0x00, 0x10, 0x08, 0x42, 0x42, 0x42,
+    0x46, 0x3A, 0x00, 0x32, 0x4C, 0x00, 0x2C, 0x32, 0x22, 0x22, 0x00,
+    0x08, 0x04, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x38, 0x00, 0x38,
+    0x04, 0x3C, 0x44, 0x3A, 0x00, 0x3E, 0x7A, 0x44, 0x44, 0x78, 0x48,
+    0x44, 0x00, 0x14, 0x00, 0x08, 0x14, 0x22, 0x3E, 0x22, 0x00, 0x32,
+    0x4C, 0x08, 0x14, 0x22, 0x3E, 0x22, 0x00, 0x32, 0x4C, 0x22, 0x32,
+    0x2A, 0x26, 0x22, 0x00, 0x00, 0x14, 0x1C, 0x22, 0x22, 0x22, 0x1C,
+    0x00, 0x09, 0x16, 0x26, 0x2A, 0x32, 0x34, 0x48, 0x00, 0x32, 0x4C,
+    0x00, 0x3C, 0x42, 0x42, 0x3C, 0x00, 0x3C, 0x22, 0x22, 0x3C, 0x22,
+    0x22, 0x7C, 0x00, 0x24, 0x00, 0x42, 0x42, 0x42, 0x46, 0x3A, 0x00,
+    0x32, 0x4C, 0x00, 0x18, 0x24, 0x24, 0x18, 0x00, 0x1C, 0x2A, 0x0A,
+    0x1C, 0x28, 0x2A, 0x1C, 0x00, 0x28, 0x00, 0x38, 0x04, 0x3C, 0x44,
+    0x3A, 0x00, 0x20, 0x10, 0x38, 0x04, 0x3C, 0x44, 0x3A, 0x00, 0x10,
+    0x00, 0x38, 0x04, 0x3C, 0x44, 0x3A, 0x00, 0x3C, 0x40, 0x7C, 0x42,
+    0x3E, 0x02, 0x3C, 0x00, 0x04, 0x08, 0x3E, 0x20, 0x3E, 0x20, 0x3E,
+    0x00, 0x08, 0x1E, 0x24, 0x26, 0x3C, 0x24, 0x26, 0x00, 0x1C, 0x22,
+    0x20, 0x20, 0x22, 0x1C, 0x08, 0x10, 0x00, 0x00, 0x32, 0x4C, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x08, 0x08, 0x08, 0x08, 0x08, 0x00, 0x08, 0x00, 0x24, 0x24, 0x24,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x24, 0x24, 0x7E, 0x24, 0x7E, 0x24,
+    0x24, 0x00, 0x08, 0x1E, 0x28, 0x1C, 0x0A, 0x3C, 0x08, 0x00, 0x00,
+    0x62, 0x64, 0x08, 0x10, 0x26, 0x46, 0x00, 0x30, 0x48, 0x48, 0x30,
+    0x4A, 0x44, 0x3A, 0x00, 0x04, 0x08, 0x10, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x04, 0x08, 0x10, 0x10, 0x10, 0x08, 0x04, 0x00, 0x20, 0x10,
+    0x08, 0x08, 0x08, 0x10, 0x20, 0x00, 0x08, 0x2A, 0x1C, 0x3E, 0x1C,
+    0x2A, 0x08, 0x00, 0x00, 0x08, 0x08, 0x3E, 0x08, 0x08, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x08, 0x08, 0x10, 0x00, 0x00, 0x00,
+    0x7E, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x08, 0x00, 0x00, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x00, 0x3C,
+    0x42, 0x46, 0x5A, 0x62, 0x42, 0x3C, 0x00, 0x08, 0x18, 0x28, 0x08,
+    0x08, 0x08, 0x3E, 0x00, 0x3C, 0x42, 0x02, 0x0C, 0x30, 0x40, 0x7E,
+    0x00, 0x3C, 0x42, 0x02, 0x1C, 0x02, 0x42, 0x3C, 0x00, 0x04, 0x0C,
+    0x14, 0x24, 0x7E, 0x04, 0x04, 0x00, 0x7E, 0x40, 0x78, 0x04, 0x02,
+    0x44, 0x38, 0x00, 0x1C, 0x20, 0x40, 0x7C, 0x42, 0x42, 0x3C, 0x00,
+    0x7E, 0x42, 0x04, 0x08, 0x10, 0x10, 0x10, 0x00, 0x3C, 0x42, 0x42,
+    0x3C, 0x42, 0x42, 0x3C, 0x00, 0x3C, 0x42, 0x42, 0x3E, 0x02, 0x04,
+    0x38, 0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00,
+    0x00, 0x08, 0x00, 0x00, 0x08, 0x08, 0x10, 0x06, 0x0C, 0x18, 0x30,
+    0x18, 0x0C, 0x06, 0x00, 0x00, 0x00, 0x7E, 0x00, 0x7E, 0x00, 0x00,
+    0x00, 0x60, 0x30, 0x18, 0x0C, 0x18, 0x30, 0x60, 0x00, 0x3C, 0x42,
+    0x02, 0x0C, 0x10, 0x00, 0x10, 0x00, 0x1C, 0x22, 0x4A, 0x56, 0x4C,
+    0x20, 0x1E, 0x00, 0x18, 0x24, 0x42, 0x7E, 0x42, 0x42, 0x42, 0x00,
+    0x7C, 0x22, 0x22, 0x3C, 0x22, 0x22, 0x7C, 0x00, 0x1C, 0x22, 0x40,
+    0x40, 0x40, 0x22, 0x1C, 0x00, 0x78, 0x24, 0x22, 0x22, 0x22, 0x24,
+    0x78, 0x00, 0x7E, 0x40, 0x40, 0x78, 0x40, 0x40, 0x7E, 0x00, 0x7E,
+    0x40, 0x40, 0x78, 0x40, 0x40, 0x40, 0x00, 0x1C, 0x22, 0x40, 0x4E,
+    0x42, 0x22, 0x1C, 0x00, 0x42, 0x42, 0x42, 0x7E, 0x42, 0x42, 0x42,
+    0x00, 0x1C, 0x08, 0x08, 0x08, 0x08, 0x08, 0x1C, 0x00, 0x0E, 0x04,
+    0x04, 0x04, 0x04, 0x44, 0x38, 0x00, 0x42, 0x44, 0x48, 0x70, 0x48,
+    0x44, 0x42, 0x00, 0x40, 0x40, 0x40, 0x40, 0x40, 0x40, 0x7E, 0x00,
+    0x42, 0x66, 0x5A, 0x5A, 0x42, 0x42, 0x42, 0x00, 0x42, 0x62, 0x52,
+    0x4A, 0x46, 0x42, 0x42, 0x00, 0x3C, 0x42, 0x42, 0x42, 0x42, 0x42,
+    0x3C, 0x00, 0x7C, 0x42, 0x42, 0x7C, 0x40, 0x40, 0x40, 0x00, 0x3C,
+    0x42, 0x42, 0x42, 0x4A, 0x44, 0x3A, 0x00, 0x7C, 0x42, 0x42, 0x7C,
+    0x48, 0x44, 0x42, 0x00, 0x3C, 0x42, 0x40, 0x3C, 0x02, 0x42, 0x3C,
+    0x00, 0x3E, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08, 0x00, 0x42, 0x42,
+    0x42, 0x42, 0x42, 0x42, 0x3C, 0x00, 0x42, 0x42, 0x42, 0x24, 0x24,
+    0x18, 0x18, 0x00, 0x42, 0x42, 0x42, 0x5A, 0x5A, 0x66, 0x42, 0x00,
+    0x42, 0x42, 0x24, 0x18, 0x24, 0x42, 0x42, 0x00, 0x22, 0x22, 0x22,
+    0x1C, 0x08, 0x08, 0x08, 0x00, 0x7E, 0x02, 0x04, 0x18, 0x20, 0x40,
+    0x7E, 0x00, 0x3C, 0x20, 0x20, 0x20, 0x20, 0x20, 0x3C, 0x00, 0x00,
+    0x40, 0x20, 0x10, 0x08, 0x04, 0x02, 0x00, 0x3C, 0x04, 0x04, 0x04,
+    0x04, 0x04, 0x3C, 0x00, 0x08, 0x14, 0x22, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0x10, 0x08,
+    0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x38, 0x04, 0x3C,
+    0x44, 0x3A, 0x00, 0x40, 0x40, 0x5C, 0x62, 0x42, 0x62, 0x5C, 0x00,
+    0x00, 0x00, 0x3C, 0x42, 0x40, 0x42, 0x3C, 0x00, 0x02, 0x02, 0x3A,
+    0x46, 0x42, 0x46, 0x3A, 0x00, 0x00, 0x00, 0x3C, 0x42, 0x7E, 0x40,
+    0x3C, 0x00, 0x0C, 0x12, 0x10, 0x7C, 0x10, 0x10, 0x10, 0x00, 0x00,
+    0x00, 0x3A, 0x46, 0x46, 0x3A, 0x02, 0x3C, 0x40, 0x40, 0x5C, 0x62,
+    0x42, 0x42, 0x42, 0x00, 0x08, 0x00, 0x18, 0x08, 0x08, 0x08, 0x1C,
+    0x00, 0x04, 0x00, 0x0C, 0x04, 0x04, 0x04, 0x44, 0x38, 0x40, 0x40,
+    0x44, 0x48, 0x50, 0x68, 0x44, 0x00, 0x18, 0x08, 0x08, 0x08, 0x08,
+    0x08, 0x1C, 0x00, 0x00, 0x00, 0x76, 0x49, 0x49, 0x49, 0x49, 0x00,
+    0x00, 0x00, 0x5C, 0x62, 0x42, 0x42, 0x42, 0x00, 0x00, 0x00, 0x3C,
+    0x42, 0x42, 0x42, 0x3C, 0x00, 0x00, 0x00, 0x5C, 0x62, 0x62, 0x5C,
+    0x40, 0x40, 0x00, 0x00, 0x3A, 0x46, 0x46, 0x3A, 0x02, 0x02, 0x00,
+    0x00, 0x5C, 0x62, 0x40, 0x40, 0x40, 0x00, 0x00, 0x00, 0x3E, 0x40,
+    0x3C, 0x02, 0x7C, 0x00, 0x10, 0x10, 0x7C, 0x10, 0x10, 0x12, 0x0C,
+    0x00, 0x00, 0x00, 0x42, 0x42, 0x42, 0x46, 0x3A, 0x00, 0x00, 0x00,
+    0x42, 0x42, 0x42, 0x24, 0x18, 0x00, 0x00, 0x00, 0x41, 0x49, 0x49,
+    0x49, 0x36, 0x00, 0x00, 0x00, 0x42, 0x24, 0x18, 0x24, 0x42, 0x00,
+    0x00, 0x00, 0x42, 0x42, 0x46, 0x3A, 0x02, 0x3C, 0x00, 0x00, 0x7E,
+    0x04, 0x18, 0x20, 0x7E, 0x00, 0x0C, 0x10, 0x10, 0x20, 0x10, 0x10,
+    0x0C, 0x00, 0x08, 0x08, 0x08, 0x00, 0x08, 0x08, 0x08, 0x00, 0x30,
+    0x08, 0x08, 0x04, 0x08, 0x08, 0x30, 0x00, 0x30, 0x49, 0x06, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x08, 0x08, 0x3E, 0x08, 0x08, 0x00, 0x3E,
+    0x00, 0x08, 0x1C, 0x3E, 0x7F, 0x7F, 0x3E, 0x08, 0x08, 0x00, 0x36,
+    0x7F, 0x7F, 0x3E, 0x1C, 0x08, 0x00, 0x08, 0x1C, 0x3E, 0x7F, 0x3E,
+    0x1C, 0x08, 0x00, 0x1C, 0x1C, 0x08, 0x6B, 0x7F, 0x6B, 0x08, 0x1C,
+    0x3C, 0x42, 0xA5, 0x81, 0xA5, 0x99, 0x42, 0x3C, 0x3C, 0x42, 0xA5,
+    0x81, 0x99, 0xA5, 0x42, 0x3C, 0x04, 0x08, 0x10, 0x20, 0x10, 0x08,
+    0x04, 0x3C, 0x20, 0x10, 0x08, 0x04, 0x08, 0x10, 0x20, 0x3C, 0x00,
+    0x00, 0x39, 0x46, 0x46, 0x39, 0x00, 0x00, 0x3C, 0x22, 0x3C, 0x22,
+    0x22, 0x3C, 0x20, 0x40, 0x61, 0x12, 0x14, 0x18, 0x10, 0x30, 0x30,
+    0x00, 0x0C, 0x12, 0x10, 0x0C, 0x0A, 0x12, 0x0C, 0x00, 0x06, 0x08,
+    0x10, 0x3E, 0x10, 0x08, 0x06, 0x00, 0x16, 0x06, 0x08, 0x10, 0x1C,
+    0x02, 0x0C, 0x00, 0x2C, 0x52, 0x12, 0x12, 0x02, 0x02, 0x02, 0x00,
+    0x08, 0x14, 0x22, 0x3E, 0x22, 0x14, 0x08, 0x00, 0x00, 0x20, 0x20,
+    0x20, 0x22, 0x22, 0x1C, 0x00, 0x40, 0x48, 0x50, 0x60, 0x50, 0x4A,
+    0x44, 0x00, 0x20, 0x10, 0x10, 0x10, 0x18, 0x24, 0x42, 0x00, 0x24,
+    0x24, 0x24, 0x24, 0x3A, 0x20, 0x20, 0x00, 0x00, 0x00, 0x32, 0x12,
+    0x14, 0x18, 0x10, 0x00, 0x08, 0x1C, 0x20, 0x18, 0x20, 0x1C, 0x02,
+    0x0C, 0x00, 0x18, 0x24, 0x42, 0x42, 0x24, 0x18, 0x00, 0x00, 0x00,
+    0x3E, 0x54, 0x14, 0x14, 0x14, 0x00, 0x00, 0x18, 0x24, 0x24, 0x38,
+    0x20, 0x20, 0x00, 0x00, 0x00, 0x3E, 0x48, 0x48, 0x30, 0x00, 0x00,
+    0x00, 0x00, 0x3E, 0x48, 0x08, 0x08, 0x08, 0x08, 0x00, 0x02, 0x64,
+    0x24, 0x24, 0x24, 0x18, 0x00, 0x08, 0x1C, 0x2A, 0x2A, 0x2A, 0x1C,
+    0x08, 0x00, 0x00, 0x00, 0x62, 0x14, 0x08, 0x14, 0x23, 0x00, 0x49,
+    0x2A, 0x2A, 0x1C, 0x08, 0x08, 0x08, 0x00, 0x00, 0x00, 0x22, 0x41,
+    0x49, 0x49, 0x36, 0x00, 0x1C, 0x22, 0x41, 0x41, 0x63, 0x22, 0x63,
+    0x00, 0x1E, 0x10, 0x10, 0x10, 0x50, 0x30, 0x10, 0x00, 0x00, 0x08,
+    0x00, 0x3E, 0x00, 0x08, 0x00, 0x00, 0x7E, 0x20, 0x10, 0x0C, 0x10,
+    0x20, 0x7E, 0x00, 0x00, 0x32, 0x4C, 0x00, 0x32, 0x4C, 0x00, 0x00,
+    0x00, 0x00, 0x08, 0x14, 0x22, 0x7F, 0x00, 0x00, 0x04, 0x08, 0x10,
+    0x10, 0x08, 0x08, 0x10, 0x20, 0x01, 0x02, 0x7F, 0x08, 0x7F, 0x20,
+    0x40, 0x00, 0x10, 0x08, 0x04, 0x3E, 0x10, 0x08, 0x04, 0x00, 0x3F,
+    0x52, 0x24, 0x08, 0x12, 0x25, 0x42, 0x00, 0x1C, 0x22, 0x41, 0x41,
+    0x7F, 0x22, 0x22, 0x63, 0x00, 0x00, 0x36, 0x49, 0x49, 0x36, 0x00,
+    0x00, 0x00, 0x02, 0x04, 0x48, 0x50, 0x60, 0x40, 0x00, 0x1E, 0x20,
+    0x1C, 0x22, 0x1C, 0x02, 0x3C, 0x00, 0x22, 0x55, 0x2A, 0x14, 0x2A,
+    0x55, 0x22, 0x00, 0x3C, 0x42, 0x9D, 0xA1, 0xA1, 0x9D, 0x42, 0x3C,
+    0x42, 0x24, 0x18, 0x24, 0x18, 0x24, 0x42, 0x00, 0x3E, 0x4A, 0x4A,
+    0x3A, 0x0A, 0x0A, 0x0A, 0x0A, 0x08, 0x1C, 0x2A, 0x28, 0x2A, 0x1C,
+    0x08, 0x00, 0x3C, 0x7A, 0xA5, 0xA5, 0xB9, 0xA9, 0x66, 0x3C, 0x5F,
+    0x60, 0x63, 0x62, 0x64, 0x7B, 0x60, 0x5F, 0xFF, 0x04, 0x03, 0xFC,
+    0x02, 0xFC, 0x04, 0xF8, 0xFC, 0x02, 0xFC, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x78, 0x44, 0x44, 0x78, 0x4A, 0x44, 0x4B, 0x00, 0x61, 0x82,
+    0x84, 0x68, 0x16, 0x29, 0x49, 0x86, 0x0E, 0x06, 0x0A, 0x70, 0x90,
+    0x90, 0x60, 0x00, 0x1C, 0x22, 0x22, 0x22, 0x1C, 0x08, 0x1C, 0x08,
+    0x0E, 0x08, 0x08, 0x0E, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xE3, 0xDD,
+    0xF3, 0xF7, 0xFF, 0xF7, 0xFF, 0x08, 0x14, 0x08, 0x1C, 0x2A, 0x08,
+    0x14, 0x22, 0x08, 0x14, 0x08, 0x1C, 0x2A, 0x14, 0x3E, 0x14, 0x08,
+    0x14, 0x22, 0x22, 0x22, 0x2A, 0x36, 0x22, 0x22, 0x14, 0x08, 0x3E,
+    0x08, 0x3E, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x20, 0x50, 0x20,
+    0x00, 0x1C, 0x10, 0x10, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x04, 0x04, 0x04, 0x1C, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x20, 0x10, 0x00, 0x00, 0x00, 0x00, 0x18, 0x18, 0x00, 0x00, 0x00,
+    0x00, 0x7E, 0x02, 0x7E, 0x02, 0x04, 0x08, 0x00, 0x00, 0x00, 0x3E,
+    0x02, 0x0C, 0x08, 0x10, 0x00, 0x00, 0x00, 0x02, 0x04, 0x0C, 0x14,
+    0x04, 0x00, 0x00, 0x00, 0x08, 0x3E, 0x22, 0x04, 0x08, 0x00, 0x00,
+    0x00, 0x00, 0x3E, 0x08, 0x08, 0x3E, 0x00, 0x00, 0x00, 0x04, 0x3E,
+    0x0C, 0x14, 0x24, 0x00, 0x00, 0x00, 0x10, 0x3E, 0x12, 0x14, 0x10,
+    0x00, 0x00, 0x00, 0x00, 0x1C, 0x04, 0x04, 0x3E, 0x00, 0x00, 0x00,
+    0x3C, 0x04, 0x1C, 0x04, 0x3C, 0x00, 0x00, 0x00, 0x00, 0x2A, 0x2A,
+    0x02, 0x0C, 0x00, 0x00, 0x00, 0x00, 0x3E, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x7E, 0x02, 0x16, 0x18, 0x10, 0x20, 0x00, 0x02, 0x04, 0x08,
+    0x18, 0x28, 0x48, 0x08, 0x00, 0x10, 0x7E, 0x42, 0x02, 0x02, 0x04,
+    0x08, 0x00, 0x00, 0x3E, 0x08, 0x08, 0x08, 0x08, 0x3E, 0x00, 0x04,
+    0x7E, 0x0C, 0x14, 0x24, 0x44, 0x04, 0x00, 0x10, 0x7E, 0x12, 0x12,
+    0x12, 0x22, 0x44, 0x00, 0x08, 0x7F, 0x08, 0x7F, 0x08, 0x08, 0x08,
+    0x00, 0x20, 0x3E, 0x22, 0x42, 0x04, 0x08, 0x10, 0x00, 0x20, 0x3E,
+    0x48, 0x08, 0x08, 0x08, 0x10, 0x00, 0x00, 0x7E, 0x02, 0x02, 0x02,
+    0x02, 0x7E, 0x00, 0x24, 0x7E, 0x24, 0x24, 0x04, 0x08, 0x10, 0x00,
+    0x00, 0x60, 0x02, 0x62, 0x02, 0x04, 0x38, 0x00, 0x00, 0x3E, 0x02,
+    0x04, 0x08, 0x14, 0x22, 0x00, 0x10, 0x7E, 0x11, 0x12, 0x10, 0x10,
+    0x0E, 0x00, 0x00, 0x42, 0x22, 0x02, 0x04, 0x08, 0x10, 0x00, 0x20,
+    0x3E, 0x22, 0x52, 0x0C, 0x08, 0x10, 0x00, 0x04, 0x38, 0x08, 0x7E,
+    0x08, 0x08, 0x10, 0x00, 0x00, 0x52, 0x52, 0x52, 0x02, 0x04, 0x08,
+    0x00, 0x00, 0x3C, 0x00, 0x7E, 0x08, 0x08, 0x10, 0x00, 0x10, 0x10,
+    0x10, 0x18, 0x14, 0x12, 0x10, 0x00, 0x08, 0x08, 0x7E, 0x08, 0x08,
+    0x08, 0x10, 0x00, 0x00, 0x3C, 0x00, 0x00, 0x00, 0x00, 0x7E, 0x00,
+    0x00, 0x3E, 0x02, 0x14, 0x08, 0x14, 0x22, 0x00, 0x10, 0x7E, 0x04,
+    0x08, 0x14, 0x32, 0x50, 0x00, 0x08, 0x08, 0x08, 0x08, 0x08, 0x10,
+    0x20, 0x00, 0x00, 0x10, 0x08, 0x44, 0x42, 0x42, 0x42, 0x00, 0x40,
+    0x40, 0x7E, 0x40, 0x40, 0x40, 0x3E, 0x00, 0x7E, 0x02, 0x02, 0x02,
+    0x02, 0x04, 0x18, 0x00, 0x00, 0x10, 0x28, 0x44, 0x02, 0x01, 0x01,
+    0x00, 0x08, 0x7F, 0x08, 0x08, 0x49, 0x49, 0x08, 0x00, 0x7E, 0x02,
+    0x02, 0x24, 0x18, 0x08, 0x04, 0x00, 0x40, 0x3C, 0x00, 0x3C, 0x00,
+    0x7C, 0x02, 0x00, 0x08, 0x10, 0x20, 0x40, 0x42, 0x7E, 0x02, 0x00,
+    0x02, 0x02, 0x14, 0x08, 0x14, 0x20, 0x40, 0x00, 0x00, 0x7E, 0x10,
+    0x7E, 0x10, 0x10, 0x0E, 0x00, 0x10, 0x10, 0x7E, 0x12, 0x14, 0x10,
+    0x10, 0x00, 0x00, 0x3C, 0x04, 0x04, 0x04, 0x04, 0x7F, 0x00, 0x3E,
+    0x02, 0x02, 0x3E, 0x02, 0x02, 0x3E, 0x00, 0x3C, 0x00, 0x7E, 0x02,
+    0x02, 0x04, 0x08, 0x00, 0x44, 0x44, 0x44, 0x44, 0x04, 0x08, 0x10,
+    0x00, 0x10, 0x50, 0x50, 0x50, 0x52, 0x54, 0x58, 0x00, 0x40, 0x40,
+    0x40, 0x44, 0x48, 0x50, 0x60, 0x00, 0x00, 0x7E, 0x42, 0x42, 0x42,
+    0x42, 0x7E, 0x00, 0x00, 0x7E, 0x42, 0x42, 0x02, 0x04, 0x08, 0x00,
+    0x00, 0x60, 0x00, 0x02, 0x02, 0x04, 0x78, 0x00, 0x10, 0x48, 0x20,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x20, 0x50, 0x20, 0x00, 0x00, 0x00,
+    0x00, 0x00,
+};
+
+// Pixel video mode enums and structs
+
+typedef struct VideoPixmapInfo
+{
+    // This part can be static
+    int width, height;  /* pixels or text */
+    enum PixelFormat { BITMAP, GRAY_4BIT, GRAY_8BIT, PALETTE_4BIT, PALETTE_8BIT} pixelFormat;
+    /* pixels are LSB, so 4BIT pixel N is in byte N/2 bits 0-3, and pixel N+1 is in byte N/2 bits 4-7 */
+    uint32_t paletteSize; /* for convenience, matches pixelFormat, -1 if a bitmap */
+    int color;          /* for convenience, matches pixelFormat */
+    int overscan;       /* true if pixels can be offscreen */
+} VideoPixmapInfo;
+
+typedef struct VideoPixmapParameters
+{
+    // This part is valid after initialization
+    unsigned char *base;                /* the pixmap base pointer*/
+    size_t rowSize; /* bytes */
+    unsigned char *paletteByRow;        /* which palette to choose by row, if applicable */
+    uint32_t *palettes[2];              /* palettes */
+} VideoPixmapParameters;
+
+// Textport video mode enums and structs
+
+enum VideoTextportAttributes { TEXT_8BIT_WHITE_ON_BLACK, TEXT_8BIT_BLACK_ON_WHITE, TEXT_16BIT_8_3_3_2_RICH } attributes;
+
+typedef struct VideoTextportInfo
+{
+    // This part can be static
+    int width, height; /* pixels or text */
+    uint32_t paletteSize; /* for convenience, matches pixelFormat */
+        /* RICH means second byte is text byte then byte with (fc << 5) || (bc << 2) || attr */
+        /* attr can be 0b00 for normal, 0b01 for flashing, */
+    enum VideoTextportAttributes attributes;
+} VideoTextportInfo;
+
+typedef struct VideoTextportParameters
+{
+    // This part is valid after initialization
+    unsigned char *base;
+    int *cursorX, *cursorY;
+    size_t rowSize; /* bytes */
+} VideoTextportParameters;
+
+
+// Video setup and parameter function typedefs
+
+typedef void (*VideoSetupFunc)(const void *info);     // info specific to mode
+typedef void (*VideoGetParametersFunc)(const void *info, void *params);     // info specific to mode
+typedef void (*VideoFillRowFunc)(int fieldNumber, int rowNumber, unsigned char *rowBuffer);
+
+enum VideoModeType
+{
+    VIDEO_PIXMAP,
+    VIDEO_TEXTPORT,
+    VIDEO_WOZ,
+    VIDEO_TMS9918A,
+    VIDEO_SEGMENTS,
+    VIDEO_DCT,
+};
+
+typedef struct VideoModeEntry
+{
+    enum VideoModeType type;
+    void *info;
+    VideoSetupFunc setup;
+    VideoGetParametersFunc getParameters;
+    VideoFillRowFunc fillRow;
+} VideoModeEntry;
+
+// Video mode specifics follow
+
+// ----------------------------------------
+// plain 40x24 black-on-white textport
+
+#define TextportPlain40x24Width 40
+#define TextportPlain40x24Height 24
+#define TextportPlain40x24TopTick 44
+#define TextportPlain40x24LeftTick 196
+
+int TextportPlain40x24CursorX = 0;
+int TextportPlain40x24CursorY = 0;
+int TextportPlain40x24CursorFlash = 1;
+
+// Textport video mode structs
+VideoTextportInfo TextportPlain40x24Info = {
+    TextportPlain40x24Width, TextportPlain40x24Height,
+    0,
+    TEXT_8BIT_BLACK_ON_WHITE,
+};
+
+void TextportPlain40x24Setup(const void* info_)
+{
+    /* const VideoTextportInfo *info = (VideoTextportInfo*)info_; */
+    NTSCFillBlankLine(NTSCBlankLine, 0);        /* monochrome text */
+}
+
+void TextportPlain40x24GetParameters(const void *info_, void *params_)
+{
+    const VideoTextportInfo *info = (VideoTextportInfo*)info_;
+    VideoTextportParameters *params = (VideoTextportParameters*)params_;
+    params->base = imgBuffer;
+    params->cursorX = &TextportPlain40x24CursorX;
+    params->cursorY = &TextportPlain40x24CursorY;
+    params->rowSize = info->width;
+}
+
+void TextportPlain40x24FillRow(int fieldNumber, int rowNumber, unsigned char *rowBuffer)
+{
+    int rowWithinArea = rowNumber - TextportPlain40x24TopTick;
+    int charRow = rowWithinArea / font8x8Height;
+    int charPixelY = (rowWithinArea % font8x8Height);
+
+    int invert = (TextportPlain40x24CursorFlash == 0) || (fieldNumber / 15 % 2 == 0);
+
+// XXX this code assumes font width <= 8 and each row padded out to a byte
+    if((rowWithinArea >= 0) && (charRow < TextportPlain40x24Height)) {
+        for(int charCol = 0; charCol < TextportPlain40x24Width; charCol++) {
+            unsigned char whichChar = imgBuffer[charRow * TextportPlain40x24Width + charCol];
+            unsigned char charRowBits = font8x8Bits[whichChar * font8x8Height + charPixelY];
+            unsigned char *charPixels = rowBuffer + TextportPlain40x24LeftTick + charCol * font8x8Width * 2;
+            int invertThis = (charCol == TextportPlain40x24CursorX && charRow == TextportPlain40x24CursorY && invert);
+            for(int charPixelX = 0; charPixelX < font8x8Width; charPixelX++) {
+                int pixel = (charRowBits & (0x80 >> charPixelX)) ^ invertThis;
+                charPixels[charPixelX * 2 + 0] = pixel ? NTSCBlack : NTSCWhite;
+                charPixels[charPixelX * 2 + 1] = pixel ? NTSCBlack : NTSCWhite;
+            }
+        }
+    }
+}
+
+// ----------------------------------------
+// plain 80x24 white-on-black textport
+
+// 196, 832, 44, 236
+#define TextportPlain80x24Width 80
+#define TextportPlain80x24Height 24
+#define TextportPlain80x24TopTick 44
+#define TextportPlain80x24LeftTick 196
+
+int TextportPlain80x24CursorX = 0;
+int TextportPlain80x24CursorY = 0;
+int TextportPlain80x24CursorFlash = 0;
+
+// Textport video mode structs
+VideoTextportInfo TextportPlain80x24Info = {
+    TextportPlain80x24Width, TextportPlain80x24Height,
+    0,
+    TEXT_8BIT_WHITE_ON_BLACK,
+};
+
+void TextportPlain80x24Setup(const void* info_)
+{
+    /* const VideoTextportInfo *info = (VideoTextportInfo*)info_; */
+    NTSCFillBlankLine(NTSCBlankLine, 0);        /* monochrome text */
+}
+
+void TextportPlain80x24GetParameters(const void *info_, void *params_)
+{
+    const VideoTextportInfo *info = (VideoTextportInfo*)info_;
+    VideoTextportParameters *params = (VideoTextportParameters*)params_;
+    params->base = imgBuffer;
+    params->cursorX = &TextportPlain80x24CursorX;
+    params->cursorY = &TextportPlain80x24CursorY;
+    params->rowSize = info->width;
+}
+
+void TextportPlain80x24FillRow(int fieldNumber, int rowNumber, unsigned char *rowBuffer)
+{
+    int rowWithinArea = rowNumber - TextportPlain80x24TopTick;
+    int charRow = rowWithinArea / font8x8Height;
+    int charPixelY = (rowWithinArea % font8x8Height);
+
+    int invert = (TextportPlain80x24CursorFlash == 0) || (fieldNumber / 15 % 2 == 0);
+
+// XXX this code assumes font width <= 8 and each row padded out to a byte
+    if((rowWithinArea >= 0) && (charRow < TextportPlain80x24Height)) {
+        for(int charCol = 0; charCol < TextportPlain80x24Width; charCol++) {
+            unsigned char whichChar = imgBuffer[charRow * TextportPlain80x24Width + charCol];
+            unsigned char charRowBits = font8x8Bits[whichChar * font8x8Height + charPixelY];
+            unsigned char *charPixels = rowBuffer + TextportPlain80x24LeftTick + charCol * font8x8Width;
+            int invertThis = (charCol == TextportPlain80x24CursorX && charRow == TextportPlain80x24CursorY && invert);
+            for(int charPixelX = 0; charPixelX < font8x8Width; charPixelX++) {
+                int pixel = (charRowBits & (0x80 >> charPixelX)) ^ invertThis;
+                charPixels[charPixelX] = pixel ? NTSCWhite : NTSCBlack;
+            }
+        }
+    }
+}
+
+// ----------------------------------------
+// 640 x 192 monochrome bitmap display
+// 196, 832, 44, 236
+
+// Pixmap video mode structs
+VideoPixmapInfo Bitmap640x192Info = {
+    640, 192,
+    BITMAP,
+    -1,
+    0,
+    0,
+};
+
+void Bitmap640x192Setup(const void* info_)
+{
+    /* const VideoTextportInfo *info = (VideoTextportInfo*)info_; */
+    NTSCFillBlankLine(NTSCBlankLine, 0);        /* monochrome text */
+}
+
+void Bitmap640x192GetParameters(const void *info_, void *params_)
+{
+    const VideoPixmapInfo *info = (VideoPixmapInfo*)info_;
+    VideoPixmapParameters *params = (VideoPixmapParameters*)params_;
+    params->base = imgBuffer;
+    params->rowSize = info->width;
+}
+
+#define Bitmap640x192Left 196
+#define Bitmap640x192Width 640
+#define Bitmap640x192Top 44
+#define Bitmap640x192Height 192
+
+void Bitmap640x192FillRow(int fieldNumber, int rowNumber, unsigned char *rowBuffer)
+{
+    unsigned char *bitmapRow = imgBuffer;
+    unsigned char *rowOut = rowBuffer + Bitmap640x192Left / 8;
+    // Could unroll either as 8 bit tests or as 4 DAC outputs
+    for(int i = 0; i < Bitmap640x192Width; i++) {
+        int pixel = bitmapRow[(rowNumber - Bitmap640x192Top * Bitmap640x192Width / 8) + i / 8] & (1 << i);
+        rowOut[i] = pixel ? NTSCWhite : NTSCBlack;
+    }
+}
+
+// ----------------------------------------
+// Video mode table
+
+VideoModeEntry __attribute__((section (".ccmram"))) videoModes[] =
+{
+    {
+        VIDEO_TEXTPORT,
+        &TextportPlain80x24Info,
+        TextportPlain80x24Setup,
+        TextportPlain80x24GetParameters,
+        TextportPlain80x24FillRow,
+    },
+    {
+        VIDEO_TEXTPORT,
+        &TextportPlain40x24Info,
+        TextportPlain40x24Setup,
+        TextportPlain40x24GetParameters,
+        TextportPlain40x24FillRow,
+    },
+    {
+        VIDEO_PIXMAP,
+        &Bitmap640x192Info,
+        Bitmap640x192Setup,
+        Bitmap640x192GetParameters,
+        Bitmap640x192FillRow,
+    },
+};
+
+// Generic videomode functions
+
+int __attribute__((section (".ccmram"))) whichVideoMode = -1;
+
+int getVideoModeCount()
+{
+    return sizeof(videoModes) / sizeof(videoModes[0]);
+}
+
+enum VideoModeType getVideoModeType(int n)
+{
+    return videoModes[n].type;
+}
+
+void getVideoModeInfo(int n, void *info)
+{
+    VideoModeEntry* entry = videoModes + n;
+    switch(entry->type) {
+        case VIDEO_PIXMAP: {
+            *(VideoPixmapInfo*)info = *(VideoPixmapInfo*)entry->info;
+            break;
+        }
+        case VIDEO_TEXTPORT: {
+            *(VideoTextportInfo*)info = *(VideoTextportInfo*)entry->info;
+            break;
+        }
+        case VIDEO_SEGMENTS: {
+            break;
+        }
+        case VIDEO_DCT: {
+            break;
+        }
+        case VIDEO_WOZ: {
+            break;
+        }
+        case VIDEO_TMS9918A: {
+            break;
+        }
+    }
+}
+
+void setVideoMode(int n)
+{
+    whichVideoMode = n;
+    VideoModeEntry* entry = videoModes + whichVideoMode;
+    entry->setup(entry->info);
+}
+
+void getVideoModeParameters(void *params)
+{
+    VideoModeEntry* entry = videoModes + whichVideoMode;
+    entry->getParameters(entry->info, params);
+}
+
+// int setPaletteEntryF(int a, float r, float g, float b); /* 0 if out of range, 1 if success */
+// int setPaletteEntry(int a, unsigned char r, unsigned char g, unsigned char b); /* 0 if out of range, 1 if success */
+// int setPixmapPixel(int x, int y, int c);
+// int setTextportCharacter(int x, int y, int c); /* might offset */
+// int setTextportCursor(int x, int y);
+// int setTextportCursorType(enum { SOLID, FLASH, UNDERLINE } );
+
 
 void NTSCFillRowBuffer(int fieldNumber, int rowNumber, unsigned char *rowBuffer)
 {
@@ -601,89 +1203,13 @@ void NTSCFillRowBuffer(int fieldNumber, int rowNumber, unsigned char *rowBuffer)
                 }
                 break;
             }
+            case VIDEO_MODE: {
+                videoModes[whichVideoMode].fillRow(fieldNumber, rowNumber, rowBuffer);
+                break;
+            }
         }
     }
     // if(rowNumber == 0) { rowBuffer[0] = 255;}
-}
-
-void NTSCGenerateLineBuffers()
-{
-    // one line = (1 / 3579545) * (455/2)
-
-    // front porch is (.165) * (1 / 15734) / (1 / 3579545) = 37.53812921062726565701 cycles (37.5)
-    //     74 cycles at double clock
-    // pixels is (1 - .165) * (1 / 15734) / (1 / 3579545) = 189.96568418711380557696 cycles (190)
-    //     280 cycles at double clock
-
-    NTSCFillEqPulseLine(NTSCEqSyncPulseLine);
-    NTSCFillVSyncLine(NTSCVsyncLine);
-    NTSCFillBlankLine(NTSCBlankLine, withColorburst);
-}
-
-// This is transcribed from the NTSC spec, double-checked.
-void RGBToYIQ(float r, float g, float b, float *y, float *i, float *q)
-{
-    *y = .30f * r + .59f * g + .11f * b;
-    *i = -.27f * (b - *y) + .74f * (r - *y);
-    *q = .41f * (b - *y) + .48f * (r - *y);
-}
-
-unsigned char NTSCYIQToDAC(float y, float i, float q, float tcycles)
-{
-// This is transcribed from the NTSC spec, double-checked.
-    float wt = tcycles * M_PI * 2;
-    float sine = sinf(wt + 33.0f / 180.0f * M_PI);
-    float cosine = cosf(wt + 33.0f / 180.0f * M_PI);
-    float signal = y + q * sine + i * cosine;
-// end of transcription
-
-    if(signal < -1.0f) { signal = -1.0f; }
-    if(signal > 1.0f) { signal = 1.0f; }
-
-    return NTSCBlack + signal * (NTSCMaxAllowed - NTSCBlack);
-}
-
-uint32_t NTSCYIQToUInt32(float y, float i, float q)
-{
-    unsigned char b0 = NTSCYIQToDAC(y, i, q,  .0f);
-    unsigned char b1 = NTSCYIQToDAC(y, i, q, .25f);
-    unsigned char b2 = NTSCYIQToDAC(y, i, q, .50f);
-    unsigned char b3 = NTSCYIQToDAC(y, i, q, .75f);
-
-    return (b0 << 0) | (b1 << 8) | (b2 << 16) | (b3 << 24);
-}
-
-void HSVToRGB3f(float h, float s, float v, float *r, float *g, float *b)
-{
-    if(s < .00001) {
-        *r = v; *g = v; *b = v;
-    } else {
-    	int i;
-	float p, q, t, f;
-
-	h = fmodf(h, M_PI * 2);	/* wrap just in case */
-
-        i = floorf(h / (M_PI / 3));
-
-	/*
-	 * would have used "f = fmod(h, M_PI / 3);", but fmod seems to have
-	 * a bug under Linux.
-	 */
-
-	f = h / (M_PI / 3) - floorf(h / (M_PI / 3));
-
-	p = v * (1 - s);
-	q = v * (1 - s * f);
-	t = v * (1 - s * (1 - f));
-	switch(i) {
-	    case 0: *r = v; *g = t; *b = p; break;
-	    case 1: *r = q; *g = v; *b = p; break;
-	    case 2: *r = p; *g = v; *b = t; break;
-	    case 3: *r = p; *g = q; *b = v; break;
-	    case 4: *r = t; *g = p; *b = v; break;
-	    case 5: *r = v; *g = p; *b = q; break;
-	}
-    }
 }
 
 void showSolidFramebuffer(uint32_t word)
@@ -849,6 +1375,8 @@ int readImage(const char *filename)
 //----------------------------------------------------------------------------
 // DMA and debug scanout specifics
 
+#if 0
+
 static const int fontWidth = 5, fontHeight = 7;
 // static const unsigned char fontMask = 0xfc;
 static const int fontOffset = 32;
@@ -950,65 +1478,113 @@ static const unsigned char fontBytes[] = {
     0x40, 0x20, 0x30, 0x20, 0x20, 0x40, 0x00,
 };
 
-int charX = 0, charY = 0;
 const int validRight = 15;
 const int validTop = 26;
 const int validWidth = 164;
 const int validHeight = 200;
 
+#endif
+
+int charX = 0, charY = 0;
+
 void VIDEO_putchar(char c)
 {
-    int pixelX = validRight + charX * fontWidth;
-    int pixelY = validTop + charY * fontHeight;
+    if((whichVideoMode >= 0) && (videoModes[whichVideoMode].type == VIDEO_TEXTPORT)) {
 
-    if(c == '\n') {
+        VideoTextportInfo info;
+        VideoTextportParameters params;
+        getVideoModeInfo(whichVideoMode, &info);
+        getVideoModeParameters(&params);
 
-        charX = 0;
-        charY++;
+        if(c == '\n') {
 
-    } else if(c == 127 || c == '\b') {
+            charX = 0;
+            charY++;
 
-        charX--;
+        } else if(c == 127 || c == '\b') {
 
-    } else {
-
-        if(c >= fontOffset) {
-            const unsigned char *glyph = fontBytes + fontHeight * (c - fontOffset);
-            for(int gx = 0; gx < fontWidth + 1; gx++) {
-                for(int gy = 0; gy < fontHeight + 1; gy++) {
-                    int v;
-                    if(gx < fontWidth && gy < fontHeight && (glyph[gy + gx / 8] & (1 << (7 - (gx % 8))))) {
-                        v = PALETTE_WHITE;
-                    } else {
-                        v = PALETTE_BLACK;
-                    }
-                    *imgBufferPixel(pixelX + gx, pixelY + gy) = v;
-                } 
+            if(charX > 0) {
+                charX--;
             }
+
+        } else {
+
+            params.base[params.rowSize * charY + charX] = c;
             charX++;
-            if(charX >= validWidth / fontWidth) {
+            if(charX >= info.width) {
                 charX = 0;
                 charY++;
             }
         }
-    }
 
-    if(charY >= validHeight / fontHeight) {
-        /* scroll */
-        for(int y = validTop; y < validTop + validHeight - fontHeight; y++) {
-            memcpy(imgBufferRow(y) + validRight, imgBufferRow(y + fontHeight) + validRight, validWidth);
+        if(charY >= info.height) {
+            /* scroll */
+            for(int y = 0; y < info.height - 1; y++) {
+                memcpy(params.base + params.rowSize * y, params.base + params.rowSize * (y + 1), info.width);
+            }
+            memset(params.base + params.rowSize * (info.height - 1), ' ', info.width);
+            charY--;
         }
-        for(int y = validTop + validHeight - fontHeight; y < validTop + validHeight; y++) {
-            memset(imgBufferRow(y) + validRight, PALETTE_BLACK, validWidth);
-        }
-        charY--;
+
+        *params.cursorX = charX;
+        *params.cursorY = charY;
     }
+#if 0
+    /* grayscale 5x7 text */
+    else {
+        int pixelX = validRight + charX * fontWidth;
+        int pixelY = validTop + charY * fontHeight;
+
+        if(c == '\n') {
+
+            charX = 0;
+            charY++;
+
+        } else if(c == 127 || c == '\b') {
+
+            charX--;
+
+        } else {
+
+            if(c >= fontOffset) {
+                const unsigned char *glyph = fontBytes + fontHeight * (c - fontOffset);
+                for(int gx = 0; gx < fontWidth + 1; gx++) {
+                    for(int gy = 0; gy < fontHeight + 1; gy++) {
+                        int v;
+                        if(gx < fontWidth && gy < fontHeight && (glyph[gy + gx / 8] & (1 << (7 - (gx % 8))))) {
+                            v = PALETTE_WHITE;
+                        } else {
+                            v = PALETTE_BLACK;
+                        }
+                        *imgBufferPixel(pixelX + gx, pixelY + gy) = v;
+                    } 
+                }
+                charX++;
+                if(charX >= validWidth / fontWidth) {
+                    charX = 0;
+                    charY++;
+                }
+            }
+        }
+
+        if(charY >= validHeight / fontHeight) {
+            /* scroll */
+            for(int y = validTop; y < validTop + validHeight - fontHeight; y++) {
+                memcpy(imgBufferRow(y) + validRight, imgBufferRow(y + fontHeight) + validRight, validWidth);
+            }
+            for(int y = validTop + validHeight - fontHeight; y < validTop + validHeight; y++) {
+                memset(imgBufferRow(y) + validRight, PALETTE_BLACK, validWidth);
+            }
+            charY--;
+        }
+    }
+#endif
 }
 
 int __attribute__((section (".ccmram"))) debugOverlayEnabled;
 #define debugDisplayWidth 19
 #define debugDisplayHeight 13
-#define debugDisplayRightTick (NTSCHSyncClocks + NTSCBackPorchClocks + 48)
+#define debugDisplayLeftTick (NTSCHSyncClocks + NTSCBackPorchClocks + 48)
 #define debugDisplayTopTick (NTSC_EQPULSE_LINES + NTSC_VSYNC_LINES + NTSC_EQPULSE_LINES + NTSC_VBLANK_LINES + 20)
 /* debugFontWidthScale != 4 looks terrible in a color field because of adjacent color columns; probably need to ensure 0s around any 1 text column */
 #define debugFontWidthScale 4
@@ -1042,7 +1618,7 @@ void fillRowDebugOverlay(int fieldNumber, int rowNumber, unsigned char* nextRowB
             if(debugChar != 0) {
                 unsigned char charRowBits = font8x16Bits[debugChar * font8x16Height + charPixelY];
 #if debugFontWidthScale == 4 && font8x16Width == 8
-                unsigned char *charPixels = nextRowBuffer + debugDisplayRightTick + (charCol * (font8x16Width + debugCharGapPixels)) * debugFontWidthScale;
+                unsigned char *charPixels = nextRowBuffer + debugDisplayLeftTick + (charCol * (font8x16Width + debugCharGapPixels)) * debugFontWidthScale;
                 if(charRowBits & 0x80) { ((uint32_t*)charPixels)[0] = NTSCWhiteLong; }
                 if(charRowBits & 0x40) { ((uint32_t*)charPixels)[1] = NTSCWhiteLong; }
                 if(charRowBits & 0x20) { ((uint32_t*)charPixels)[2] = NTSCWhiteLong; }
@@ -1055,7 +1631,7 @@ void fillRowDebugOverlay(int fieldNumber, int rowNumber, unsigned char* nextRowB
                 for(int charPixelX = 0; charPixelX < font8x16Width; charPixelX++) {
                     int pixel = charRowBits & (0x80 >> charPixelX);
                     if(pixel) {
-                        unsigned char *charPixels = nextRowBuffer + debugDisplayRightTick + (charCol * (font8x16Width + debugCharGapPixels) + charPixelX) * debugFontWidthScale;
+                        unsigned char *charPixels = nextRowBuffer + debugDisplayLeftTick + (charCol * (font8x16Width + debugCharGapPixels) + charPixelX) * debugFontWidthScale;
 #if debugFontWidthScale == 4
                         *(uint32_t *)charPixels = NTSCWhiteLong; 
 #else
@@ -1104,6 +1680,60 @@ enum {
     COMMAND_CONTINUE = 0,
     COMMAND_STOP,
 };
+
+int doCommandVideoModes(char **words, int wordCount)
+{
+    for(int i = 0; i < getVideoModeCount(); i++) {
+        printf("Mode %d\n", i);
+        enum VideoModeType type = getVideoModeType(i);
+        switch(type) {
+            case VIDEO_PIXMAP: {
+                VideoPixmapInfo info;
+                getVideoModeInfo(i, &info);
+                printf("    pixmap, %d by %d\n", info.width, info.height);
+                break;
+            }
+            case VIDEO_TEXTPORT: {
+                VideoPixmapInfo info;
+                getVideoModeInfo(i, &info);
+                printf("    text, %d by %d\n", info.width, info.height);
+                break;
+            }
+            case VIDEO_WOZ: {
+                printf("    Woz-type\n");
+                break;
+            }
+            case VIDEO_TMS9918A: {
+                printf("    TMS9918A-type\n");
+                break;
+            }
+            case VIDEO_SEGMENTS: {
+                printf("    real-time segment-renderer-type\n");
+                break;
+            }
+            case VIDEO_DCT: {
+                printf("    DCT-type\n");
+                break;
+            }
+            default: {
+                printf("    unknown mode type %08X\n", type);
+            }
+        }
+    }
+    return COMMAND_CONTINUE;
+}
+
+int doCommandSetVideoMode(char **words, int wordCount)
+{
+    videoMode = VIDEO_MODE;
+    int which = strtol(words[1], NULL, 0);
+    if((which < 0) || (which >= getVideoModeCount())) {
+        printf("mode %d is out of range; only %d modes (list modes with \"modes\")\n", which, getVideoModeCount());
+    } else {
+        setVideoMode(which);
+    }
+    return COMMAND_CONTINUE;
+}
 
 int doCommandStream(char **words, int wordCount)
 {
@@ -1364,6 +1994,14 @@ typedef struct Command {
 
 Command commands[] = {
     {
+        "modes", 1, doCommandVideoModes, "",
+        "list video modes"
+    },
+    {
+        "mode", 2, doCommandSetVideoMode, "",
+        "set video mode"
+    },
+    {
         "rect", 1, doCommandTestRect, "",
         "run interactive over/underscan test"
     },
@@ -1581,27 +2219,17 @@ void DMA2_Stream2_IRQHandler(void)
         DMATransferErrors++;
     }
 
-    // Configure timer TIM2
+    // Configure timer TIM2 for performance measurement
     TIM2->SR = 0;                       /* reset status */
     TIM2->ARR = 0xFFFFFFFF;
     TIM2->CNT = 0;
     TIM2->CR1 = TIM_CR1_CEN;            /* enable the timer */
-
-    // because our lines have 912 samples at 4x the colorburst
-    // clock, and lines are 1/227.5 colorburst frequency
 
     int whichIsScanning = (DMA2_Stream2->CR & DMA_SxCR_CT) ? 1 : 0;
 
     unsigned char *nextRowBuffer = (whichIsScanning == 1) ? row0 : row1;
 
 #ifdef TMP_ROW_IN_SRAM1
-
-    NTSCFillRowBuffer(fieldNumber, rowNumber, nextRowBuffer);
-    if(debugOverlayEnabled) {
-        fillRowDebugOverlay(fieldNumber, rowNumber, nextRowBuffer);
-    }
-
-#else
 
     NTSCFillRowBuffer(fieldNumber, rowNumber, rowTmp);
     if(debugOverlayEnabled) {
@@ -1610,13 +2238,28 @@ void DMA2_Stream2_IRQHandler(void)
 
     StartRowDMA(nextRowBuffer, rowTmp, sizeof(rowTmp));
     // memcpy(nextRowBuffer, rowTmp, sizeof(rowTmp));
-#endif
 
     rowNumber = rowNumber + 1;
     if(rowNumber == NTSC_FIELD_LINES) {
         rowNumber = 0;
         fieldNumber++;
     }
+
+#else
+
+    for(int i = 0; i < SWATCH_SIZE; i++) {
+        NTSCFillRowBuffer(fieldNumber, rowNumber, nextRowBuffer + ROW_SAMPLES * i);
+        if(debugOverlayEnabled) {
+            fillRowDebugOverlay(fieldNumber, rowNumber, nextRowBuffer + ROW_SAMPLES * i);
+        }
+        rowNumber = rowNumber + 1;
+        if(rowNumber == NTSC_FIELD_LINES) {
+            rowNumber = 0;
+            fieldNumber++;
+        }
+    }
+
+#endif
 
     /* wait until a little later to return */
     // while(TIM2->CNT < SystemCoreClock * 7 / (227 * 262 * 10) );
@@ -1651,7 +2294,7 @@ void DMAStartScanout(uint32_t dmaCount)
     HAL_NVIC_EnableIRQ(DMA2_Stream2_IRQn);
 
     // Configure DMA
-    DMA2_Stream2->NDTR = 912;                   // Should be 910 but fudge here to get multiple of 16
+    DMA2_Stream2->NDTR = ROW_SAMPLES * SWATCH_SIZE;                   // Should be 910 but fudge here to get multiple of 16
     DMA2_Stream2->M0AR = (uint32_t)row0;        // Source buffer address 0
     DMA2_Stream2->M1AR = (uint32_t)row1;        // Source buffer address 1 
     DMA2_Stream2->PAR = (uint32_t)&GPIOC->ODR;  // Destination address
@@ -1794,8 +2437,8 @@ int main()
         SERIAL_flush();
     }
 
-    KBD_init();
-    LED_beat_heart();
+    // KBD_init();
+    // LED_beat_heart();
 
     printf("* ");
     SERIAL_flush();
@@ -1918,8 +2561,6 @@ int main()
     if(readImage("test.rgb.bin")) {
         printf("failed to load \"test.rgb.bin\"\n");
     }
-
-    printf("DMA2 status %08lX\n", DMA2->LISR);
 
     for(;;) {
 

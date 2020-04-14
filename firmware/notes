@@ -24,6 +24,8 @@ Rein it in
         Super Star Trek: https://www.atariarchives.org/basicgames/showpage.php?page=157
         Sine Wave: https://www.atariarchives.org/basicgames/showpage.php?page=167
     video modes
+        MAX RES
+           588 * 168 4-bit palette (centered), actual 14MHz pixels - more or less depending on memory
         underscan/overscan 1-cycle monochrome (res?)
         underscan/overscan 4-cycle 256 colors (res?)
         underscan/overscan 2-cycle 4 grays  (res?)
@@ -112,47 +114,6 @@ Video modes
         700 x 230, 20125 bytes at 1-bit monochome
         350 double pixels wide, 80500 pixels in frame, would need to be 4-bit
         175 quad pixels wide, 40250 pixels in frame, could support 8 bit
-
-enum VideoModeType {
-    VIDEO_RASTER,
-    VIDEO_TEXTPORT,
-    VIDEO_WOZ,
-    VIDEO_TMS9918A,
-};
-
-struct VideoRasterInfo
-{
-    unsigned char* baseAddress;
-    int width, height; /* pixels or text */
-    size_t rowSize; /* bytes */
-    enum PixelFormat { BITMAP, GRAY_4BIT, GRAY_8BIT, PALETTE_4BIT, PALETTE_8BIT} pixelFormat;
-    /* pixels are LSB, so 4BIT pixel N is in byte N/2 bits 0-3, and pixel N+1 is in byte N/2 bits 4-7 */
-    uint32_t paletteSize; /* for convenience, matches pixelFormat */
-    int color; /* for convenience, matches pixelFormat */
-    int overscan;       /* true if pixels can be offscreen */
-};
-
-struct VideoTextportInfo {
-    unsigned char* baseAddress;
-    int width, height; /* pixels or text */
-    size_t rowSize; /* bytes */
-    uint32_t paletteSize; /* for convenience, matches pixelFormat */
-        /* RICH means second byte is text byte then byte with (fc << 5) || (bc << 2) || attr */
-        /* attr can be 0b00 for normal, 0b01 for flashing, */
-    enum TextAttributes { TEXT_8BIT_WHITE_ON_BLACK, TEXT_8BIT_BLACK_ON_WHITE, TEXT_16BIT_8_3_3_2_RICH } attributes;
-};
-
-int getVideoModeCount();
-
-enum VideoModeType getVideoModeType(int n);
-int getVideoRasterInfo(int n, VideoModeInfo *info);
-
-int setPaletteEntryF(int a, float r, float g, float b); /* 0 if out of range, 1 if success */
-int setPaletteEntry(int a, unsigned char r, unsigned char g, unsigned char b); /* 0 if out of range, 1 if success */
-int setRasterPixel(int x, int y, int c);
-int setTextportCharacter(int x, int y, int c); /* might offset */
-int setTextportCursor(int x, int y);
-int setTextportCursorType(enum { SOLID, FLASH, UNDERLINE } );
 
 for reference, H is 63555.56us
 Scope only locks to my video at line #5
