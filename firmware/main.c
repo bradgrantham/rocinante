@@ -457,7 +457,7 @@ unsigned char NTSCYIQToDAC(float y, float i, float q, float tcycles)
     if(signal < -1.0f) { signal = -1.0f; }
     if(signal > 1.0f) { signal = 1.0f; }
 
-    return NTSCBlack + signal * (NTSCMaxAllowed - NTSCBlack);
+    return NTSCBlack + signal * (NTSCWhite - NTSCBlack);
 }
 
 uint32_t NTSCYIQToUInt32(float y, float i, float q)
@@ -796,7 +796,7 @@ typedef struct VideoPixmapInfo
     int width, height;  /* pixels or text */
     enum PixelFormat { BITMAP, GRAY_4BIT, GRAY_8BIT, PALETTE_4BIT, PALETTE_8BIT} pixelFormat;
     /* pixels are LSB, so 4BIT pixel N is in byte N/2 bits 0-3, and pixel N+1 is in byte N/2 bits 4-7 */
-    uint32_t paletteSize; /* for convenience, matches pixelFormat, -1 if a bitmap */
+    int paletteSize; /* for convenience, matches pixelFormat, -1 if a bitmap */
     int color;          /* for convenience, matches pixelFormat */
     int overscan;       /* true if pixels can be offscreen */
 } VideoPixmapInfo;
@@ -979,6 +979,293 @@ void TextportPlain80x24FillRow(int fieldNumber, int rowNumber, unsigned char *ro
 }
 
 // ----------------------------------------
+// 175 x 230 8-bit bitmap display
+// to be /4, 164, 864, 27, 257
+
+// Pixmap video mode structs
+VideoPixmapInfo Color175x230Info = {
+    175, 230,
+    PALETTE_8BIT,
+    256,
+    1,
+    1,
+};
+
+void Color175x230Setup(const void* info_)
+{
+    /* const VideoTextportInfo *info = (VideoTextportInfo*)info_; */
+    NTSCFillBlankLine(NTSCBlankLine, 1);
+}
+
+void Color175x230GetParameters(const void *info_, void *params_)
+{
+    const VideoPixmapInfo *info = (VideoPixmapInfo*)info_;
+    VideoPixmapParameters *params = (VideoPixmapParameters*)params_;
+    params->base = imgBuffer;
+    params->rowSize = info->width;
+    params->paletteByRow = rowPalette;
+    params->palettes[0] = paletteUInt32[0];
+    params->palettes[1] = paletteUInt32[1];
+}
+
+// to be /4, 164, 864, 27, 257
+#define Color175x230Left 164
+#define Color175x230Width 700
+#define Color175x230Top 27
+#define Color175x230Height 230
+
+void Color175x230FillRow(int fieldNumber, int rowNumber, unsigned char *rowBuffer)
+{
+    int rowWithin = rowNumber - Color175x230Top;
+
+    if((rowWithin >= 0) && (rowWithin < Color175x230Height)) {
+
+        unsigned char *srcPixels = imgBuffer + rowWithin * (Color175x230Width / 4);
+        unsigned char *dstBytes = rowBuffer + Color175x230Left;
+
+        uint32_t *palette = paletteUInt32[rowPalette[rowWithin]];
+
+        for(int i = 0; i < Color175x230Width; i += 4) {
+            int p = srcPixels[i / 4];
+            uint32_t word = palette[p];
+            *(uint32_t*)(dstBytes + i) = word;
+        }
+    }
+}
+
+// ----------------------------------------
+// 160 x 192 8-bit bitmap display
+// 196, 832, 44, 236
+
+// Pixmap video mode structs
+VideoPixmapInfo Color160x192Info = {
+    160, 192,
+    PALETTE_8BIT,
+    256,
+    1,
+    0,
+};
+
+void Color160x192Setup(const void* info_)
+{
+    /* const VideoTextportInfo *info = (VideoTextportInfo*)info_; */
+    NTSCFillBlankLine(NTSCBlankLine, 1);
+}
+
+void Color160x192GetParameters(const void *info_, void *params_)
+{
+    const VideoPixmapInfo *info = (VideoPixmapInfo*)info_;
+    VideoPixmapParameters *params = (VideoPixmapParameters*)params_;
+    params->base = imgBuffer;
+    params->rowSize = info->width;
+    params->paletteByRow = rowPalette;
+    params->palettes[0] = paletteUInt32[0];
+    params->palettes[1] = paletteUInt32[1];
+}
+
+#define Color160x192Left 196
+#define Color160x192Width 640
+#define Color160x192Top 44
+#define Color160x192Height 192
+
+void Color160x192FillRow(int fieldNumber, int rowNumber, unsigned char *rowBuffer)
+{
+    int rowWithin = rowNumber - Color160x192Top;
+
+    if((rowWithin >= 0) && (rowWithin < Color160x192Height)) {
+
+        unsigned char *srcPixels = imgBuffer + rowWithin * (Color160x192Width / 4);
+        unsigned char *dstBytes = rowBuffer + Color160x192Left;
+
+        uint32_t *palette = paletteUInt32[rowPalette[rowWithin]];
+
+        for(int i = 0; i < Color160x192Width; i += 4) {
+            int p = srcPixels[i / 4];
+            uint32_t word = palette[p];
+            *(uint32_t*)(dstBytes + i) = word;
+        }
+    }
+}
+
+// ----------------------------------------
+// 350 x 230 4-bit bitmap display
+// to be /4, 164, 864, 27, 257
+
+// Pixmap video mode structs
+VideoPixmapInfo Color350x230Info = {
+    350, 230,
+    PALETTE_4BIT,
+    16,
+    1,
+    1,
+};
+
+void Color350x230Setup(const void* info_)
+{
+    /* const VideoTextportInfo *info = (VideoTextportInfo*)info_; */
+    NTSCFillBlankLine(NTSCBlankLine, 1);
+}
+
+void Color350x230GetParameters(const void *info_, void *params_)
+{
+    const VideoPixmapInfo *info = (VideoPixmapInfo*)info_;
+    VideoPixmapParameters *params = (VideoPixmapParameters*)params_;
+    params->base = imgBuffer;
+    params->rowSize = info->width / 2;
+    params->paletteByRow = rowPalette;
+    params->palettes[0] = paletteUInt32[0];
+    params->palettes[1] = paletteUInt32[1];
+}
+
+// to be /4, 164, 864, 27, 257
+#define Color350x230Left 164
+#define Color350x230Width 700
+#define Color350x230Top 27
+#define Color350x230Height 230
+
+void Color350x230FillRow(int fieldNumber, int rowNumber, unsigned char *rowBuffer)
+{
+    int rowWithin = rowNumber - Color350x230Top;
+
+    if((rowWithin >= 0) && (rowWithin < Color350x230Height)) {
+
+        unsigned char *srcPixels = imgBuffer + rowWithin * (Color350x230Width / 4);
+        unsigned char *dstBytes = rowBuffer + Color350x230Left;
+
+        uint32_t *palette = paletteUInt32[rowPalette[rowWithin]];
+
+        for(int i = 0; i < Color350x230Width / 2; i++) { /* loop over pixels */
+
+            int colWithin = i;
+            int whichByte = colWithin / 2;
+            int whichNybble = colWithin % 2;
+            int p = (srcPixels[whichByte] >> (whichNybble * 4)) & 0xF;
+
+            uint32_t word = palette[p];
+            uint32_t waveWordShift = whichNybble * 16;
+
+            *dstBytes++ = (word >> (waveWordShift + 0)) & 0xFF;
+            *dstBytes++ = (word >> (waveWordShift + 8)) & 0xFF;
+        }
+    }
+}
+
+// ----------------------------------------
+// 320 x 192 4-bit bitmap display
+// 196, 832, 44, 236
+
+// Pixmap video mode structs
+VideoPixmapInfo Color320x192Info = {
+    320, 192,
+    PALETTE_4BIT,
+    16,
+    1,
+    0,
+};
+
+void Color320x192Setup(const void* info_)
+{
+    /* const VideoTextportInfo *info = (VideoTextportInfo*)info_; */
+    NTSCFillBlankLine(NTSCBlankLine, 1);
+}
+
+void Color320x192GetParameters(const void *info_, void *params_)
+{
+    const VideoPixmapInfo *info = (VideoPixmapInfo*)info_;
+    VideoPixmapParameters *params = (VideoPixmapParameters*)params_;
+    params->base = imgBuffer;
+    params->rowSize = info->width / 2;
+    params->paletteByRow = rowPalette;
+    params->palettes[0] = paletteUInt32[0];
+    params->palettes[1] = paletteUInt32[1];
+}
+
+#define Color320x192Left 196
+#define Color320x192Width 640
+#define Color320x192Top 44
+#define Color320x192Height 192
+
+void Color320x192FillRow(int fieldNumber, int rowNumber, unsigned char *rowBuffer)
+{
+    int rowWithin = rowNumber - Color320x192Top;
+
+    if((rowWithin >= 0) && (rowWithin < Color320x192Height)) {
+
+        unsigned char *srcPixels = imgBuffer + rowWithin * (Color320x192Width / 4);
+        unsigned char *dstBytes = rowBuffer + Color320x192Left;
+
+        uint32_t *palette = paletteUInt32[rowPalette[rowWithin]];
+
+        for(int i = 0; i < Color320x192Width / 2; i++) { /* loop over pixels */
+
+            int colWithin = i;
+            int whichByte = colWithin / 2;
+            int whichNybble = colWithin % 2;
+            int p = (srcPixels[whichByte] >> (whichNybble * 4)) & 0xF;
+
+            uint32_t word = palette[p];
+            uint32_t waveWordShift = whichNybble * 16;
+
+            *dstBytes++ = (word >> (waveWordShift + 0)) & 0xFF;
+            *dstBytes++ = (word >> (waveWordShift + 8)) & 0xFF;
+        }
+    }
+}
+
+// ----------------------------------------
+// 704 x 230 monochrome bitmap display
+// to be /8, 164, 868, 27, 257
+
+// Pixmap video mode structs
+VideoPixmapInfo Bitmap704x230Info = {
+    704, 230,
+    BITMAP,
+    -1,
+    0,
+    1,
+};
+
+void Bitmap704x230Setup(const void* info_)
+{
+    /* const VideoTextportInfo *info = (VideoTextportInfo*)info_; */
+    NTSCFillBlankLine(NTSCBlankLine, 0);        /* monochrome text */
+}
+
+void Bitmap704x230GetParameters(const void *info_, void *params_)
+{
+    const VideoPixmapInfo *info = (VideoPixmapInfo*)info_;
+    VideoPixmapParameters *params = (VideoPixmapParameters*)params_;
+    params->base = imgBuffer;
+    params->rowSize = info->width / 8;
+    params->paletteByRow = NULL;
+    params->palettes[0] = NULL;
+    params->palettes[1] = NULL;
+}
+
+// to be /8, 164, 868, 27, 257
+#define Bitmap704x230Left 164
+#define Bitmap704x230Width 868
+#define Bitmap704x230Top 27
+#define Bitmap704x230Height 230
+
+void Bitmap704x230FillRow(int fieldNumber, int rowNumber, unsigned char *rowBuffer)
+{
+    int rowWithin = rowNumber - Bitmap704x230Top;
+
+    if((rowWithin >= 0) && (rowWithin < Bitmap704x230Height)) {
+
+        unsigned char *bitmapRow = imgBuffer + rowWithin * (Bitmap704x230Width / 8);
+        unsigned char *dstBytes = rowBuffer + Bitmap704x230Left;
+
+        // Could unroll either as 8 bit tests or as 4 DAC outputs
+        for(int i = 0; i < Bitmap704x230Width; i++) {
+            int pixel = bitmapRow[i / 8] & (1 << (i % 8));
+            dstBytes[i] = pixel ? NTSCWhite : NTSCBlack;
+        }
+    }
+}
+
+// ----------------------------------------
 // 640 x 192 monochrome bitmap display
 // 196, 832, 44, 236
 
@@ -1002,7 +1289,10 @@ void Bitmap640x192GetParameters(const void *info_, void *params_)
     const VideoPixmapInfo *info = (VideoPixmapInfo*)info_;
     VideoPixmapParameters *params = (VideoPixmapParameters*)params_;
     params->base = imgBuffer;
-    params->rowSize = info->width;
+    params->rowSize = info->width / 8;
+    params->paletteByRow = NULL;
+    params->palettes[0] = NULL;
+    params->palettes[1] = NULL;
 }
 
 #define Bitmap640x192Left 196
@@ -1012,12 +1302,18 @@ void Bitmap640x192GetParameters(const void *info_, void *params_)
 
 void Bitmap640x192FillRow(int fieldNumber, int rowNumber, unsigned char *rowBuffer)
 {
-    unsigned char *bitmapRow = imgBuffer;
-    unsigned char *rowOut = rowBuffer + Bitmap640x192Left / 8;
-    // Could unroll either as 8 bit tests or as 4 DAC outputs
-    for(int i = 0; i < Bitmap640x192Width; i++) {
-        int pixel = bitmapRow[(rowNumber - Bitmap640x192Top * Bitmap640x192Width / 8) + i / 8] & (1 << i);
-        rowOut[i] = pixel ? NTSCWhite : NTSCBlack;
+    int rowWithin = rowNumber - Bitmap640x192Top;
+
+    if((rowWithin >= 0) && (rowWithin < Bitmap640x192Height)) {
+
+        unsigned char *bitmapRow = imgBuffer + rowWithin * (Bitmap640x192Width / 8);
+        unsigned char *dstBytes = rowBuffer + Bitmap640x192Left;
+
+        // Could unroll either as 8 bit tests or as 4 DAC outputs
+        for(int i = 0; i < Bitmap640x192Width; i++) {
+            int pixel = bitmapRow[i / 8] & (1 << (i % 8));
+            dstBytes[i] = pixel ? NTSCWhite : NTSCBlack;
+        }
     }
 }
 
@@ -1047,11 +1343,46 @@ VideoModeEntry __attribute__((section (".ccmram"))) videoModes[] =
         Bitmap640x192GetParameters,
         Bitmap640x192FillRow,
     },
+    {
+        VIDEO_PIXMAP,
+        &Color320x192Info,
+        Color320x192Setup,
+        Color320x192GetParameters,
+        Color320x192FillRow,
+    },
+    {
+        VIDEO_PIXMAP,
+        &Color160x192Info,
+        Color160x192Setup,
+        Color160x192GetParameters,
+        Color160x192FillRow,
+    },
+    {
+        VIDEO_PIXMAP,
+        &Bitmap704x230Info,
+        Bitmap704x230Setup,
+        Bitmap704x230GetParameters,
+        Bitmap704x230FillRow,
+    },
+    {
+        VIDEO_PIXMAP,
+        &Color350x230Info,
+        Color350x230Setup,
+        Color350x230GetParameters,
+        Color350x230FillRow,
+    },
+    {
+        VIDEO_PIXMAP,
+        &Color175x230Info,
+        Color175x230Setup,
+        Color175x230GetParameters,
+        Color175x230FillRow,
+    },
 };
 
 // Generic videomode functions
 
-int __attribute__((section (".ccmram"))) whichVideoMode = -1;
+int __attribute__((section (".ccmram"))) CurrentVideoMode = -1;
 
 int getVideoModeCount()
 {
@@ -1092,14 +1423,14 @@ void getVideoModeInfo(int n, void *info)
 
 void setVideoMode(int n)
 {
-    whichVideoMode = n;
-    VideoModeEntry* entry = videoModes + whichVideoMode;
+    CurrentVideoMode = n;
+    VideoModeEntry* entry = videoModes + CurrentVideoMode;
     entry->setup(entry->info);
 }
 
 void getVideoModeParameters(void *params)
 {
-    VideoModeEntry* entry = videoModes + whichVideoMode;
+    VideoModeEntry* entry = videoModes + CurrentVideoMode;
     entry->getParameters(entry->info, params);
 }
 
@@ -1204,12 +1535,21 @@ void NTSCFillRowBuffer(int fieldNumber, int rowNumber, unsigned char *rowBuffer)
                 break;
             }
             case VIDEO_MODE: {
-                videoModes[whichVideoMode].fillRow(fieldNumber, rowNumber, rowBuffer);
+                videoModes[CurrentVideoMode].fillRow(fieldNumber, rowNumber, rowBuffer);
                 break;
             }
         }
     }
     // if(rowNumber == 0) { rowBuffer[0] = 255;}
+}
+
+float GetPaletteUInt32(float h, float s, float v)
+{
+    float r, g, b;
+    HSVToRGB3f(h, s, v, &r, &g, &b);
+    float y, i, q;
+    RGBToYIQ(r, g, b, &y, &i, &q);
+    return NTSCYIQToUInt32(y, i, q);
 }
 
 void showSolidFramebuffer(uint32_t word)
@@ -1489,11 +1829,11 @@ int charX = 0, charY = 0;
 
 void VIDEO_putchar(char c)
 {
-    if((whichVideoMode >= 0) && (videoModes[whichVideoMode].type == VIDEO_TEXTPORT)) {
+    if((CurrentVideoMode >= 0) && (videoModes[CurrentVideoMode].type == VIDEO_TEXTPORT)) {
 
         VideoTextportInfo info;
         VideoTextportParameters params;
-        getVideoModeInfo(whichVideoMode, &info);
+        getVideoModeInfo(CurrentVideoMode, &info);
         getVideoModeParameters(&params);
 
         if(c == '\n') {
@@ -1681,6 +2021,303 @@ enum {
     COMMAND_STOP,
 };
 
+float PaletteEntryRGBs[256][3];
+
+const static float HSVFor4BitPalette[][3] = {
+    { M_PI / 3 * 0, 1.0, 1.0 },
+    { M_PI / 3 * 1, 1.0, 1.0 },
+    { M_PI / 3 * 2, 1.0, 1.0 },
+    { M_PI / 3 * 3, 1.0, 1.0 },
+    { M_PI / 3 * 4, 1.0, 1.0 },
+    { M_PI / 3 * 5, 1.0, 1.0 },
+    { M_PI / 3 * 0, 0.25, 0.5 },
+    { M_PI / 3 * 1, 0.25, 0.5 },
+    { M_PI / 3 * 2, 0.25, 0.5 },
+    { M_PI / 3 * 3, 0.25, 0.5 },
+    { M_PI / 3 * 4, 0.25, 0.5 },
+    { M_PI / 3 * 5, 0.25, 0.5 },
+    { 0.0, 0.0, 1.0},
+    { 0.0, 0.0, .66},
+    { 0.0, 0.0, .33},
+    { 0.0, 0.0, .0},
+};
+
+int MakePalette(int whichPalette)
+{
+    if(getVideoModeType(CurrentVideoMode) == VIDEO_PIXMAP) {
+        VideoPixmapInfo info;
+        VideoPixmapParameters params;
+        getVideoModeInfo(CurrentVideoMode, &info);
+        getVideoModeParameters(&params);
+        uint32_t *palette = params.palettes[whichPalette];
+        switch(info.paletteSize) {
+            case -1: break; /* no palette */
+            case 16:  {
+                for(int entry = 0; entry < 16; entry++) {
+                    const float *hsv = HSVFor4BitPalette[entry];
+                    float r, g, b;
+                    HSVToRGB3f(hsv[0], hsv[1], hsv[2], &r, &g, &b);
+                    PaletteEntryRGBs[entry][0] = r;
+                    PaletteEntryRGBs[entry][1] = g;
+                    PaletteEntryRGBs[entry][2] = b;
+                    float y, i, q;
+                    RGBToYIQ(r, g, b, &y, &i, &q);
+                    palette[entry] = NTSCYIQToUInt32(y, i, q);
+                }
+                break;
+            }
+            case 256: {
+                // H3S2V3
+                for(unsigned int entry = 0; entry < 256; entry++) {
+                    float h = ((entry >> 5) & 7) / 7.0f * M_PI * 2;
+                    float s = ((entry >> 3) & 3) / 3.0f;
+                    float v = ((entry >> 0) & 7) / 7.0f;
+                    float r, g, b;
+                    HSVToRGB3f(h, s, v, &r, &g, &b);
+                    PaletteEntryRGBs[entry][0] = r;
+                    PaletteEntryRGBs[entry][1] = g;
+                    PaletteEntryRGBs[entry][2] = b;
+                    float y, i, q;
+                    RGBToYIQ(r, g, b, &y, &i, &q);
+                    palette[entry] = NTSCYIQToUInt32(y, i, q);
+                }
+            }
+        }
+        return 1;
+    } else {
+        return 0;
+    }
+}
+
+float Luminance(float r, float g, float b)
+{
+    return .30f * r + .59f * g + .11f * b;
+}
+
+float ColorDistance(float r0, float g0, float b0, float r1, float g1, float b1)
+{
+    return sqrtf((r1 - r0) * (r1 - r0) + (g1 - g0) * (g1 - g0) + (b1 - b0) * (b1 - b0));
+}
+
+int SetPixel(int x, int y, int c)
+{
+    if(getVideoModeType(CurrentVideoMode) == VIDEO_PIXMAP) {
+
+        VideoPixmapInfo info;
+        VideoPixmapParameters params;
+        getVideoModeInfo(CurrentVideoMode, &info);
+        getVideoModeParameters(&params);
+
+        if(x >= 0 && y >= 0 && x < info.width && y < info.height) {
+
+            switch(info.pixelFormat) {
+                case BITMAP: {
+                    unsigned char value = c << (x % 8);
+                    unsigned char mask = ~(1 << (x % 8));
+                    unsigned char *byte = params.base + y * params.rowSize + x / 8;
+                    *byte = (*byte & mask) | value;
+                    break;
+                }
+                case GRAY_4BIT:
+                case PALETTE_4BIT:
+                {
+                    int whichByte = x / 2;
+                    int whichNybble = x % 2;
+                    unsigned char value = c << (whichNybble * 4);
+                    unsigned char mask = ~(0xF << (whichNybble * 4));
+                    unsigned char *byte = params.base + y * params.rowSize + whichByte;
+                    *byte = (*byte & mask) | value;
+                    break;
+                }
+                case GRAY_8BIT:
+                case PALETTE_8BIT:
+                {
+                    params.base[y * params.rowSize + x] = c;
+                    break;
+                }
+            }
+        }
+        return 1;
+    } else {
+        return 0;
+    }
+}
+
+int SetColorPixel(int x, int y, float r, float g, float b)
+{
+    float bestError = 1000.0f;
+    int best = -1;
+    float bestError2nd = 1000.0f;
+    int best2nd = -1;
+
+    static const float ditherMatrix[3][3] = {
+        {.2, .6},
+        {.4, .8},
+    };
+
+    if(getVideoModeType(CurrentVideoMode) == VIDEO_PIXMAP) {
+
+        VideoPixmapInfo info;
+        VideoPixmapParameters params;
+        getVideoModeInfo(CurrentVideoMode, &info);
+        getVideoModeParameters(&params);
+
+        if(info.paletteSize == -1) {
+
+            if(Luminance(r, g, b) > ditherMatrix[x % 2][y % 2]) {
+                SetPixel(x, y, 1);
+            } else {
+                SetPixel(x, y, 0);
+            }
+
+        } else {
+
+            for(int i = 0; i < info.paletteSize; i++) {
+                float pr = PaletteEntryRGBs[i][0];
+                float pg = PaletteEntryRGBs[i][1];
+                float pb = PaletteEntryRGBs[i][2];
+                float error = ColorDistance(r, g, b, pr, pg, pb);
+                if(error < bestError) {
+                    bestError2nd = bestError;
+                    best2nd = best;
+                    bestError = error;
+                    best = i;
+                } else if(error < bestError2nd) {
+                    bestError2nd = error;
+                    best2nd = i;
+                }
+            }
+            float fraction = bestError / (bestError + bestError2nd);
+            if(fraction > ditherMatrix[x % 2][y % 2]) {
+                SetPixel(x, y, best);
+            } else {
+                SetPixel(x, y, best2nd);
+            }
+        }
+        return 1;
+    } else {
+        return 0;
+    }
+}
+
+void ClearPixmap(int c)
+{
+    VideoPixmapInfo info;
+    getVideoModeInfo(CurrentVideoMode, &info);
+
+    for(int y = 0; y < info.height; y++) {
+        for(int x = 0; x < info.width; x++) {
+            SetPixel(x, y, c);
+        }
+    }
+}
+
+void DrawFilledCircle(int cx, int cy, int r, int c)
+{
+    for(int y = cy - r; y < cy + r; y++) {
+        for(int x = cx - r; x < cx + r; x++) {
+            float distsquared = (x - cx) * (x - cx) + (y - cy) * (y - cy);
+            if(distsquared < r * r) {
+                SetPixel(x, y, c);
+            }
+        }
+    }
+}
+
+void DrawLine(int x0, int y0, int x1, int y1, int c)
+{
+    int dx = x1 - x0;
+    int dy = y1 - y0;
+
+    if(abs(dx) > abs(dy)) {
+        if(x1 < x0) {
+            int tx = x1; x1 = x0; x0 = tx;
+            int ty = y1; y1 = y0; y0 = ty;
+        }
+        int y = y0 * 65536;
+        int d = dy * 65536 / dx;
+        for(int x = x0; x < x1; x++) {
+            SetPixel(x, y / 65536, c);
+            y += d;
+        }
+    } else {
+        if(y1 < y0) {
+            int tx = x1; x1 = x0; x0 = tx;
+            int ty = y1; y1 = y0; y0 = ty;
+        }
+        int x = x0 * 65536;
+        int d = dx * 65536 / dy;
+        for(int y = y0; y < y1; y++) {
+            SetPixel(x / 65536, y, c);
+            x += d;
+        }
+    }
+}
+
+uint32_t Random()
+{
+    return rand();
+    uint32_t tick = HAL_GetTick();
+    return tick + (tick * tick) + (tick * tick >> 16);
+}
+
+int doCommandTestColor(char **words, int wordCount)
+{
+    enum VideoModeType type = getVideoModeType(CurrentVideoMode);
+    
+    if(type != VIDEO_PIXMAP) {
+        printf("current mode is not a pixmap; use \"modes\"\n");
+        printf("and \"mode\" to choose and set a pixmap mode\n");
+    } else {
+        VideoPixmapInfo info;
+        VideoPixmapParameters params;
+        getVideoModeInfo(CurrentVideoMode, &info);
+        getVideoModeParameters(&params);
+        if(info.paletteSize > 0) {
+            MakePalette(0);
+            for(int y = 0; y < info.height; y++) {
+                rowPalette[y] = 0;
+            }
+        }
+
+        ClearPixmap(0);
+
+        for(int i = 0; i < 100; i++) {
+            int cx = 10 + Random() % (info.width - 20);
+            int cy = 10 + Random() % (info.height - 20);
+            int cr = 5 + Random() % 30;
+            int c;
+            if(info.paletteSize == -1) {
+                c = Random() % 2;
+            } else {
+                c = Random() % info.paletteSize;
+            }
+            DrawFilledCircle(cx, cy, cr, c);
+
+            int x0 = 10 + Random() % (info.width - 20);
+            int y0 = 10 + Random() % (info.width - 20);
+            int x1 = 10 + Random() % (info.height - 20);
+            int y1 = 10 + Random() % (info.height - 20);
+            DrawLine(x0, y0, x1, y1, c);
+        }
+#if 0
+        for(int y = 0; y < info.height; y++) {
+            for(int x = 0; x < info.width; x++) {
+                float u = 2.0f * (x / (float)info.width - 0.5f);
+                float v = 2.0f * (y / (float)info.height - 0.5f);
+                if(sqrtf(u * u + v * v) > 0.5f) {
+                    SetColorPixel(x, y, 0, 0, 0);
+                } else {
+                    SetColorPixel(x, y, 1, 1, 1); // u + 0.5f, 0.5f, v + 0.5f);
+                }
+            }
+        }
+#endif
+    }
+
+    return COMMAND_CONTINUE;
+}
+
 int doCommandVideoModes(char **words, int wordCount)
 {
     for(int i = 0; i < getVideoModeCount(); i++) {
@@ -1691,12 +2328,23 @@ int doCommandVideoModes(char **words, int wordCount)
                 VideoPixmapInfo info;
                 getVideoModeInfo(i, &info);
                 printf("    pixmap, %d by %d\n", info.width, info.height);
+                printf("    is %s", info.color ? "color" : "monochrome or grayscale");
+                if(info.paletteSize > 0) {
+                    printf(", %d palette entries", info.paletteSize);
+                }
+                printf("\n");
+                printf("    %s\n", info.overscan ? "overscan" : "underscan");
                 break;
             }
             case VIDEO_TEXTPORT: {
-                VideoPixmapInfo info;
+                VideoTextportInfo info;
                 getVideoModeInfo(i, &info);
                 printf("    text, %d by %d\n", info.width, info.height);
+                switch(info.attributes) {
+                    case TEXT_8BIT_WHITE_ON_BLACK: printf("    8-bit, white on black\n"); break;
+                    case TEXT_8BIT_BLACK_ON_WHITE: printf("    8-bit, black on white\n"); break;
+                    case TEXT_16BIT_8_3_3_2_RICH: printf("    16-bit, rich formatting\n"); break;
+                }
                 break;
             }
             case VIDEO_WOZ: {
@@ -1993,6 +2641,10 @@ typedef struct Command {
 } Command;
 
 Command commands[] = {
+    {
+        "testcolor", 1, doCommandTestColor, "",
+        "test color modes"
+    },
     {
         "modes", 1, doCommandVideoModes, "",
         "list video modes"
@@ -2466,6 +3118,7 @@ int main()
         GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
         HAL_GPIO_Init(GPIOC, &GPIO_InitStruct); 
     }
+    delay_ms(50);
 
     // If button is pushed down, enter clock config inspector
     if(HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_9)) {
