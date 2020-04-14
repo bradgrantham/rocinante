@@ -1244,9 +1244,28 @@ void Bitmap704x230GetParameters(const void *info_, void *params_)
 
 // to be /8, 164, 868, 27, 257
 #define Bitmap704x230Left 164
-#define Bitmap704x230Width 868
+#define Bitmap704x230Width 704
 #define Bitmap704x230Top 27
 #define Bitmap704x230Height 230
+
+uint32_t __attribute__((section (".ccmram"))) NybblesToMasks[16] = {
+    0x00000000,
+    0x000000FF,
+    0x0000FF00,
+    0x0000FFFF,
+    0x00FF0000,
+    0x00FF00FF,
+    0x00FFFF00,
+    0x00FFFFFF,
+    0xFF000000,
+    0xFF0000FF,
+    0xFF00FF00,
+    0xFF00FFFF,
+    0xFFFF0000,
+    0xFFFF00FF,
+    0xFFFFFF00,
+    0xFFFFFFFF,
+};
 
 void Bitmap704x230FillRow(int fieldNumber, int rowNumber, unsigned char *rowBuffer)
 {
@@ -1255,12 +1274,18 @@ void Bitmap704x230FillRow(int fieldNumber, int rowNumber, unsigned char *rowBuff
     if((rowWithin >= 0) && (rowWithin < Bitmap704x230Height)) {
 
         unsigned char *bitmapRow = imgBuffer + rowWithin * (Bitmap704x230Width / 8);
-        unsigned char *dstBytes = rowBuffer + Bitmap704x230Left;
+        uint32_t *dstWords = (uint32_t*)(rowBuffer + Bitmap704x230Left);
 
-        // Could unroll either as 8 bit tests or as 4 DAC outputs
-        for(int i = 0; i < Bitmap704x230Width; i++) {
-            int pixel = bitmapRow[i / 8] & (1 << (i % 8));
-            dstBytes[i] = pixel ? NTSCWhite : NTSCBlack;
+        uint32_t whiteLong = (NTSCWhite << 24) | (NTSCWhite << 16) | (NTSCWhite << 8) | (NTSCWhite << 0);
+        uint32_t blackLong = (NTSCBlack << 24) | (NTSCBlack << 16) | (NTSCBlack << 8) | (NTSCBlack << 0);
+
+        for(int i = 0; i < Bitmap704x230Width; i += 8) {
+            int whiteMask = 0;
+            unsigned char byte = bitmapRow[i / 8];
+            whiteMask = NybblesToMasks[byte & 0xF];
+            *dstWords++ = (whiteLong & whiteMask) | (blackLong & ~whiteMask);
+            whiteMask = NybblesToMasks[(byte >> 4) & 0xF];
+            *dstWords++ = (whiteLong & whiteMask) | (blackLong & ~whiteMask);
         }
     }
 }
@@ -1307,12 +1332,18 @@ void Bitmap640x192FillRow(int fieldNumber, int rowNumber, unsigned char *rowBuff
     if((rowWithin >= 0) && (rowWithin < Bitmap640x192Height)) {
 
         unsigned char *bitmapRow = imgBuffer + rowWithin * (Bitmap640x192Width / 8);
-        unsigned char *dstBytes = rowBuffer + Bitmap640x192Left;
+        uint32_t *dstWords = (uint32_t*)(rowBuffer + Bitmap640x192Left);
 
-        // Could unroll either as 8 bit tests or as 4 DAC outputs
-        for(int i = 0; i < Bitmap640x192Width; i++) {
-            int pixel = bitmapRow[i / 8] & (1 << (i % 8));
-            dstBytes[i] = pixel ? NTSCWhite : NTSCBlack;
+        uint32_t whiteLong = (NTSCWhite << 24) | (NTSCWhite << 16) | (NTSCWhite << 8) | (NTSCWhite << 0);
+        uint32_t blackLong = (NTSCBlack << 24) | (NTSCBlack << 16) | (NTSCBlack << 8) | (NTSCBlack << 0);
+
+        for(int i = 0; i < Bitmap640x192Width; i += 8) {
+            int whiteMask = 0;
+            unsigned char byte = bitmapRow[i / 8];
+            whiteMask = NybblesToMasks[byte & 0xF];
+            *dstWords++ = (whiteLong & whiteMask) | (blackLong & ~whiteMask);
+            whiteMask = NybblesToMasks[(byte >> 4) & 0xF];
+            *dstWords++ = (whiteLong & whiteMask) | (blackLong & ~whiteMask);
         }
     }
 }
@@ -2257,8 +2288,6 @@ void DrawLine(int x0, int y0, int x1, int y1, int c)
 uint32_t Random()
 {
     return rand();
-    uint32_t tick = HAL_GetTick();
-    return tick + (tick * tick) + (tick * tick >> 16);
 }
 
 int doCommandTestColor(char **words, int wordCount)
@@ -2295,8 +2324,8 @@ int doCommandTestColor(char **words, int wordCount)
             DrawFilledCircle(cx, cy, cr, c);
 
             int x0 = 10 + Random() % (info.width - 20);
-            int y0 = 10 + Random() % (info.width - 20);
-            int x1 = 10 + Random() % (info.height - 20);
+            int y0 = 10 + Random() % (info.height - 20);
+            int x1 = 10 + Random() % (info.width - 20);
             int y1 = 10 + Random() % (info.height - 20);
             DrawLine(x0, y0, x1, y1, c);
         }
