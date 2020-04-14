@@ -13,9 +13,12 @@ volatile int gNextTransmitBuffer = 0;
 volatile int gTransmitBufferLengths[2] = {0, 0};
 volatile int gUARTTransmitBusy = 0;
 
+int UARTInterrupts = 0;
+
 void USART1_IRQHandler(void)
 {
-  HAL_UART_IRQHandler(&gUARTHandle);
+    UARTInterrupts++;
+    HAL_UART_IRQHandler(&gUARTHandle);
 }
 
 void HAL_UART_MspInit(UART_HandleTypeDef *huart)

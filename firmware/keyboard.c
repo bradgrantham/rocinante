@@ -139,10 +139,14 @@ void KBD_send_byte(int b)
     HAL_NVIC_EnableIRQ(EXTI15_10_IRQn);
 }
 
+uint32_t KBDInterrupts = 0;
+
 void EXTI15_10_IRQHandler(void)
 {
     __HAL_GPIO_EXTI_CLEAR_IT(KEYBOARD_CLOCK_PIN_MASK);
     NVIC_ClearPendingIRQ(EXTI15_10_IRQn);
+
+    KBDInterrupts++;
 
     if(KBD_sending) {
 
