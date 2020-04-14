@@ -428,6 +428,12 @@ unsigned char __attribute__((section (".sram2"))) row1[ROW_SAMPLES];
 unsigned char __attribute__((section (".sram2"))) audio0[512];
 unsigned char __attribute__((section (".sram2"))) audio1[512];
 
+#define TMP_ROW_IN_SRAM1
+
+#ifdef TMP_ROW_IN_SRAM1
+unsigned char rowTmp[ROW_SAMPLES]; // SRAM1, will dma to SRAM2
+#endif
+
 unsigned char NTSCColorburst0;
 unsigned char NTSCColorburst90;
 unsigned char NTSCColorburst180;
@@ -1221,7 +1227,7 @@ int doCommandSolidFill(char **words, int wordCount)
 {
     uint32_t fill = strtoul(words[1], NULL, 0);
     videoMode = VIDEO_PALETTIZED;
-    printf("solid image with %08lXl word\n", fill);
+    printf("solid image with %08lX word\n", fill);
     showSolidFramebuffer(fill);
     return COMMAND_CONTINUE;
 }
@@ -1538,6 +1544,28 @@ void process_local_key(unsigned char c)
 volatile int __attribute__((section (".ccmram"))) rowNumber;
 volatile int __attribute__((section (".ccmram"))) fieldNumber;
 
+void StartRowDMA(unsigned char* dst, unsigned char* src, size_t size)
+{
+    // Configure DMA to copy tmp row
+    DMA2_Stream1->CR &= ~DMA_SxCR_EN;       /* disable DMA2_1 */
+    DMA2->LIFCR = 0xF00;                        /* clear flags */
+    DMA2_Stream1->NDTR = size / 4;
+    DMA2_Stream1->PAR = (uint32_t)src;        // Source buffer address 0 in Memory-to-Memory mode
+    DMA2_Stream1->M0AR = (uint32_t)dst;        // Dest buffer address in Memory-to-Memory mode
+    DMA2_Stream1->FCR = DMA_FIFOMODE_ENABLE |   // Enable FIFO to improve stutter
+        0; // DMA_FIFO_THRESHOLD_FULL;        
+    DMA2_Stream1->CR =
+        DMA_CHANNEL_1 |                         
+        DMA_MEMORY_TO_MEMORY |                  // Memory to Memory
+        DMA_PDATAALIGN_WORD | // DMA_PBURST_INC4 |
+        DMA_MDATAALIGN_WORD | // DMA_MBURST_INC4 |
+        DMA_PRIORITY_LOW |
+        DMA_PINC_ENABLE |                       // Increment memory address
+        DMA_MINC_ENABLE |                       // Increment memory address
+        0;
+    DMA2_Stream1->CR |= DMA_SxCR_EN;    /* enable DMA */
+}
+
 void DMA2_Stream2_IRQHandler(void)
 {
     if(markHandlerInSamples) {
@@ -1566,13 +1594,25 @@ void DMA2_Stream2_IRQHandler(void)
 
     unsigned char *nextRowBuffer = (whichIsScanning == 1) ? row0 : row1;
 
+#ifdef TMP_ROW_IN_SRAM1
+
     NTSCFillRowBuffer(fieldNumber, rowNumber, nextRowBuffer);
     if(debugOverlayEnabled) {
         fillRowDebugOverlay(fieldNumber, rowNumber, nextRowBuffer);
     }
 
+#else
+
+    NTSCFillRowBuffer(fieldNumber, rowNumber, rowTmp);
+    if(debugOverlayEnabled) {
+        fillRowDebugOverlay(fieldNumber, rowNumber, rowTmp);
+    }
+
+    StartRowDMA(nextRowBuffer, rowTmp, sizeof(rowTmp));
+    // memcpy(nextRowBuffer, rowTmp, sizeof(rowTmp));
+#endif
+
     rowNumber = rowNumber + 1;
-    // row to calculate
     if(rowNumber == NTSC_FIELD_LINES) {
         rowNumber = 0;
         fieldNumber++;
@@ -1595,7 +1635,6 @@ void DMA2_Stream2_IRQHandler(void)
     /* wait until a little later to return */
     // while(DMA2_Stream2->NDTR > 200); // Causes dark banding - clocks drifted?  Or voltage drop?
 }
-
 
 void DMAStartScanout(uint32_t dmaCount)
 {
@@ -1630,7 +1669,7 @@ void DMAStartScanout(uint32_t dmaCount)
         0;
 
     // Configure TIM1_CH2 to drive DMA
-    TIM1->CCR2 = (dmaCount + 1) / 2;         /* 50% duty cycle */ 
+    TIM1->CCR2 = (dmaCount + 1) / 2;         /* 50% duty cycle, although I've tried 1 and dmacount-1 and nothing seems to change.  Is this used? */ 
     TIM1->CCMR1 |= TIM_CCMR1_OC2FE;    /* fast enable...? */
     TIM1->CCER |= TIM_CCER_CC2E;        /* enable capture/compare CH2 */
     TIM1->DIER |= TIM_DIER_CC2DE;       /* enable capture/compare updates DMA */
@@ -1688,6 +1727,8 @@ void CCM_RAM_init_vars()
 
 uint32_t /* __attribute__((section (".ccmram"))) */ vectorTable[100] __attribute__ ((aligned (512)));
 
+extern int KBDInterrupts;
+extern int UARTInterrupts;
 int main()
 {
     HAL_Init();
@@ -1727,40 +1768,31 @@ int main()
     printf("calculated NTSCEqPulseClocks = %d\n", NTSCEqPulseClocks);
     printf("calculated NTSCVSyncClocks = %d\n", NTSCVSyncClocks);
 
-    {
-        int q;
-        printf("&q = %p\n", &q);
-    }
-
     LED_beat_heart();
     SERIAL_flush();
 
     SPI_config_for_sd();
     LED_beat_heart();
 
-    if(!SDCARD_init())
+    if(!SDCARD_init()) {
         printf("Failed to start access to SD card SPI!!\n");
-    else 
+        LED_beat_heart();
+        SERIAL_flush();
+    } else  {
         printf("Opened SD Card\n");
-    LED_beat_heart();
-    SERIAL_flush();
+        LED_beat_heart();
+        SERIAL_flush();
 
-    FRESULT result = f_mount(&gFATVolume, "0:", 1);
-    if(result != FR_OK) {
-        logprintf(DEBUG_ERRORS, "ERROR: FATFS mount result is %d\n", result);
-        panic();
-    } else {
-        printf("Mounted FATFS from SD card successfully.\n");
+        FRESULT result = f_mount(&gFATVolume, "0:", 1);
+        if(result != FR_OK) {
+            logprintf(DEBUG_ERRORS, "ERROR: FATFS mount result is %d\n", result);
+            panic();
+        } else {
+            printf("Mounted FATFS from SD card successfully.\n");
+        }
+        LED_beat_heart();
+        SERIAL_flush();
     }
-    SERIAL_flush();
-
-        // unsigned char block[128];
-    // UINT wasread;
-    // for(int i = 0; i < gDiskImageCount; i++) {
-        // result = f_read(&gDiskImageFiles[i], block, sizeof(block), &wasread);
-        // printf("\"%s\", read resulted in %d, got %d bytes:\n", gDiskImageFilenames[i], result, wasread);
-        // dump_buffer_hex(4, block, sizeof(block));
-    // }
 
     KBD_init();
     LED_beat_heart();
@@ -1770,6 +1802,8 @@ int main()
 
     NTSCGenerateLineBuffers();
     NTSCFillRowBuffer(0, 0, row0);
+    memset(row0, 0x10, sizeof(row0));
+    memset(row1, 0xF0, sizeof(row1));
 
     float colorBurstInCoreClocks = SystemCoreClock / 14318180.0;
     // need main clock as close as possible to @ 171.816
@@ -1885,6 +1919,8 @@ int main()
         printf("failed to load \"test.rgb.bin\"\n");
     }
 
+    printf("DMA2 status %08lX\n", DMA2->LISR);
+
     for(;;) {
 
         // Should be in VBlank callback so is continuously updated
@@ -1893,6 +1929,8 @@ int main()
             uint32_t currentField = fieldNumber;
             while(currentField == fieldNumber); // Wait for VBLANK
             memset(debugDisplay, 0, debugDisplayWidth * debugDisplayHeight);
+            sprintf(debugDisplay[debugDisplayHeight - 4], "UART %d", UARTInterrupts);
+            sprintf(debugDisplay[debugDisplayHeight - 3], "KBD %d", KBDInterrupts);
             sprintf(debugDisplay[debugDisplayHeight - 2], "FIFO unders %lu", DMAFIFOUnderruns);
             sprintf(debugDisplay[debugDisplayHeight - 1], "DMA errors %lu", DMATransferErrors);
         }
