@@ -27,6 +27,7 @@ OBJECTS = \
         STM32Cube4/stm32f4xx_hal_tim.o \
         STM32Cube4/stm32f4xx_hal_tim_ex.o \
         STM32Cube4/stm32f4xx_hal.o \
+        graphics.o \
         syscalls.o \
         ff.o \
         diskio.o \

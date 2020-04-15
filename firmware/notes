@@ -1,34 +1,68 @@
-Rein it in
+Rein it in... or not
+    every video mode should have an aspect ratio, like pixel Y to X or some such
+        4:3 aspect ratio (is that only for visible pixels?  Or for the entire clocked frame?)
+    use aspect ratio in DrawFilledCircle
+    set up MAX RES underscan mode
+    wolfenstein-style raycaster
+        textured walls
+        walk around with WASD
+        sprites?
     serial should interrupt and fill a buffer like keyboard does
     setup a software interrupt for VBlank processing (e.g. update scanout stats, audio goop) and trigger it from row=262
+    blue button kicks back to text mode
     audio
         22050Hz?  11025Hz?  8000Hz?
         write audio sample immediately on entry to line ISR?  Then calculate next one right after that, then do video calculation?
             Then audio resampling would happen at the line rate for whatever video mode is current...
         Do DMA at 22050 from double-buffered 512-byte buffers?  Could conflict with video but should be able to set priority lower.
-    CP/M emulation
-    BASIC
-        just implement 80x24 text mode for now
-        video N # set video mode N
-        lut c, r, g, b # calculate lut entry c for int r, g, b
-        plot x, y, c    # plot pixel x, y with lut c
-        line x0, y0, x1, y1, c # plot line
-        clear c # clear screen to LUT color
-        text N # text mode
-        split {0,1} # split screen graphics and text (dependent on the modes?)
-        handle a bunch of old BASIC programs like STARTREK, WUMPUS, ...?
-        implement lunar lander
-        Life: https://www.atariarchives.org/basicgames/showpage.php?page=100
-        Lunar Lander: https://www.atariarchives.org/basicgames/showpage.php?page=106
-        Sine Wave: https://www.atariarchives.org/basicgames/showpage.php?page=146
-        Super Star Trek: https://www.atariarchives.org/basicgames/showpage.php?page=157
-        Sine Wave: https://www.atariarchives.org/basicgames/showpage.php?page=167
+    mouse?
+    "Apps"
+        "__attribute__((constructor))" works!  How many can I have?
+        Apps should have some kind of heap for their use freed up before each app
+            limit use by main as much as possible - mark heap with some kind of symbol
+        Should have a POSIX harness for running and testing the apps
+        Main has "applets" that it contains that do system things
+        System APIs that Apps can call
+            video mode and config (NTSC vs VGA handled by hard board switch)
+            serial port control
+            register vblank handler
+            get time and sleep
+            audio mode and config
+            get keyboard input
+            read DB9 joystick
+            use Chan's FatFS directly, routines implemented in main
+            layered facilities
+                textport
+                VT102 terminal processing (on textport)
+                    essentially just init() and putchar()
+                graphics routines
+        Wolfenstein
+        Image Viewer (ppm?)
+        3D viewer
+        BASIC
+        movie player
+        CP/M emulation
+        Colecovision
+        Apple2e
+        WeFAX decoder
+            just implement 80x24 text mode for now
+            video N # set video mode N
+            lut c, r, g, b # calculate lut entry c for int r, g, b
+            plot x, y, c    # plot pixel x, y with lut c
+            line x0, y0, x1, y1, c # plot line
+            clear c # clear screen to LUT color
+            text N # text mode
+            split {0,1} # split screen graphics and text (dependent on the modes?)
+            handle a bunch of old BASIC programs like STARTREK, WUMPUS, ...?
+            implement lunar lander
+            Life: https://www.atariarchives.org/basicgames/showpage.php?page=100
+            Lunar Lander: https://www.atariarchives.org/basicgames/showpage.php?page=106
+            Sine Wave: https://www.atariarchives.org/basicgames/showpage.php?page=146
+            Super Star Trek: https://www.atariarchives.org/basicgames/showpage.php?page=157
+            Sine Wave: https://www.atariarchives.org/basicgames/showpage.php?page=167
     video modes
         MAX RES
            588 * 168 4-bit palette (centered), actual 14MHz pixels - more or less depending on memory
-        underscan/overscan 1-cycle monochrome (res?)
-        underscan/overscan 4-cycle 256 colors (res?)
-        underscan/overscan 2-cycle 4 grays  (res?)
         underscan/overscan byte HAM  (res?)
         monochrome 80x24 text - Apple font?
             196, 832, 44, 236
@@ -46,7 +80,6 @@ Rein it in
 
 What does going nuts look like?
     export internal FAT as USB (button or command switches modes)
-    loadable executables - UNIX-y
     network over usb
     stereo audio output
     1/8inch jack audio input can decode WeFAX or MFSK
