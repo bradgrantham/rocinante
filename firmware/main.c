@@ -367,7 +367,7 @@ unsigned char voltageToDACValue(float voltage)
 // Number of samples we target, 4x colorburst yields 227.5 cycles, or 910 samples at 14.318180MHz
 // But we cheat and actually scan out 912 cycles to be a multiple
 // of 16, so lines are .22% too long.  We hope the receiver is permissive
-// enough to ignore this.  My cheap Onkyo is.
+// enough to ignore this.  My cheap Orion is.
 
 #define ROW_SAMPLES        912
 
@@ -473,17 +473,17 @@ void NTSCCalculateParameters(float clock)
     NTSCEqPulseClocks = NTSCLineClocks * NTSC_EQ_PULSE_INTERVAL;
     NTSCVSyncClocks = NTSCLineClocks * NTSC_VSYNC_BLANK_INTERVAL;
 
-    // Calculate the four values for the colorburst that we'll repeat to make a wave
-    NTSCColorburst0 = NTSCSyncPorch;
-    NTSCColorburst90 = NTSCSyncPorch - .6 * NTSCSyncPorch;
-    NTSCColorburst180 = NTSCSyncPorch;
-    NTSCColorburst270 = NTSCSyncPorch + .6 * NTSCSyncPorch;
-
     NTSCSyncTip = voltageToDACValue(NTSC_SYNC_TIP_VOLTAGE);
     NTSCSyncPorch = voltageToDACValue(NTSC_SYNC_PORCH_VOLTAGE);
     NTSCBlack = voltageToDACValue(NTSC_SYNC_BLACK_VOLTAGE);
     NTSCWhite = voltageToDACValue(NTSC_SYNC_WHITE_VOLTAGE);
     NTSCMaxAllowed = 255;
+
+    // Calculate the four values for the colorburst that we'll repeat to make a wave
+    NTSCColorburst0 = NTSCSyncPorch;
+    NTSCColorburst90 = NTSCSyncPorch - .6 * NTSCSyncPorch;
+    NTSCColorburst180 = NTSCSyncPorch;
+    NTSCColorburst270 = NTSCSyncPorch + .6 * NTSCSyncPorch;
 
     // System reserved palette entries
     paletteUInt32[1][255] = paletteUInt32[0][255] = 
