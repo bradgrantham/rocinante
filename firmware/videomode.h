@@ -1,6 +1,8 @@
 #ifndef _VIDEO_MODE_H_
 #define _VIDEO_MODE_H_
 
+#include <stddef.h>
+
 //--------------------------------------------------------------------------
 // Pixmap mode enums and structs
 
@@ -13,6 +15,7 @@ typedef struct VideoPixmapInfo
     int paletteSize; /* for convenience, matches pixelFormat, -1 if a bitmap */
     int color;          /* for convenience, matches pixelFormat */
     int overscan;       /* true if pixels can be offscreen */
+    int aspectX, aspectY;       // X:Y aspect ratio, e.g., on Orion for 1-clock pixel, 225 / 520
 } VideoPixmapInfo;
 
 typedef struct VideoPixmapParameters
@@ -70,6 +73,7 @@ void VideoModeGetParameters(void *params);
 
 /* >0 if out of range or invalid for this mode, 0 if success */
 int VideoModeSetPaletteEntry(int palette, int entry, float r, float g, float b);
+int VideoModeSetRowPalette(int row, int palette);
 
 // Other possible functions:
 // int setPaletteEntryF(int a, float r, float g, float b); /* 0 if out of range, 1 if success */

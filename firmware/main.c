@@ -27,6 +27,7 @@
 // System APIs
 #include "videomode.h"
 #include "graphics.h"
+#include "rocinante.h"
 
 // System driver internal definitions
 #include "videomodeinternal.h"
@@ -410,7 +411,16 @@ int NTSCFieldClocks;
 int NTSCFrontPorchClocks;
 int NTSCBackPorchClocks;
 
-unsigned char __attribute__((section (".ccmram"))) imgBuffer[224 * 200];
+// Essentially the remainder of CCMRAM, will need to be shrunk if more goes into CCM
+#define IMGBUFFER_SIZE 53248
+// (Following was copied from paper chicken scratches)
+// On Orion TV, one 14MHz clock is .0225 inches, one 240p row is .052 inches.
+// So to find a close value for width, width = sqrt(4 / 3 * .052 / .0225 * IMGBUFFER_SIZE)
+// Then, height should be no more than width * 3 * .0225 / (4 / .052)
+// So for 53248, a reasonable 4:3 framebuffer is 400x128
+// 4:3 aspect would be 1.333
+// 400 wide would be 9 inches, and 128 high would be 6.656 inches, and that's 1.352, so it's not too bad
+unsigned char __attribute__((section (".ccmram"))) imgBuffer[IMGBUFFER_SIZE];
 
 #define MAX_PALETTE_ENTRIES 254
 #define PALETTE_WHITE 255
@@ -419,9 +429,7 @@ unsigned char __attribute__((section (".ccmram"))) imgBuffer[224 * 200];
 uint32_t __attribute__((section (".ccmram"))) paletteUInt32[2][256];
 unsigned char __attribute__((section (".ccmram"))) rowPalette[256];
 
-unsigned char *imgBufferRow(int row) { return imgBuffer + row * 200; }
-        // 224 lines
-        // 189 columns @ 4 per pixel
+unsigned char *imgBufferRow(int row) { return imgBuffer + row * 200; } // XXX this may not fit!
 unsigned char *imgBufferPixel(int x, int y) { return imgBufferRow(y) + x; }
 
 // XXX these are in SRAM2 to reduce contention with SRAM1 during DMA
@@ -566,6 +574,12 @@ void NTSCGenerateLineBuffers()
     NTSCFillEqPulseLine(NTSCEqSyncPulseLine);
     NTSCFillVSyncLine(NTSCVsyncLine);
     NTSCFillBlankLine(NTSCBlankLine, 1);
+}
+
+int NTSCSetRowPalette(int row, int palette)
+{
+    rowPalette[row] = palette;
+    return 0;
 }
 
 //----------------------------------------------------------------------------
@@ -778,6 +792,12 @@ void SetPaletteEntry(int palette, int which, float r, float g, float b)
     paletteUInt32[palette][which] = NTSCYIQToUInt32(y, i, q);
 }
 
+int SetRowPalette(struct VideoModeEntry* modeEntry, int row, int palette)
+{
+    return NTSCSetRowPalette(row, palette);
+}
+
+
 // ----------------------------------------
 // plain 40x24 black-on-white textport
 
@@ -900,6 +920,78 @@ void TextportPlain80x24FillRow(int fieldNumber, int rowNumber, unsigned char *ro
 }
 
 // ----------------------------------------
+// highest-horizontal-resolution 8-bit framebuffer
+
+#define MAX_RES_MODE_WIDTH 400
+#define MAX_RES_MODE_HEIGHT 128
+
+#if IMGBUFFER_SIZE < MAX_RES_MODE_WIDTH * MAX_RES_MODE_HEIGHT
+#error imgBuffer has become too small
+#endif
+
+// Pixmap video mode structs
+VideoPixmapInfo ColorMaxResInfo = {
+    MAX_RES_MODE_WIDTH, MAX_RES_MODE_HEIGHT,
+    PALETTE_8BIT,
+    256,
+    1,
+    1,
+    225, 520,
+};
+
+void ColorMaxResSetup(VideoModeEntry *modeEntry)
+{
+    /* const VideoTextportInfo *info = (VideoTextportInfo*)info_; */
+    NTSCFillBlankLine(NTSCBlankLine, 1);
+}
+
+void ColorMaxResGetParameters(VideoModeEntry *modeEntry, void *params_)
+{
+    const VideoPixmapInfo *info = (VideoPixmapInfo*)modeEntry->info;
+    VideoPixmapParameters *params = (VideoPixmapParameters*)params_;
+    params->base = imgBuffer;
+    params->rowSize = info->width;
+}
+
+// 510 and 142 are magic numbers measured for middle of screen
+#define ColorMaxResLeft (512 - MAX_RES_MODE_WIDTH / 2) 
+#define ColorMaxResWidth MAX_RES_MODE_WIDTH
+#define ColorMaxResTop (142 - MAX_RES_MODE_HEIGHT / 2)
+#define ColorMaxResHeight MAX_RES_MODE_HEIGHT
+
+int ColorMaxResSetPaletteEntry(VideoModeEntry* modeEntry, int palette, int which, float r, float g, float b)
+{
+    if(which >= 256) {
+        return 1;
+    }
+    SetPaletteEntry(palette, which, r, g, b);
+    return 0;
+}
+
+// XXX assumes ColorMaxResLeft is /4 and ColorMaxResWidth /4
+void ColorMaxResFillRow(int fieldNumber, int rowNumber, unsigned char *rowBuffer)
+{
+    int rowWithin = rowNumber - ColorMaxResTop;
+
+    if((rowWithin >= 0) && (rowWithin < ColorMaxResHeight)) {
+
+        unsigned char *srcPixels = imgBuffer + rowWithin * ColorMaxResWidth;
+        uint32_t *dstWords = (uint32_t*)(rowBuffer + ColorMaxResLeft);
+
+        uint32_t *palette = paletteUInt32[rowPalette[rowWithin]];
+
+        for(int i = 0; i < ColorMaxResWidth; i += 4) {
+            uint32_t waveformPart0 = palette[srcPixels[i + 0]] & 0x000000FF;
+            uint32_t waveformPart1 = palette[srcPixels[i + 1]] & 0x0000FF00;
+            uint32_t waveformPart2 = palette[srcPixels[i + 2]] & 0x00FF0000;
+            uint32_t waveformPart3 = palette[srcPixels[i + 3]] & 0xFF000000;
+            *dstWords++ = waveformPart0 | waveformPart1 | waveformPart2 | waveformPart3;
+        }
+    }
+}
+
+
+// ----------------------------------------
 // 175 x 230 8-bit bitmap display
 // to be /4, 164, 864, 27, 257
 
@@ -910,6 +1002,7 @@ VideoPixmapInfo Color175x230Info = {
     256,
     1,
     1,
+    900, 520,
 };
 
 void Color175x230Setup(VideoModeEntry *modeEntry)
@@ -971,6 +1064,7 @@ VideoPixmapInfo Color160x192Info = {
     256,
     1,
     0,
+    900, 520,
 };
 
 void Color160x192Setup(VideoModeEntry *modeEntry)
@@ -1031,6 +1125,7 @@ VideoPixmapInfo Color350x230Info = {
     16,
     1,
     1,
+    450, 520,
 };
 
 void Color350x230Setup(VideoModeEntry *modeEntry)
@@ -1100,6 +1195,7 @@ VideoPixmapInfo Color320x192Info = {
     16,
     1,
     0,
+    450, 520,
 };
 
 void Color320x192Setup(VideoModeEntry *modeEntry)
@@ -1168,6 +1264,7 @@ VideoPixmapInfo Bitmap704x230Info = {
     -1,
     0,
     1,
+    225, 520,
 };
 
 void Bitmap704x230Setup(VideoModeEntry *modeEntry)
@@ -1243,6 +1340,7 @@ VideoPixmapInfo Bitmap640x192Info = {
     -1,
     0,
     0,
+    225, 520,
 };
 
 void Bitmap640x192Setup(VideoModeEntry *modeEntry)
@@ -1299,6 +1397,7 @@ VideoModeEntry __attribute__((section (".ccmram"))) videoModes[] =
         TextportPlain80x24GetParameters,
         TextportPlain80x24FillRow,
         SetPaletteEntryAlwaysFails,
+        SetRowPalette,
         NULL,
     },
     {
@@ -1308,6 +1407,7 @@ VideoModeEntry __attribute__((section (".ccmram"))) videoModes[] =
         TextportPlain40x24GetParameters,
         TextportPlain40x24FillRow,
         SetPaletteEntryAlwaysFails,
+        SetRowPalette,
         NULL,
     },
     {
@@ -1317,6 +1417,7 @@ VideoModeEntry __attribute__((section (".ccmram"))) videoModes[] =
         Bitmap640x192GetParameters,
         Bitmap640x192FillRow,
         SetPaletteEntryAlwaysFails,
+        SetRowPalette,
         NULL,
     },
     {
@@ -1326,6 +1427,7 @@ VideoModeEntry __attribute__((section (".ccmram"))) videoModes[] =
         Color320x192GetParameters,
         Color320x192FillRow,
         Color320x192SetPaletteEntry,
+        SetRowPalette,
         NULL,
     },
     {
@@ -1335,6 +1437,7 @@ VideoModeEntry __attribute__((section (".ccmram"))) videoModes[] =
         Color160x192GetParameters,
         Color160x192FillRow,
         Color160x192SetPaletteEntry,
+        SetRowPalette,
         NULL,
     },
     {
@@ -1344,6 +1447,7 @@ VideoModeEntry __attribute__((section (".ccmram"))) videoModes[] =
         Bitmap704x230GetParameters,
         Bitmap704x230FillRow,
         SetPaletteEntryAlwaysFails,
+        SetRowPalette,
         NULL,
     },
     {
@@ -1353,6 +1457,7 @@ VideoModeEntry __attribute__((section (".ccmram"))) videoModes[] =
         Color350x230GetParameters,
         Color350x230FillRow,
         Color350x230SetPaletteEntry,
+        SetRowPalette,
         NULL,
     },
     {
@@ -1362,6 +1467,17 @@ VideoModeEntry __attribute__((section (".ccmram"))) videoModes[] =
         Color175x230GetParameters,
         Color175x230FillRow,
         Color175x230SetPaletteEntry,
+        SetRowPalette,
+        NULL,
+    },
+    {
+        VIDEO_PIXMAP,
+        &ColorMaxResInfo,
+        ColorMaxResSetup,
+        ColorMaxResGetParameters,
+        ColorMaxResFillRow,
+        ColorMaxResSetPaletteEntry,
+        SetRowPalette,
         NULL,
     },
 };
@@ -1432,6 +1548,11 @@ int VideoModeSetPaletteEntry(int palette, int which, float r, float g, float b)
 {
     VideoModeEntry* entry = videoModes + CurrentVideoMode;
     return entry->setPaletteEntry(entry, palette, which, r, g, b);
+}
+int VideoModeSetRowPalette(int row, int palette)
+{
+    VideoModeEntry* entry = videoModes + CurrentVideoMode;
+    return entry->setRowPalette(entry, row, palette);
 }
 
 //------------------------------------------------------------------------------
@@ -1530,7 +1651,7 @@ void NTSCFillRowBuffer(int fieldNumber, int rowNumber, unsigned char *rowBuffer)
                 break;
             }
             case VIDEO_MODE: {
-                videoModes[CurrentVideoMode].fillRow(fieldNumber, rowNumber, rowBuffer);
+                videoModes[VideoGetCurrentMode()].fillRow(fieldNumber, rowNumber, rowBuffer);
                 break;
             }
         }
@@ -1824,11 +1945,11 @@ int charX = 0, charY = 0;
 
 void VIDEO_putchar(char c)
 {
-    if((CurrentVideoMode >= 0) && (videoModes[CurrentVideoMode].type == VIDEO_TEXTPORT)) {
+    if((VideoGetCurrentMode() >= 0) && (videoModes[VideoGetCurrentMode()].type == VIDEO_TEXTPORT)) {
 
         VideoTextportInfo info;
         VideoTextportParameters params;
-        VideoModeGetInfo(CurrentVideoMode, &info);
+        VideoModeGetInfo(VideoGetCurrentMode(), &info);
         VideoModeGetParameters(&params);
 
         if(c == '\n') {
@@ -1990,19 +2111,9 @@ int showScanoutStats = 0;
 
 void NTSCGenerateLineBuffers();
 
-enum {
-    COMMAND_CONTINUE = 0,
-    COMMAND_STOP,
-};
-
-uint32_t Random()
+int doCommandTestColor(int wordCount, const char **words)
 {
-    return rand();
-}
-
-int doCommandTestColor(char **words, int wordCount)
-{
-    enum VideoModeType type = VideoModeGetType(CurrentVideoMode);
+    enum VideoModeType type = VideoModeGetType(VideoGetCurrentMode());
     
     if(type != VIDEO_PIXMAP) {
 
@@ -2013,7 +2124,7 @@ int doCommandTestColor(char **words, int wordCount)
 
         VideoPixmapInfo info;
         VideoPixmapParameters params;
-        VideoModeGetInfo(CurrentVideoMode, &info);
+        VideoModeGetInfo(VideoGetCurrentMode(), &info);
         VideoModeGetParameters(&params);
         if(info.paletteSize > 0) {
             MakePalette(0);
@@ -2024,43 +2135,32 @@ int doCommandTestColor(char **words, int wordCount)
 
         ClearPixmap(0);
 
+        // Yes, my use of rand() here is bad.
+
         for(int i = 0; i < 100; i++) {
-            int cx = 10 + Random() % (info.width - 20);
-            int cy = 10 + Random() % (info.height - 20);
-            int cr = 5 + Random() % 30;
+            int cx = 10 + rand() % (info.width - 20);
+            int cy = 10 + rand() % (info.height - 20);
+            int cr = 5 + rand() % 30;
             int c;
             if(info.paletteSize == -1) {
-                c = Random() % 2;
+                c = rand() % 2;
             } else {
-                c = Random() % info.paletteSize;
+                c = rand() % info.paletteSize;
             }
-            DrawFilledCircle(cx, cy, cr, c);
+            DrawFilledCircle(cx, cy, cr, c, info.aspectX, info.aspectY);
 
-            int x0 = 10 + Random() % (info.width - 20);
-            int y0 = 10 + Random() % (info.height - 20);
-            int x1 = 10 + Random() % (info.width - 20);
-            int y1 = 10 + Random() % (info.height - 20);
+            int x0 = 10 + rand() % (info.width - 20);
+            int y0 = 10 + rand() % (info.height - 20);
+            int x1 = 10 + rand() % (info.width - 20);
+            int y1 = 10 + rand() % (info.height - 20);
             DrawLine(x0, y0, x1, y1, c);
         }
-#if 0
-        for(int y = 0; y < info.height; y++) {
-            for(int x = 0; x < info.width; x++) {
-                float u = 2.0f * (x / (float)info.width - 0.5f);
-                float v = 2.0f * (y / (float)info.height - 0.5f);
-                if(sqrtf(u * u + v * v) > 0.5f) {
-                    SetColorPixel(x, y, 0, 0, 0);
-                } else {
-                    SetColorPixel(x, y, 1, 1, 1); // u + 0.5f, 0.5f, v + 0.5f);
-                }
-            }
-        }
-#endif
     }
 
     return COMMAND_CONTINUE;
 }
 
-int doCommandVideoModes(char **words, int wordCount)
+int doCommandVideoModes(int wordCount, const char **words)
 {
     for(int i = 0; i < VideoGetModeCount(); i++) {
         printf("Mode %d\n", i);
@@ -2117,7 +2217,7 @@ int doCommandVideoModes(char **words, int wordCount)
     return COMMAND_CONTINUE;
 }
 
-int doCommandSetVideoMode(char **words, int wordCount)
+int doCommandSetVideoMode(int wordCount, const char **words)
 {
     videoMode = VIDEO_MODE;
     int which = strtol(words[1], NULL, 0);
@@ -2129,11 +2229,11 @@ int doCommandSetVideoMode(char **words, int wordCount)
     return COMMAND_CONTINUE;
 }
 
-int doCommandStream(char **words, int wordCount)
+int doCommandStream(int wordCount, const char **words)
 {
     videoMode = VIDEO_PALETTIZED;
 
-    char *formatName = words[1];
+    const char *formatName = words[1];
     int start = strtol(words[2], NULL, 0);
     int end = strtol(words[3], NULL, 0);
 
@@ -2155,7 +2255,7 @@ int doCommandStream(char **words, int wordCount)
     return COMMAND_CONTINUE;
 }
 
-int doCommandSDReset(char **words, int wordCount)
+int doCommandSDReset(int wordCount, const char **words)
 {
     printf("Resetting SD card...\n");
 
@@ -2165,19 +2265,19 @@ int doCommandSDReset(char **words, int wordCount)
     return COMMAND_CONTINUE;
 }
 
-int doCommandVideoTest(char **words, int wordCount)
+int doCommandVideoTest(int wordCount, const char **words)
 {
     videoMode = VIDEO_COLOR_TEST;
     return COMMAND_CONTINUE;
 }
 
-int doCommandGrayscale(char **words, int wordCount)
+int doCommandGrayscale(int wordCount, const char **words)
 {
     videoMode = VIDEO_GRAYSCALE;
     return COMMAND_CONTINUE;
 }
 
-int doCommandScanoutStats(char **words, int wordCount)
+int doCommandScanoutStats(int wordCount, const char **words)
 {
     showScanoutStats = !showScanoutStats;
     if(!showScanoutStats) {
@@ -2186,25 +2286,25 @@ int doCommandScanoutStats(char **words, int wordCount)
     return COMMAND_CONTINUE;
 }
 
-int doCommandVideoYIQ(char **words, int wordCount)
+int doCommandVideoYIQ(int wordCount, const char **words)
 {
     videoMode = VIDEO_PALETTIZED;
     return COMMAND_CONTINUE;
 }
 
-int doCommandVideoText(char **words, int wordCount)
+int doCommandVideoText(int wordCount, const char **words)
 {
     gOutputDevices = gOutputDevices ^ OUTPUT_TO_VIDEO;
     return COMMAND_CONTINUE;
 }
 
-int doCommandShowLineEnd(char **words, int wordCount)
+int doCommandShowLineEnd(int wordCount, const char **words)
 {
     markHandlerInSamples = !markHandlerInSamples;
     return COMMAND_CONTINUE;
 }
 
-int doCommandScanoutCycles(char **words, int wordCount)
+int doCommandScanoutCycles(int wordCount, const char **words)
 {
     for(int i = 0; i < 262; i++) {
         printf("row %3d: %8lu cycles, %lu microseconds", i, rowCyclesSpent[i],
@@ -2219,7 +2319,7 @@ int doCommandScanoutCycles(char **words, int wordCount)
     return COMMAND_CONTINUE;
 }
 
-int doCommandLS(char **words, int wordCount)
+int doCommandLS(int wordCount, const char **words)
 {
     FRESULT res;
     DIR dir;
@@ -2247,7 +2347,7 @@ int doCommandLS(char **words, int wordCount)
     return COMMAND_CONTINUE;
 }
 
-int doCommandSolidFill(char **words, int wordCount)
+int doCommandSolidFill(int wordCount, const char **words)
 {
     uint32_t fill = strtoul(words[1], NULL, 0);
     videoMode = VIDEO_PALETTIZED;
@@ -2256,7 +2356,7 @@ int doCommandSolidFill(char **words, int wordCount)
     return COMMAND_CONTINUE;
 }
 
-int doCommandScopeFill(char **words, int wordCount)
+int doCommandScopeFill(int wordCount, const char **words)
 {
     videoMode = VIDEO_PALETTIZED;
     int degrees = strtol(words[1], NULL, 0);
@@ -2265,7 +2365,7 @@ int doCommandScopeFill(char **words, int wordCount)
     return COMMAND_CONTINUE;
 }
 
-int doCommandShowImage(char **words, int wordCount)
+int doCommandShowImage(int wordCount, const char **words)
 {
     videoMode = VIDEO_PALETTIZED;
 
@@ -2276,7 +2376,7 @@ int doCommandShowImage(char **words, int wordCount)
     return COMMAND_CONTINUE;
 }
 
-int doCommandTestSDSpeed(char **words, int wordCount)
+int doCommandTestSDSpeed(int wordCount, const char **words)
 {
     const int megabytes = 2;
     printf("will read %d megabyte of SD\n", megabytes);
@@ -2297,7 +2397,7 @@ int doCommandTestSDSpeed(char **words, int wordCount)
     return COMMAND_CONTINUE;
 }
 
-int doCommandDumpKbdData(char **words, int wordCount)
+int doCommandDumpKbdData(int wordCount, const char **words)
 {
     gDumpKeyboardData = !gDumpKeyboardData;
     if(gDumpKeyboardData)
@@ -2307,7 +2407,7 @@ int doCommandDumpKbdData(char **words, int wordCount)
     return COMMAND_CONTINUE;
 }
 
-int doCommandFlashInfoLED(char **words, int wordCount)
+int doCommandFlashInfoLED(int wordCount, const char **words)
 {
     for(int i = 0; i < 8; i++) {
         LED_set_info(1);
@@ -2318,27 +2418,27 @@ int doCommandFlashInfoLED(char **words, int wordCount)
     return COMMAND_CONTINUE;
 }
 
-int doCommandPanic(char **words, int wordCount)
+int doCommandPanic(int wordCount, const char **words)
 {
     printf("panicking now\n");
     panic();
     return COMMAND_CONTINUE; /* notreached */
 }
 
-int doCommandShowVersion(char **words, int wordCount)
+int doCommandShowVersion(int wordCount, const char **words)
 {
     printf("%s\n", IOBOARD_FIRMWARE_VERSION_STRING);
     return COMMAND_CONTINUE;
 }
 
-int doCommandSetDebugLevel(char **words, int wordCount)
+int doCommandSetDebugLevel(int wordCount, const char **words)
 {
     gDebugLevel = strtol(words[1], NULL, 0);
     printf("Debug level set to %d\n", gDebugLevel);
     return COMMAND_CONTINUE;
 }
 
-int doCommandReadBlock(char **words, int wordCount)
+int doCommandReadBlock(int wordCount, const char **words)
 {
     int n = strtol(words[1], NULL, 0);
     if(SDCARD_readblock(n, sd_buffer)) {
@@ -2347,7 +2447,7 @@ int doCommandReadBlock(char **words, int wordCount)
     return COMMAND_CONTINUE;
 }
 
-int doCommandTestRect(char **words, int wordCount)
+int doCommandTestRect(int wordCount, const char **words)
 {
     videoMode = VIDEO_SCAN_TEST;
     do {
@@ -2374,23 +2474,9 @@ int doCommandTestRect(char **words, int wordCount)
     return COMMAND_CONTINUE;
 }
 
-// Return COMMAND_CONTINUE to continue execution, return other to report an error and
-// terminate operation of a script.
-typedef int (*ProcessCommandFunc)(char **words, int wordcount);
+#define MAX_COMMANDS 50
 
-typedef struct Command {
-    const char *word;   /* the command itself */
-    int minWords;      /* including command, like argc */
-    ProcessCommandFunc go;
-    const char *form;   /* command form for usage message */
-    const char *help;   /* human-readable guidance for command */
-} Command;
-
-Command commands[] = {
-    {
-        "testcolor", 1, doCommandTestColor, "",
-        "test color modes"
-    },
+Command commands[MAX_COMMANDS] = {
     {
         "modes", 1, doCommandVideoModes, "",
         "list video modes"
@@ -2452,7 +2538,7 @@ Command commands[] = {
         "fill with scope signal with degree offset"
     },
     {
-        "show", 2, doCommandShowImage, "name",
+        "oldshow", 2, doCommandShowImage, "name",
         "show 194x224 24-bit RGB image blob (must be quantized to 254)"
     },
     {
@@ -2484,21 +2570,47 @@ Command commands[] = {
         "read and dump out SD block N"
     },
 };
-static const int commandsCount = sizeof(commands) / sizeof(commands[0]);
+int commandsCount = 23;
+
+int RegisterApp(const char* name, int minWords, ProcessCommandFunc go, const char *form, const char *help)
+{
+    if(commandsCount >= MAX_COMMANDS) {
+        printf("maximum command count reached!\n");
+        return COMMAND_ADD_FAILED;
+    }
+    Command *newcmd = commands + commandsCount;
+    commandsCount++;
+
+    newcmd->name = name;
+    newcmd->minWords = minWords;
+    newcmd->go = go;
+    newcmd->form = form;
+    newcmd->help = help;
+
+    return 0;
+}
+
+static void RegisterMyApp(void) __attribute__((constructor));
+static void RegisterMyApp(void)
+{
+    RegisterApp("testcolor", 1, doCommandTestColor, "",
+        "test color modes"
+        );
+}
 
 void usage()
 {
     int maxNeeded = 0;
     for(int which = 0; which < commandsCount; which++) {
         Command *cmd = commands + which;
-        int needed = strlen(cmd->word) + 1 + strlen(cmd->form);
+        int needed = strlen(cmd->name) + 1 + strlen(cmd->form);
         maxNeeded = (needed > maxNeeded) ? needed : maxNeeded;
     }
     for(int which = 0; which < commandsCount; which++) {
         Command *cmd = commands + which;
-        printf("%s %s", cmd->word, cmd->form);
+        printf("%s %s", cmd->name, cmd->form);
         // XXX some day be smarter about word wrap etc
-        printf("%*s - %s\n", maxNeeded - strlen(cmd->word) - 1 - strlen(cmd->form), "", cmd->help);
+        printf("%*s - %s\n", maxNeeded - strlen(cmd->name) - 1 - strlen(cmd->form), "", cmd->help);
     }
 }
 
@@ -2522,13 +2634,13 @@ int processCommandLine(char *line)
     int found = 0;
     for(int which = 0; which < commandsCount; which++) {
         Command *cmd = commands + which;
-        if(strcmp(words[0], cmd->word) == 0) {
+        if(strcmp(words[0], cmd->name) == 0) {
             found = 1;
             if(wordsCount < cmd->minWords) {
-                printf("expected at least %d words for command \"%s\", parsed only %d\n", cmd->minWords, cmd->word, wordsCount);
+                printf("expected at least %d words for command \"%s\", parsed only %d\n", cmd->minWords, cmd->name, wordsCount);
                 usage();
             } else {
-                return cmd->go(words, wordsCount);
+                return cmd->go(wordsCount, words);
             }
         }
     }

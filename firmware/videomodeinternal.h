@@ -7,6 +7,7 @@ typedef void (*VideoSetupFunc)(struct VideoModeEntry *modeEntry);     // info sp
 typedef void (*VideoGetParametersFunc)(struct VideoModeEntry *modeEntry, void *params);     // info specific to mode
 typedef void (*VideoFillRowFunc)(int fieldNumber, int rowNumber, unsigned char *rowBuffer);
 typedef int (*VideoModeSetPaletteEntryFunc)(struct VideoModeEntry* modeEntry, int palette, int entry, float r, float g, float b);
+typedef int (*VideoModeSetRowPaletteFunc)(struct VideoModeEntry* modeEntry, int row, int palette);
 
 typedef struct VideoModeEntry
 {
@@ -16,6 +17,7 @@ typedef struct VideoModeEntry
     VideoGetParametersFunc getParameters;
     VideoFillRowFunc fillRow;
     VideoModeSetPaletteEntryFunc setPaletteEntry;
+    VideoModeSetRowPaletteFunc setRowPalette;
     void *modeSpecifics;        /* if desired */
 } VideoModeEntry;
 

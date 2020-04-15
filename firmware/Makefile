@@ -9,6 +9,8 @@ STM32FCUBEROOT  ?=      $(HOME)/packages/STM32Cube_FW_F4_V1.21.0/
 # GCC_LIB         ?=      $(TOOLROOT)/lib/gcc/arm-none-eabi/5.3.1
 GCC_LIB         ?=      $(TOOLROOT)/lib/gcc/arm-none-eabi/7.3.1
 
+PWD             !=       pwd
+
 CORTEX_M4_HWFP_CC_FLAGS = -mthumb -mcpu=cortex-m4 -mfloat-abi=hard -mfpu=fpv4-sp-d16 -mlittle-endian
 TARGET = STM32F415xx
 STM32F4XX_CMSIS_INC_PATH        = $(STM32FCUBEROOT)/Drivers/CMSIS/Include/
@@ -44,6 +46,7 @@ OBJECTS = \
         sd_spi.o \
         reset_button.o \
         ff_unicode.o \
+        apps/showimage.o \
         $(NULL)
 
         # need ff_unicode if ExFAT and LFN support are compiled in
@@ -63,10 +66,10 @@ STM32Cube4/startup_stm32f417xx.o: STM32Cube4/startup_stm32f417xx.s
 	$(TOOLROOT)/bin/arm-none-eabi-gcc -Wall $(OPT) $(CORTEX_M4_HWFP_CC_FLAGS)  $< -c -o $@
 
 %.o: %.c
-	$(TOOLROOT)/bin/arm-none-eabi-gcc -std=c99 -Wall $(OPT) -ISTM32Cube4 -DIOBOARD_FIRMWARE_VERSION="$(FIRMWARE_VERSION)" -fno-builtin -I$(STM32F4XX_CMSIS_INC_PATH) -D$(TARGET) $(CORTEX_M4_HWFP_CC_FLAGS)  $< -c -o $@ -MMD
+	$(TOOLROOT)/bin/arm-none-eabi-gcc -std=c99 -Wall $(OPT) -I$(PWD) -I$(PWD)/STM32Cube4 -DIOBOARD_FIRMWARE_VERSION="$(FIRMWARE_VERSION)" -fno-builtin -I$(STM32F4XX_CMSIS_INC_PATH) -D$(TARGET) $(CORTEX_M4_HWFP_CC_FLAGS)  $< -c -o $@ -MMD
 
 %.annotated: %.c
-	$(TOOLROOT)/bin/arm-none-eabi-gcc -Wa,-adhln -std=c99 -Wall $(OPT) -ISTM32Cube4 -DIOBOARD_FIRMWARE_VERSION="$(FIRMWARE_VERSION)" -fno-builtin -I$(STM32F4XX_CMSIS_INC_PATH) -D$(TARGET) $(CORTEX_M4_HWFP_CC_FLAGS)  $< -c > $@
+	$(TOOLROOT)/bin/arm-none-eabi-gcc -Wa,-adhln -std=c99 -Wall $(OPT) -I$(PWD) -I$(PWD)/STM32Cube4 -DIOBOARD_FIRMWARE_VERSION="$(FIRMWARE_VERSION)" -fno-builtin -I$(STM32F4XX_CMSIS_INC_PATH) -D$(TARGET) $(CORTEX_M4_HWFP_CC_FLAGS)  $< -c > $@
 
 clean:
 	rm -f *.hex *.elf *.o $(OBJECTS) $(DEPS)

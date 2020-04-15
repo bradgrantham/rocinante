@@ -179,11 +179,14 @@ void ClearPixmap(int c)
     }
 }
 
-void DrawFilledCircle(int cx, int cy, int r, int c)
+void DrawFilledCircle(int cx, int cy, int r, int c, int aspX, int aspY)
 {
+    int aspr = (r + aspX - 1) * aspY / aspX;
     for(int y = cy - r; y < cy + r; y++) {
-        for(int x = cx - r; x < cx + r; x++) {
-            float distsquared = (x - cx) * (x - cx) + (y - cy) * (y - cy);
+        for(int x = cx - aspr; x < cx + aspr; x++) {
+            int dx = (x - cx) * aspX / aspY;
+            int dy = (y - cy);
+            int distsquared = dx * dx + dy * dy;
             if(distsquared < r * r) {
                 SetPixel(x, y, c);
             }
