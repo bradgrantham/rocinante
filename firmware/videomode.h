@@ -44,8 +44,8 @@ typedef struct VideoTextportInfo
 typedef struct VideoTextportParameters
 {
     // This part is valid after initialization
-    unsigned char *base;
-    int *cursorX, *cursorY;
+    unsigned char *base;        // Should write(x, y, c) be a function?
+    int *cursorX, *cursorY;     // This should be a function
     size_t rowSize; /* bytes */
 } VideoTextportParameters;
 
@@ -55,13 +55,13 @@ typedef struct VideoTextportParameters
 
 enum VideoModeType
 {
-    VIDEO_PIXMAP,       // Pixel map
-    VIDEO_TEXTPORT,     // Textport (no processing)
-    VIDEO_WOZ,          // Apple //e graphics
-    VIDEO_TMS9918A,     // TMS9918A
-    VIDEO_SEGMENTS,     // per-line segments, TBD
-    VIDEO_DCT,          // DCT buffer, TBD
-    VIDEO_WOLFENSTEIN,  // Wolfenstein-style wall raycaster
+    VIDEO_MODE_PIXMAP,       // Pixel map
+    VIDEO_MODE_TEXTPORT,     // Textport (no processing)
+    VIDEO_MODE_WOZ,          // Apple //e graphics
+    VIDEO_MODE_TMS9918A,     // TMS9918A
+    VIDEO_MODE_SEGMENTS,     // per-line segments, TBD
+    VIDEO_MODE_DCT,          // DCT buffer, TBD
+    VIDEO_MODE_WOLFENSTEIN,  // Wolfenstein-style wall raycaster
 };
 
 int VideoGetModeCount();

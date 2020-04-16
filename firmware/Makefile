@@ -46,7 +46,10 @@ OBJECTS = \
         sd_spi.o \
         reset_button.o \
         ff_unicode.o \
+        textport.o \
         apps/showimage.o \
+        apps/vile.o \
+        apps/less.o \
         $(NULL)
 
         # need ff_unicode if ExFAT and LFN support are compiled in

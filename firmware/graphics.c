@@ -26,7 +26,7 @@ const static float HSVFor4BitPalette[][3] = {
 
 int MakePalette(int whichPalette)
 {
-    if(VideoModeGetType(VideoGetCurrentMode()) == VIDEO_PIXMAP) {
+    if(VideoModeGetType(VideoGetCurrentMode()) == VIDEO_MODE_PIXMAP) {
         VideoPixmapInfo info;
         VideoPixmapParameters params;
         VideoModeGetInfo(VideoGetCurrentMode(), &info);
@@ -68,7 +68,7 @@ int MakePalette(int whichPalette)
 
 int SetPixel(int x, int y, int c)
 {
-    if(VideoModeGetType(VideoGetCurrentMode()) == VIDEO_PIXMAP) {
+    if(VideoModeGetType(VideoGetCurrentMode()) == VIDEO_MODE_PIXMAP) {
 
         VideoPixmapInfo info;
         VideoPixmapParameters params;
@@ -122,7 +122,7 @@ int SetColorPixel(int x, int y, float r, float g, float b)
         {.4, .8},
     };
 
-    if(VideoModeGetType(VideoGetCurrentMode()) == VIDEO_PIXMAP) {
+    if(VideoModeGetType(VideoGetCurrentMode()) == VIDEO_MODE_PIXMAP) {
 
         VideoPixmapInfo info;
         VideoPixmapParameters params;

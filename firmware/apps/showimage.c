@@ -58,13 +58,13 @@ static const float ditherMatrix[3][3] = {
     {.4, .8},
 };
 
-static int AppShowImage(int argc, const char **argv)
+static int AppShowImage(int argc, char **argv)
 {
     const char *filename = argv[1];
 
     enum VideoModeType type = VideoModeGetType(VideoGetCurrentMode());
     
-    if(type != VIDEO_PIXMAP) {
+    if(type != VIDEO_MODE_PIXMAP) {
         printf("current mode is not a pixmap; use \"modes\"\n");
         printf("and \"mode\" to choose and set a pixmap mode\n");
         return COMMAND_FAILED;
@@ -172,7 +172,7 @@ static int AppShowImage(int argc, const char **argv)
 static void RegisterMyApp(void) __attribute__((constructor));
 static void RegisterMyApp(void)
 {
-    RegisterApp("show", 1, AppShowImage, "filename",
+    RegisterApp("show", 2, AppShowImage, "filename",
         "display binary packed paletted image"
         );
 }

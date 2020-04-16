@@ -3,13 +3,14 @@
 
 enum {
     COMMAND_CONTINUE = 0,
+    COMMAND_SUCCESS = COMMAND_CONTINUE,
     COMMAND_FAILED,
     COMMAND_ADD_FAILED,
 };
 
 // Return COMMAND_CONTINUE to continue execution, return other to report an error and
 // terminate operation of a script.
-typedef int (*ProcessCommandFunc)(int wordcount, const char **words);
+typedef int (*ProcessCommandFunc)(int wordcount, char **words);
 
 typedef struct Command {
     const char *name;   /* the command itself */
