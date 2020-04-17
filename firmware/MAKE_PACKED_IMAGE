@@ -1,1 +1,1 @@
-djpeg $1 | pnmscale -x 512 -y 512 > /tmp/test.ppm ; pnmcolormap 256 /tmp/test.ppm >/tmp/colormap.pnm ; pnmremap -mapfile=/tmp/colormap.pnm /tmp/test.ppm > /tmp/test.quant.ppm ; (writepacked 512 512 ; dd bs=1 if=/tmp/colormap.pnm skip=13; dd if=/tmp/test.quant.ppm bs=1 skip=15 ) > $2
+djpeg $1 | pnmscale -x 512 -y 512 > /tmp/test.ppm ; pnmcolormap 256 /tmp/test.ppm >/tmp/colormap.pnm ; pnmremap -fs -mapfile=/tmp/colormap.pnm /tmp/test.ppm > /tmp/test.quant.ppm ; (writepacked 512 512 ; dd bs=1 if=/tmp/colormap.pnm skip=13; dd if=/tmp/test.quant.ppm bs=1 skip=15 ) > $2

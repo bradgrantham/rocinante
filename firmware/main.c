@@ -363,7 +363,7 @@ void console_queue_init()
 //----------------------------------------------------------------------------
 // DAC
 
-#define DAC_VALUE_LIMIT 0xF0
+#define DAC_VALUE_LIMIT 0xF8
 
 #define MAX_DAC_VOLTAGE 1.22f
 
@@ -466,10 +466,7 @@ unsigned char NTSCYIQToDAC(float y, float i, float q, float tcycles)
     float signal = y + q * sine + i * cosine;
 // end of transcription
 
-    if(signal < -1.0f) { signal = -1.0f; }
-    if(signal > 1.0f) { signal = 1.0f; }
-
-    return NTSCBlack + signal * (NTSCWhite - NTSCBlack);
+    return voltageToDACValue(NTSC_SYNC_BLACK_VOLTAGE + signal * (NTSC_SYNC_WHITE_VOLTAGE - NTSC_SYNC_BLACK_VOLTAGE));
 }
 
 uint32_t NTSCYIQToUInt32(float y, float i, float q)
@@ -929,9 +926,16 @@ void TextportPlain80x24FillRow(int fieldNumber, int rowNumber, unsigned char *ro
             unsigned char charRowBits = font8x8Bits[whichChar * font8x8Height + charPixelY];
             unsigned char *charPixels = rowBuffer + TextportPlain80x24LeftTick + charCol * font8x8Width;
             int invertThis = (charCol == TextportPlain80x24CursorX && charRow == TextportPlain80x24CursorY && invert);
-            for(int charPixelX = 0; charPixelX < font8x8Width; charPixelX++) {
-                int pixel = (charRowBits & (0x80 >> charPixelX)) ^ invertThis;
-                charPixels[charPixelX] = pixel ? NTSCWhite : NTSCBlack;
+            if(invertThis) {
+                for(int charPixelX = 0; charPixelX < font8x8Width; charPixelX++) {
+                    int pixel = charRowBits & (0x80 >> charPixelX);
+                    charPixels[charPixelX] = pixel ? NTSCBlack : NTSCWhite;
+                }
+            } else {
+                for(int charPixelX = 0; charPixelX < font8x8Width; charPixelX++) {
+                    int pixel = charRowBits & (0x80 >> charPixelX);
+                    charPixels[charPixelX] = pixel ? NTSCWhite : NTSCBlack;
+                }
             }
         }
     }
@@ -2235,6 +2239,11 @@ int doCommandReadBlock(int wordCount, char **words)
     return COMMAND_CONTINUE;
 }
 
+int doHalt(int wordCount, char **words)
+{
+    while(1) {};
+}
+
 int doCommandTestRect(int wordCount, char **words)
 {
     NTSCMode = NTSC_SCAN_TEST;
@@ -2356,6 +2365,7 @@ static void RegisterAllApplets()
     RegisterApp( "read", 2, doCommandReadBlock, "N",
         "read and dump out SD block N"
     );
+    RegisterApp( "halt", 1, doHalt, "", "while(1){}");
 }
 
 static void RegisterMyApp(void) __attribute__((constructor));
@@ -2528,7 +2538,8 @@ void DMA2_Stream2_IRQHandler(void)
 
     // Clear interrupt flag
     // DMA2->LISR &= ~DMA_TCIF;
-    DMA2->LIFCR |= DMA_LIFCR_CTCIF2;
+    // DMA2->LIFCR |= DMA_LIFCR_CTCIF2; // XXX experiment moving interrupt to middle of line
+    DMA2->LIFCR |= DMA_LIFCR_CHTIF2;
 
     // A little pulse so we know where we are on the line
     if(markHandlerInSamples) {
@@ -2567,7 +2578,8 @@ void DMAStartScanout(uint32_t dmaCount)
         DMA_SxCR_DBM |                          // double buffer
         DMA_PRIORITY_VERY_HIGH |                // Video data must be highest priority, can't stutter
         DMA_MINC_ENABLE |                       // Increment memory address
-        DMA_IT_TC |                             // Interrupt on transfer complete of each buffer 
+        // DMA_IT_TC |                             // Interrupt on transfer complete of each buffer  // XXX experiment moving interrupt to middle of line
+        DMA_IT_HT |                             // Interrupt on transfer complete of each buffer 
         0;
 
     // Configure TIM1_CH2 to drive DMA

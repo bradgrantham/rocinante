@@ -111,6 +111,11 @@ static int AppShowImage(int argc, char **argv)
     }
     printf("image is %lu by %lu\n", width, height);
 
+    if((width == 0) || (height == 0)) {
+        printf("width or height are 0 so will skip this image.\n");
+        return COMMAND_FAILED;
+    }
+
     result = f_read(&file, &palette, 256 * 3, &wasread);
     if(result) {
         printf("ERROR: couldn't read palette from \"%s\", result %d\n", filename, result);
@@ -119,7 +124,6 @@ static int AppShowImage(int argc, char **argv)
     for(int i = 0; i < 256; i++) {
         VideoModeSetPaletteEntry(whichPalette, i, palette[i][0] / 255.0f, palette[i][1] / 255.0f, palette[i][2] / 255.0f);
     }
-    printf("read and set palette\n");
 
     int prevY = -1;
     for(int srcRow = 0; srcRow < height; srcRow++) {
