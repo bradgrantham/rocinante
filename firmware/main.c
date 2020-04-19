@@ -429,7 +429,7 @@ int NTSCFrontPorchClocks;
 int NTSCBackPorchClocks;
 
 // Essentially the remainder of CCMRAM, will need to be shrunk if more goes into CCM
-#define IMGBUFFER_SIZE 38000
+#define IMGBUFFER_SIZE 53248
 // (Following was copied from paper chicken scratches)
 // On Orion TV, one 14MHz clock is .0225 inches, one 240p row is .052 inches.
 // So to find a close value for width, width = sqrt(4 / 3 * .052 / .0225 * IMGBUFFER_SIZE)
@@ -630,7 +630,11 @@ void NTSCFillRowBuffer(int fieldNumber, int rowNumber, unsigned char *rowBuffer)
     } else {
 
         // XXX copying a lot of bytes here that are immediately overwritten...
-        memcpy(rowBuffer, NTSCBlankLine, sizeof(NTSCBlankLine));
+        // memcpy(rowBuffer, NTSCBlankLine, sizeof(NTSCBlankLine));
+
+        // Don't need to do these because did both buffers at some point during vertical blank?
+        // memcpy(rowBuffer, NTSCBlankLine, NTSCHSyncClocks + NTSCBackPorchClocks);
+        // memcpy(rowBuffer + 912 - NTSCFrontPorchClocks, NTSCBlankLine + 912 - NTSCFrontPorchClocks, NTSCFrontPorchClocks);
 
         // 244 lines
         // 189 columns @ 4 per pixel
@@ -711,7 +715,7 @@ void fillRowDebugOverlay(int fieldNumber, int rowNumber, unsigned char* nextRowB
                 unsigned char charRowBits = font8x16Bits[debugChar * font8x16Height + charPixelY];
 #if debugFontWidthScale == 4 && font8x16Width == 8
                 unsigned char *charPixels = nextRowBuffer + debugDisplayLeftTick + (charCol * (font8x16Width + debugCharGapPixels)) * debugFontWidthScale;
-                if(charRowBits & 0x80) { ((uint32_t*)charPixels)[0] = NTSCWhiteLong; }
+                if(charRowBits & 0x80) { ((uint32_t*)charPixels)[0] = NTSCWhiteLong; } 
                 if(charRowBits & 0x40) { ((uint32_t*)charPixels)[1] = NTSCWhiteLong; }
                 if(charRowBits & 0x20) { ((uint32_t*)charPixels)[2] = NTSCWhiteLong; }
                 if(charRowBits & 0x10) { ((uint32_t*)charPixels)[3] = NTSCWhiteLong; }
@@ -739,10 +743,8 @@ void fillRowDebugOverlay(int fieldNumber, int rowNumber, unsigned char* nextRowB
     }
 }
 
-
-// XXX I Don't think there's initialization code in crt0 for ccmram
-volatile int __attribute__((section (".ccmram"))) rowNumber;
-volatile int __attribute__((section (".ccmram"))) fieldNumber;
+volatile int __attribute__((section (".ccmram"))) rowNumber = 0;
+volatile int __attribute__((section (".ccmram"))) fieldNumber = 0;
 
 void MemoryCopyDMA(unsigned char* dst, unsigned char* src, size_t size)
 {
@@ -769,6 +771,10 @@ void MemoryCopyDMA(unsigned char* dst, unsigned char* src, size_t size)
 
 void DMA2_Stream2_IRQHandler(void)
 {
+    // Clear interrupt flag
+    DMA2->LIFCR |= DMA_LIFCR_CTCIF2;
+    // DMA2->LIFCR |= DMA_LIFCR_CHTIF2;
+
     if(markHandlerInSamples) {
         for(int i = 0; i < 28; i++) { GPIOC->ODR = 0xFFFFFFF8; }
     }
@@ -804,23 +810,13 @@ void DMA2_Stream2_IRQHandler(void)
         }
     }
 
-    /* wait until a little later to return */
-    // while(TIM2->CNT < SystemCoreClock * 7 / (227 * 262 * 10) );
-
-    rowCyclesSpent[rowNumber] = TIM2->CNT;
     TIM2->CR1 = 0;            /* stop the timer */
-
-    // Clear interrupt flag
-    // DMA2->LISR &= ~DMA_TCIF;
-    DMA2->LIFCR |= DMA_LIFCR_CTCIF2;
-    // DMA2->LIFCR |= DMA_LIFCR_CHTIF2;
+    rowCyclesSpent[rowNumber] = TIM2->CNT * 2;  // TIM2 is on APB1, so this should be * 4...??
 
     // A little pulse so we know where we are on the line
     if(markHandlerInSamples) {
         for(int i = 0; i < 28; i++) { GPIOC->ODR = 0xFFFFFFE8; }
     }
-    /* wait until a little later to return */
-    // while(DMA2_Stream2->NDTR > 200); // Causes dark banding - clocks drifted?  Or voltage drop?
 }
 
 void DMAStartScanout(uint32_t dmaCount)
@@ -1143,6 +1139,12 @@ void TextportPlain40x24FillRow(int fieldNumber, int rowNumber, unsigned char *ro
 
 // XXX this code assumes font width <= 8 and each row padded out to a byte
     if((rowWithinArea >= 0) && (charRow < TextportPlain40x24Height)) {
+
+        // Clear pixels outside of text area 
+        memset(rowBuffer + NTSCHSyncClocks + NTSCBackPorchClocks, NTSCWhite, TextportPlain40x24LeftTick - NTSCHSyncClocks - NTSCBackPorchClocks);
+        int clocksToRightTextEdge = TextportPlain40x24LeftTick + TextportPlain40x24Width * font8x8Width * 2;
+        memset(rowBuffer + clocksToRightTextEdge, NTSCWhite, 912 - clocksToRightTextEdge - NTSCFrontPorchClocks);
+
         for(int charCol = 0; charCol < TextportPlain40x24Width; charCol++) {
             unsigned char whichChar = imgBuffer[charRow * TextportPlain40x24Width + charCol];
             unsigned char charRowBits = font8x8Bits[whichChar * font8x8Height + charPixelY];
@@ -1154,6 +1156,8 @@ void TextportPlain40x24FillRow(int fieldNumber, int rowNumber, unsigned char *ro
                 charPixels[charPixelX * 2 + 1] = pixel ? NTSCBlack : NTSCWhite;
             }
         }
+    } else {
+        memset(rowBuffer + TextportPlain40x24LeftTick, NTSCWhite, TextportPlain40x24Width * font8x8Width * 2);
     }
 }
 
@@ -1207,6 +1211,11 @@ void TextportPlain80x24FillRow(int fieldNumber, int rowNumber, unsigned char *ro
 
 // XXX this code assumes font width <= 8 and each row padded out to a byte
     if((rowWithinArea >= 0) && (charRow < TextportPlain80x24Height)) {
+        // Clear pixels outside of text area 
+        memset(rowBuffer + NTSCHSyncClocks + NTSCBackPorchClocks, NTSCBlack, TextportPlain80x24LeftTick - NTSCHSyncClocks - NTSCBackPorchClocks);
+        int clocksToRightTextEdge = TextportPlain80x24LeftTick + TextportPlain80x24Width * font8x8Width;
+        memset(rowBuffer + clocksToRightTextEdge, NTSCBlack, 912 - clocksToRightTextEdge - NTSCFrontPorchClocks);
+
         for(int charCol = 0; charCol < TextportPlain80x24Width; charCol++) {
             unsigned char whichChar = imgBuffer[charRow * TextportPlain80x24Width + charCol];
             unsigned char charRowBits = font8x8Bits[whichChar * font8x8Height + charPixelY];
@@ -1224,13 +1233,15 @@ void TextportPlain80x24FillRow(int fieldNumber, int rowNumber, unsigned char *ro
                 }
             }
         }
+    } else {
+        memset(rowBuffer + TextportPlain80x24LeftTick, NTSCBlack, TextportPlain80x24Width * font8x8Width);
     }
 }
 
 // ----------------------------------------
 // highest-horizontal-resolution 8-bit framebuffer
 
-#define MAX_RES_MODE_WIDTH 256
+#define MAX_RES_MODE_WIDTH 400
 #define MAX_RES_MODE_HEIGHT 128
 
 #if IMGBUFFER_SIZE < MAX_RES_MODE_WIDTH * MAX_RES_MODE_HEIGHT
@@ -1283,6 +1294,11 @@ void ColorMaxResFillRow(int fieldNumber, int rowNumber, unsigned char *rowBuffer
 
     if((rowWithin >= 0) && (rowWithin < ColorMaxResHeight)) {
 
+        // Clear pixels outside of text area 
+        memset(rowBuffer + NTSCHSyncClocks + NTSCBackPorchClocks, NTSCBlack, ColorMaxResLeft - NTSCHSyncClocks - NTSCBackPorchClocks);
+        int clocksToRightEdge = ColorMaxResLeft + ColorMaxResWidth;
+        memset(rowBuffer + clocksToRightEdge, NTSCBlack, 912 - clocksToRightEdge - NTSCFrontPorchClocks);
+
         unsigned char *srcPixels = imgBuffer + rowWithin * ColorMaxResWidth;
         uint32_t *dstWords = (uint32_t*)(rowBuffer + ColorMaxResLeft);
 
@@ -1295,6 +1311,8 @@ void ColorMaxResFillRow(int fieldNumber, int rowNumber, unsigned char *rowBuffer
             uint32_t waveformPart3 = palette[srcPixels[i + 3]] & 0xFF000000;
             *dstWords++ = waveformPart0 | waveformPart1 | waveformPart2 | waveformPart3;
         }
+    } else {
+        memset(rowBuffer + ColorMaxResLeft, NTSCBlack, ColorMaxResWidth);
     }
 }
 
@@ -1348,6 +1366,11 @@ void Color175x230FillRow(int fieldNumber, int rowNumber, unsigned char *rowBuffe
 
     if((rowWithin >= 0) && (rowWithin < Color175x230Height)) {
 
+        // Clear pixels outside of text area 
+        memset(rowBuffer + NTSCHSyncClocks + NTSCBackPorchClocks, NTSCBlack, Color175x230Width * 4 - NTSCHSyncClocks - NTSCBackPorchClocks);
+        int clocksToRightEdge = Color175x230Left + Color175x230Width * 4;
+        memset(rowBuffer + clocksToRightEdge, NTSCBlack, 912 - clocksToRightEdge - NTSCFrontPorchClocks);
+
         unsigned char *srcPixels = imgBuffer + rowWithin * (Color175x230Width / 4);
         unsigned char *dstBytes = rowBuffer + Color175x230Left;
 
@@ -1358,6 +1381,8 @@ void Color175x230FillRow(int fieldNumber, int rowNumber, unsigned char *rowBuffe
             uint32_t word = palette[p];
             *(uint32_t*)(dstBytes + i) = word;
         }
+    } else {
+        memset(rowBuffer + Color175x230Left, NTSCBlack, Color175x230Width);
     }
 }
 
@@ -1409,6 +1434,11 @@ void Color160x192FillRow(int fieldNumber, int rowNumber, unsigned char *rowBuffe
 
     if((rowWithin >= 0) && (rowWithin < Color160x192Height)) {
 
+        // Clear pixels outside of text area 
+        memset(rowBuffer + NTSCHSyncClocks + NTSCBackPorchClocks, NTSCBlack, Color160x192Width * 4 - NTSCHSyncClocks - NTSCBackPorchClocks);
+        int clocksToRightEdge = Color160x192Left + Color160x192Width * 4;
+        memset(rowBuffer + clocksToRightEdge, NTSCBlack, 912 - clocksToRightEdge - NTSCFrontPorchClocks);
+
         unsigned char *srcPixels = imgBuffer + rowWithin * (Color160x192Width / 4);
         unsigned char *dstBytes = rowBuffer + Color160x192Left;
 
@@ -1419,6 +1449,8 @@ void Color160x192FillRow(int fieldNumber, int rowNumber, unsigned char *rowBuffe
             uint32_t word = palette[p];
             *(uint32_t*)(dstBytes + i) = word;
         }
+    } else {
+        memset(rowBuffer + Color160x192Left, NTSCBlack, Color160x192Width);
     }
 }
 
@@ -1471,6 +1503,11 @@ void Color350x230FillRow(int fieldNumber, int rowNumber, unsigned char *rowBuffe
 
     if((rowWithin >= 0) && (rowWithin < Color350x230Height)) {
 
+        // Clear pixels outside of text area 
+        memset(rowBuffer + NTSCHSyncClocks + NTSCBackPorchClocks, NTSCBlack, Color350x230Width * 2 - NTSCHSyncClocks - NTSCBackPorchClocks);
+        int clocksToRightEdge = Color350x230Left + Color350x230Width * 2;
+        memset(rowBuffer + clocksToRightEdge, NTSCBlack, 912 - clocksToRightEdge - NTSCFrontPorchClocks);
+
         unsigned char *srcPixels = imgBuffer + rowWithin * (Color350x230Width / 4);
         unsigned char *dstBytes = rowBuffer + Color350x230Left;
 
@@ -1489,6 +1526,8 @@ void Color350x230FillRow(int fieldNumber, int rowNumber, unsigned char *rowBuffe
             *dstBytes++ = (word >> (waveWordShift + 0)) & 0xFF;
             *dstBytes++ = (word >> (waveWordShift + 8)) & 0xFF;
         }
+    } else {
+        memset(rowBuffer + Color350x230Left, NTSCBlack, Color350x230Width);
     }
 }
 
@@ -1540,6 +1579,11 @@ void Color320x192FillRow(int fieldNumber, int rowNumber, unsigned char *rowBuffe
 
     if((rowWithin >= 0) && (rowWithin < Color320x192Height)) {
 
+        // Clear pixels outside of text area 
+        memset(rowBuffer + NTSCHSyncClocks + NTSCBackPorchClocks, NTSCBlack, Color320x192Width * 2 - NTSCHSyncClocks - NTSCBackPorchClocks);
+        int clocksToRightEdge = Color320x192Left + Color320x192Width * 2;
+        memset(rowBuffer + clocksToRightEdge, NTSCBlack, 912 - clocksToRightEdge - NTSCFrontPorchClocks);
+
         unsigned char *srcPixels = imgBuffer + rowWithin * (Color320x192Width / 4);
         unsigned char *dstBytes = rowBuffer + Color320x192Left;
 
@@ -1558,6 +1602,8 @@ void Color320x192FillRow(int fieldNumber, int rowNumber, unsigned char *rowBuffe
             *dstBytes++ = (word >> (waveWordShift + 0)) & 0xFF;
             *dstBytes++ = (word >> (waveWordShift + 8)) & 0xFF;
         }
+    } else {
+        memset(rowBuffer + Color320x192Left, NTSCBlack, Color320x192Width);
     }
 }
 
@@ -1620,6 +1666,11 @@ void Bitmap704x230FillRow(int fieldNumber, int rowNumber, unsigned char *rowBuff
 
     if((rowWithin >= 0) && (rowWithin < Bitmap704x230Height)) {
 
+        // Clear pixels outside of text area 
+        memset(rowBuffer + NTSCHSyncClocks + NTSCBackPorchClocks, NTSCBlack, Bitmap704x230Width - NTSCHSyncClocks - NTSCBackPorchClocks);
+        int clocksToRightEdge = Bitmap704x230Left + Bitmap704x230Width;
+        memset(rowBuffer + clocksToRightEdge, NTSCBlack, 912 - clocksToRightEdge - NTSCFrontPorchClocks);
+
         unsigned char *bitmapRow = imgBuffer + rowWithin * (Bitmap704x230Width / 8);
         uint32_t *dstWords = (uint32_t*)(rowBuffer + Bitmap704x230Left);
 
@@ -1634,6 +1685,8 @@ void Bitmap704x230FillRow(int fieldNumber, int rowNumber, unsigned char *rowBuff
             whiteMask = NybblesToMasks[(byte >> 4) & 0xF];
             *dstWords++ = (whiteLong & whiteMask) | (blackLong & ~whiteMask);
         }
+    } else {
+        memset(rowBuffer + Bitmap704x230Left, NTSCBlack, Bitmap704x230Width);
     }
 }
 
@@ -1676,6 +1729,11 @@ void Bitmap640x192FillRow(int fieldNumber, int rowNumber, unsigned char *rowBuff
 
     if((rowWithin >= 0) && (rowWithin < Bitmap640x192Height)) {
 
+        // Clear pixels outside of text area 
+        memset(rowBuffer + NTSCHSyncClocks + NTSCBackPorchClocks, NTSCBlack, Bitmap640x192Width - NTSCHSyncClocks - NTSCBackPorchClocks);
+        int clocksToRightEdge = Bitmap640x192Left + Bitmap640x192Width;
+        memset(rowBuffer + clocksToRightEdge, NTSCBlack, 912 - clocksToRightEdge - NTSCFrontPorchClocks);
+
         unsigned char *bitmapRow = imgBuffer + rowWithin * (Bitmap640x192Width / 8);
         uint32_t *dstWords = (uint32_t*)(rowBuffer + Bitmap640x192Left);
 
@@ -1690,14 +1748,16 @@ void Bitmap640x192FillRow(int fieldNumber, int rowNumber, unsigned char *rowBuff
             whiteMask = NybblesToMasks[(byte >> 4) & 0xF];
             *dstWords++ = (whiteLong & whiteMask) | (blackLong & ~whiteMask);
         }
+    } else {
+        memset(rowBuffer + Bitmap640x192Left, NTSCBlack, Bitmap640x192Width);
     }
 }
 
 // ----------------------------------------
 // Wolfenstein-style renderer
 
-#define WolfensteinLeft 320 // 164
-#define WolfensteinWidth 384
+#define WolfensteinLeft 256 // 164
+#define WolfensteinWidth 512
 #define WolfensteinTop 27
 #define WolfensteinHeight 230
 
@@ -2302,6 +2362,11 @@ void WolfensteinFillRow(int fieldNumber, int rowNumber, unsigned char *rowBuffer
 
     if((rowWithin >= 0) && (rowWithin < WolfensteinHeight)) {
 
+        // Clear pixels outside of text area 
+        memset(rowBuffer + NTSCHSyncClocks + NTSCBackPorchClocks, NTSCBlack, WolfensteinWidth - NTSCHSyncClocks - NTSCBackPorchClocks);
+        int clocksToRightEdge = WolfensteinLeft + WolfensteinWidth;
+        memset(rowBuffer + clocksToRightEdge, NTSCBlack, 912 - clocksToRightEdge - NTSCFrontPorchClocks);
+
         int rowFromMiddle = rowWithin - WolfensteinHeight / 2;
 
         uint32_t *dstWords = (uint32_t*)(rowBuffer + WolfensteinLeft);
@@ -2334,6 +2399,8 @@ void WolfensteinFillRow(int fieldNumber, int rowNumber, unsigned char *rowBuffer
             }
             *dstWords++ = waveformPart0 | waveformPart1 | waveformPart2 | waveformPart3;
         }
+    } else {
+        memset(rowBuffer + WolfensteinLeft, NTSCBlack, WolfensteinWidth);
     }
 }
 
@@ -2908,15 +2975,17 @@ int doCommandShowLineEnd(int wordCount, char **words)
 
 int doCommandScanoutCycles(int wordCount, char **words)
 {
+    int cyclesPerLine = SystemCoreClock / 59.94 / 262;
     for(int i = 0; i < 262; i++) {
         printf("row %3d: %8lu cycles, %lu microseconds", i, rowCyclesSpent[i],
             rowCyclesSpent[i] / (SystemCoreClock / 1000000));
-        if(rowCyclesSpent[i] > 10677) {
-            printf(", overrun by %lu%%\n", rowCyclesSpent[i] * 100 / 10677 - 100);
+        if(rowCyclesSpent[i] > cyclesPerLine) {
+            printf(", overrun by %lu%%\n", rowCyclesSpent[i] * 100 / cyclesPerLine - 100);
         } else { 
-            printf(", %lu%% remained\n", (10677 - rowCyclesSpent[i]) * 100 / 10677);
+            printf(", %lu%% remained\n", (cyclesPerLine - rowCyclesSpent[i]) * 100 / cyclesPerLine);
         }
     }
+    printf("%d cyclesPerLine were available\n", cyclesPerLine);
 
     return COMMAND_CONTINUE;
 }

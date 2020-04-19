@@ -1,9 +1,11 @@
 Rein it in... or not
-    make wolf walls N/S darker than E/W walls - scale in element?
-    why is colorburst sometimes not being copied in / applied / working?
+    Wolf height should be fractional so that texture row diff should slowly change with distance to match col diff
     push the CPU clock up as high as you can (make APB a larger multiple?)
-    should not copy BlankLine part that scanline function will overwrite
-        Maybe all FillRow should be responsible for all visible pixels
+    Every video mode is responsible for setting a default palette (otherwise palette might have blanking voltages)
+    FillRow should be responsible for all visible pixels
+    Should debug overlay XOR or just have black background?
+    Change all remaining 910 and 912 to ROW_SAMPLES
+    Should NTSC modes take an RGB and use some kind of optimized lookup of 4 pixels at a time?
     video needs a "switching" atomic mode
         old mode -> blank -> new mode
     Why do images look so bad now?  -> palette setting failure?
@@ -28,7 +30,6 @@ Rein it in... or not
         for var in A B C D E F G ; endfor
     VideoModeGetInfo should take a type so it can avoid copying wrong struct
     everything should return 0 on success or non-zero error
-    wolfenstein-style raycaster
         textured walls
         walk around with WASD
         sprites?
