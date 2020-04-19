@@ -1,17 +1,31 @@
 Rein it in... or not
+    make wolf walls N/S darker than E/W walls - scale in element?
+    why is colorburst sometimes not being copied in / applied / working?
+    push the CPU clock up as high as you can (make APB a larger multiple?)
+    should not copy BlankLine part that scanline function will overwrite
+        Maybe all FillRow should be responsible for all visible pixels
     video needs a "switching" atomic mode
         old mode -> blank -> new mode
     Why do images look so bad now?  -> palette setting failure?
     Add some things to scripting
-        run from a file
-        sleep
-        break commands on ";"
-        getchar
-        echo
-        palette N r g b
-        circle N x y r
-        line N x0 y0 x1 y1
-        clear N
+        # run from a file
+            will recursion work the way you've set it up?
+        # parse between "" as one word
+        # break commands on ";" outside ""
+        # ignore everything after '#' outside ""
+        sleep floatseconds
+        getchar [var] # get a single character
+        read [var] # get everything up to ENTER
+        echo everything afterwards is echoed
+        # pixmap only :
+            palette N r g b
+            circle N x y r
+            line N x0 y0 x1 y1
+            clear N
+        # variables
+        # expressions
+        for var = A to B [step C] ; endfor
+        for var in A B C D E F G ; endfor
     VideoModeGetInfo should take a type so it can avoid copying wrong struct
     everything should return 0 on success or non-zero error
     wolfenstein-style raycaster

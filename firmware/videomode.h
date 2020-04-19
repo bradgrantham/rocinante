@@ -14,9 +14,10 @@ typedef struct VideoWolfensteinInfo
 
 typedef struct VideoWolfensteinElement
 {
-    float height;           // 0 to .5
+    float height;           // on-screen is up to 1 (e.g. wall takes up 1.0 of height), beyond that is off screen
     unsigned int id;        // texture ID
     float textureS;         // s coordinate in texture
+    int bright;
 } VideoWolfensteinElement;
 
 typedef void (*WolfSetElementsFunc)(VideoWolfensteinElement* row);
