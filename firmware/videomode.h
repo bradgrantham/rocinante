@@ -4,6 +4,29 @@
 #include <stddef.h>
 
 //--------------------------------------------------------------------------
+// Wolfenstein raycaster mode
+
+typedef struct VideoWolfensteinInfo
+{
+    int width;  // Width of horizontal height buffer
+    int height;  // Height of mode
+} VideoWolfensteinInfo;
+
+typedef struct VideoWolfensteinElement
+{
+    float height;           // 0 to .5
+    unsigned int id;        // texture ID
+    float textureS;         // s coordinate in texture
+} VideoWolfensteinElement;
+
+typedef void (*WolfSetElementsFunc)(VideoWolfensteinElement* row);
+
+typedef struct VideoWolfensteinParameters
+{
+    WolfSetElementsFunc setElements;        // Base of height buffer
+} VideoWolfensteinParameters;
+
+//--------------------------------------------------------------------------
 // Pixmap mode enums and structs
 
 typedef struct VideoPixmapInfo
@@ -74,6 +97,8 @@ void VideoModeGetParameters(void *params);
 /* >0 if out of range or invalid for this mode, 0 if success */
 int VideoModeSetPaletteEntry(int palette, int entry, float r, float g, float b);
 int VideoModeSetRowPalette(int row, int palette);
+
+void VideoModeWaitFrame();      // Wait for VBlank/VSync, whatever
 
 // Other possible functions:
 // int setPaletteEntryF(int a, float r, float g, float b); /* 0 if out of range, 1 if success */

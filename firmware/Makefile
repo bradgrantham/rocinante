@@ -50,6 +50,7 @@ OBJECTS = \
         apps/showimage.o \
         apps/vile.o \
         apps/less.o \
+        apps/wolf.o \
         $(NULL)
 
         # need ff_unicode if ExFAT and LFN support are compiled in

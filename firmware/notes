@@ -1,4 +1,6 @@
 Rein it in... or not
+    video needs a "switching" atomic mode
+        old mode -> blank -> new mode
     Why do images look so bad now?  -> palette setting failure?
     Add some things to scripting
         run from a file
