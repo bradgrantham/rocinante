@@ -90,8 +90,8 @@ unsigned int whichConfig = 0;
 static const ClockConfiguration clockConfigs[] =
 {
     // Base mode we know works
-    {200.47, 16000000, 17, 426, 2, 14, 3.579832, 0.000080},
-    // {214.77, 16000000, 13, 349, 2, 15, 3.579487, -0.000016},
+    // {200.47, 16000000, 17, 426, 2, 14, 3.579832, 0.000080},
+    {214.77, 16000000, 13, 349, 2, 15, 3.579487, -0.000016},
 
     {157.50, 16000000, 16, 315, 2, 11, 3.579545, 0.000000},
     {114.55, 16000000, 22, 315, 2, 8, 3.579545, 0.000000},
@@ -1697,7 +1697,7 @@ void Bitmap640x192FillRow(int fieldNumber, int rowNumber, unsigned char *rowBuff
 // Wolfenstein-style renderer
 
 #define WolfensteinLeft 320 // 164
-#define WolfensteinWidth 256
+#define WolfensteinWidth 384
 #define WolfensteinTop 27
 #define WolfensteinHeight 230
 
