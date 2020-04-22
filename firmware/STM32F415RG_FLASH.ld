@@ -144,6 +144,8 @@ SECTIONS
     *(.ccmram*)
     
     . = ALIGN(4);
+    . = . + _Min_Stack_Size;
+    . = ALIGN(4);
     _eccmram = .;       /* create a global symbol at ccmram end */
   } >CCMRAM AT> FLASH
 
@@ -184,7 +186,6 @@ SECTIONS
     PROVIDE ( _end = . );
     . = . + _Min_Heap_Size;
     heap_top = .;
-    . = . + _Min_Stack_Size;
     . = ALIGN(4);
   } >RAM
 

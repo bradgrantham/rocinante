@@ -1,6 +1,10 @@
 #ifndef __UTILITY_H__
 #define __UTILITY_H__
 
+#ifdef __cplusplus
+extern "C" {
+#endif /* __cplusplus */
+
 #ifndef M_PI
 #define M_PI 3.1415926
 #endif // M_PI
@@ -19,5 +23,9 @@ float ColorDistance(float r0, float g0, float b0, float r1, float g1, float b1);
 
 // XXX changes bytes in p to NULs
 int SplitString(char *p, char **words, int wordsCapacity);
+
+#ifdef __cplusplus
+};
+#endif /* __cplusplus */
 
 #endif /* __UTILITY_H__ */

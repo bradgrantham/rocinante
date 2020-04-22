@@ -16,7 +16,7 @@ TARGET = STM32F415xx
 STM32F4XX_CMSIS_INC_PATH        = $(STM32FCUBEROOT)/Drivers/CMSIS/Include/
 CORTEX_M4_HWFP_LIB_PATH = $(GCC_LIB)/armv7e-m/fpu
 
-OBJECTS = \
+COBJECTS = \
         STM32Cube4/startup_stm32f417xx.o \
         STM32Cube4/system_stm32f4xx.o \
         STM32Cube4/stm32f4xx_it.o \
@@ -52,11 +52,16 @@ OBJECTS = \
         apps/less.o \
         apps/wolf.o \
         $(NULL)
-
         # need ff_unicode if ExFAT and LFN support are compiled in
 
-SOURCES = $(OBJECTS:.o=.c)
-DEPS = $(OBJECTS:.o=.d)
+CXXOBJECTS = \
+        apps/basic.o \
+        $(NULL)
+
+OBJECTS = $(CXXOBJECTS) $(COBJECTS)
+
+SOURCES = $(COBJECTS:.o=.c) $(CXXOBJECTS:.o=.cpp)
+DEPS = $(COBJECTS:.o=.d) $(CXXOBJECTS:.o=.d)
 
 main.hex: main.elf
 	$(TOOLROOT)/bin/arm-none-eabi-objcopy -O ihex $< $@
@@ -64,13 +69,16 @@ main.hex: main.elf
 -include $(DEPS)
 
 main.elf:  $(OBJECTS) main.o
-	$(TOOLROOT)/bin/arm-none-eabi-gcc $(OPT) $(CORTEX_M4_HWFP_CC_FLAGS) -DSTM32F415xx -L$(CORTEX_M4_HWFP_LIB_PATH) -TSTM32F415RG_FLASH.ld -lm -Wl,--gc-sections $^ -o $@
+	$(TOOLROOT)/bin/arm-none-eabi-g++ $(OPT) $(CORTEX_M4_HWFP_CC_FLAGS) -DSTM32F415xx -L$(CORTEX_M4_HWFP_LIB_PATH) -TSTM32F415RG_FLASH.ld -lm -Wl,--gc-sections $^ -o $@
 
 STM32Cube4/startup_stm32f417xx.o: STM32Cube4/startup_stm32f417xx.s
 	$(TOOLROOT)/bin/arm-none-eabi-gcc -Wall $(OPT) $(CORTEX_M4_HWFP_CC_FLAGS)  $< -c -o $@
 
 %.o: %.c
 	$(TOOLROOT)/bin/arm-none-eabi-gcc -std=c99 -Wall $(OPT) -I$(PWD) -I$(PWD)/STM32Cube4 -DIOBOARD_FIRMWARE_VERSION="$(FIRMWARE_VERSION)" -fno-builtin -I$(STM32F4XX_CMSIS_INC_PATH) -D$(TARGET) $(CORTEX_M4_HWFP_CC_FLAGS)  $< -c -o $@ -MMD
+
+%.o: %.cpp
+	$(TOOLROOT)/bin/arm-none-eabi-g++ -std=c++14 -Wall $(OPT) -I$(PWD) -I$(PWD)/STM32Cube4 -DIOBOARD_FIRMWARE_VERSION="$(FIRMWARE_VERSION)" -fno-builtin -I$(STM32F4XX_CMSIS_INC_PATH) -D$(TARGET) $(CORTEX_M4_HWFP_CC_FLAGS)  $< -c -o $@ -MMD
 
 %.annotated: %.c
 	$(TOOLROOT)/bin/arm-none-eabi-gcc -Wa,-adhln -std=c99 -Wall $(OPT) -I$(PWD) -I$(PWD)/STM32Cube4 -DIOBOARD_FIRMWARE_VERSION="$(FIRMWARE_VERSION)" -fno-builtin -I$(STM32F4XX_CMSIS_INC_PATH) -D$(TARGET) $(CORTEX_M4_HWFP_CC_FLAGS)  $< -c > $@
@@ -86,6 +94,6 @@ main.dfu: main.hex
 	python dfu-convert -i main.hex main.dfu
 
 burn: main.dfu
-	dfu-util -d 0483:df11 -a 0 -D main.dfu
+	time dfu-util -d 0483:df11 -a 0 -D main.dfu
 
 # DO NOT DELETE

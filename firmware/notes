@@ -1,13 +1,44 @@
 Rein it in... or not
-    Wolf height should be fractional so that texture row diff should slowly change with distance to match col diff
-    push the CPU clock up as high as you can (make APB a larger multiple?)
-    Every video mode is responsible for setting a default palette (otherwise palette might have blanking voltages)
-    FillRow should be responsible for all visible pixels
+    interlaced?  Does there need to be a non-interlaced vs interlaced mode?
+        let VideoMode handle it in width, height, and aspect
+        Then rowNumber to FillRow functions sequential line number?  so lineNumber = 262 is half the end of even field, half the beginning of odd field?
+            240P modes would render lineNumber for even field, lineNumber - 263 for odd field
+            480i modes would calculate lineNumber * 2 as rowNumber for even field, or (lineNumber 263) * 2 + 1 as rowNumber for odd field
+            line 263 through 264 are handled specially by rowFill (copying in half of the next line)x
+    make a scrollback buffer (how to scroll back?)
+    help and other output should be paged -
+        have a special mode in non-VT102 mode?  Start Paging / Stop Paging?
+    special segment mode - 320 pixels wide (so 640 clocks, 2 clocks wide)
+        app
+            transforms lit, gouraud triangles to screen
+            intersect scanlines with triangles
+                output list of scanline edges
+                do intersection and clipping of edges in depth
+                sort in X including background
+        video mode
+            walks segments in turn assuming they touch all pixels
+            interpolating, what?  RGB probably too slow - HSV?
+        Look up texture?  May be too hard to do perspective correction?
+    Add Floyd-Steinberg dithering to showimage - https://en.wikipedia.org/wiki/Floyd%E2%80%93Steinberg_dithering
     Should debug overlay XOR or just have black background?
-    Change all remaining 910 and 912 to ROW_SAMPLES
     Should NTSC modes take an RGB and use some kind of optimized lookup of 4 pixels at a time?
-    video needs a "switching" atomic mode
-        old mode -> blank -> new mode
+        If DVD's really have 700 vertical lines resolution, what do they do when going to Composite?
+    Regularize I/O, get keyboard and serial combined into one queue
+        serial should interrupt and fill a buffer like keyboard does
+        int InputGetChar(c);    // -1 if no key waiting, maybe support raw modes for PS/2
+        int InputWaitChar(c);
+        OutputPutChar(int c);
+    Raycaster game!
+        put in DB-9, get Coleco joystick working
+            int InputGetJoystickDir(int which) // flags or'd ; JOYSTICK_LEFT, etc
+            int InputGetJoystickButton(int which) // flags or'd ; JOYSTICK_BUTTON0, JOYSTICK_BUTTON1, etc
+        monsters come after you, can be shot, inflict damage within certain range
+        need sprites for powerups, monsters other goop
+        gun
+        bottom row shows health, points
+        health powerups?
+    video needs a "switching" mode
+        old mode -> blank (fillrow does black) -> new mode
     Why do images look so bad now?  -> palette setting failure?
     Add some things to scripting
         # run from a file
@@ -33,7 +64,6 @@ Rein it in... or not
         textured walls
         walk around with WASD
         sprites?
-    serial should interrupt and fill a buffer like keyboard does
     setup a software interrupt for VBlank processing (e.g. update scanout stats, audio goop) and trigger it from row=262
     blue button kicks back to text mode?
     audio
@@ -41,12 +71,14 @@ Rein it in... or not
         write audio sample immediately on entry to line ISR?  Then calculate next one right after that, then do video calculation?
             Then audio resampling would happen at the line rate for whatever video mode is current...
         Do DMA at 22050 from double-buffered 512-byte buffers?  Could conflict with video but should be able to set priority lower.
-    mouse?
+        stereo audio output?
+        1/8inch jack audio input can decode WeFAX or MFSK
+    PS/2 mouse?
     "Apps"
         Apps should have some kind of heap for their use freed up before each app
-            limit use by main as much as possible - mark heap with some kind of symbol
+            limit use by main as much as possible - mark heap with some kind of symbol?
         Should have a POSIX harness for running and testing the apps
-        Main has "applets" that it contains that do system things
+            at least one of all modes for testing (how to do weird modes?)
         System APIs that Apps can call
             video mode and config (NTSC vs VGA handled by hard board switch)
             serial port control
@@ -81,33 +113,26 @@ Rein it in... or not
             handle a bunch of old BASIC programs like STARTREK, WUMPUS, ...?
             implement lunar lander
             Life: https://www.atariarchives.org/basicgames/showpage.php?page=100
+                https://github.com/rricharz/R65/blob/master/Basic/life.bas
             Lunar Lander: https://www.atariarchives.org/basicgames/showpage.php?page=106
+                http://vintage-basic.net/bcg/lunar.bas
             Sine Wave: https://www.atariarchives.org/basicgames/showpage.php?page=146
+                http://www.vintage-basic.net/bcg/sinewave.bas
             Super Star Trek: https://www.atariarchives.org/basicgames/showpage.php?page=157
-            Sine Wave: https://www.atariarchives.org/basicgames/showpage.php?page=167
-    video modes
-        MAX RES
-           588 * 168 4-bit palette (centered), actual 14MHz pixels - more or less depending on memory
-        underscan/overscan byte HAM  (res?)
-        monochrome 80x24 text - Apple font?
-            196, 832, 44, 236
+            3D Plot: https://www.atariarchives.org/basicgames/showpage.php?page=167
+                http://vintage-basic.net/bcg/3dplot.bas
+    Additional video modes
         TMS 9918A mode - expose the chip I/O
             TMS pixels area is 192 lines high
         Apple //e mode - give pointers to memory and soft switches
         DCT mode
         scanline edge rendered mode - make RGB-to-byte as fast as possible
-        virtual terminal layered on text mode
     Channel F emulator, 9pin headers (bake into controller for Bart)
-    Colecovision emulator, 9pin
+    Colecovision emulator, DB-9
     Fuzix? Or should I just import "sh"?
     Some kind of 3D uberdemo, realtime scan out, buffer of sorted scanline segments?
     Wrap up
 
-What does going nuts look like?
-    export internal FAT as USB (button or command switches modes)
-    network over usb
-    stereo audio output
-    1/8inch jack audio input can decode WeFAX or MFSK
 
 4/13
     On a hunch that maybe AHB doesn't do uchar writes directly and
@@ -198,36 +223,14 @@ To Do
     Clean up breadboard - prevent wires from being yanked 
         make video connector a little less precarious somehow
         scope testpoints
-    Read PPMs
-        grayscale at 200x200 by 1 byte
-        grayscale at 400x200 by 1 nybble
-        color PPMs ? 
-        palettized PPMs (how does that work?) at 200x200 by 1 byte,
-            convert RGB palette to lookup table into 32 bit wave value
-    if you can't get color figured out, jump ship
-    audio - 22050?
-        double buffering with realtime mixing?
-        test with YMs
-    Make into wired breadboard
-        want different chip?  SRAM on the side?
-        option to drive NTSC DAC or VGA 
     Design PCB, send off
-    do a ray-tracing or other demo
-    clean up current CLI - tableize with function and help
+        option to drive NTSC DAC or VGA 
     embed a basic or scripting language
         read and write files
         MicroPython?
     factor out video formats somehow
-        generalized beam-tracing framework
-            per-row functions
-            525 function pointers? (2K)
-            swap DMA buffer pointers for EQ and VSYNC and not just copy stuff around
-                But all functions get a 910-element buffer?
         give a shot at decompressing JPEG blocks in RT
-        some modes will need to be exclusive because of memory size
-            e.g. 200x200 palettized mode vs 400x400 bitmap mode
         interlaced mode
-        monochrome 80 character text mode
         Apple //e video mode per row
             allow loading 0x2000 blobs
             HGR, GR? TEXT? 80TEXT? DHGR? DGR?
@@ -242,3 +245,9 @@ which can only be used with the Mikro downloader EXE.  Does the
 Mikro not expose BOOT0?  I had made my own board out of an unmodified
 STM32 exposing BOOT0 on the crazy big protoboard.  I can downloading using
 "make burn", which calls dfu-util.
+
+optimize Wolf Row more
+    Measured taking between 86% and 92% of frame at 400 pixels
+        at 200MHz I have HCLKs clocks per row.  Assume 10% on clearing pixels, 11488 HCLKs, so between 25 and 27 clocks per pixel; you're not going to get any faster.
+    You should MIPmaps for quality but you're probably not thrashing cache, and that's going to slow you down.
+    Maybe go to 2X pixels and 350 samples - can maybe MIPmap.

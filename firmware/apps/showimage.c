@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <string.h>
 
 #include "videomode.h"
 #include "utility.h"
@@ -24,39 +25,26 @@ Loading for any image format means:
 
 static int whichPalette = 1;
 
-/* interp 0 = c0, interp 1 = c1 */
-void FindClosestColors(unsigned char palette[][3], int paletteSize, unsigned char r, unsigned char g, unsigned char b, int *c0, int *c1, float *interp) 
+int FindClosestColor(unsigned char palette[][3], int paletteSize, int r, int g, int b)
 {
-    float c0Error = 1000000.0f;
-    float c1Error = 1000000.0f;
+    int bestDiff = 200000;  // skosh above the maximum difference, 3 * 65536
+    int c = -1;
 
     for(int i = 0; i < paletteSize; i++) {
-        float pr = palette[i][0];
-        float pg = palette[i][1];
-        float pb = palette[i][2];
-        float error = ColorDistance(r, g, b, pr, pg, pb);
-        if(error < c0Error) {
-            c1Error = c0Error;
-            *c1 = *c0;
-            c0Error = error;
-            *c0 = i;
-        } else if(error < c1Error) {
-            c1Error = error;
-            *c1 = i;
+        int pr = (unsigned int)palette[i][0];
+        int pg = (unsigned int)palette[i][1];
+        int pb = (unsigned int)palette[i][2];
+        int diff = (pr - r) * (pr - r) + (pg - g) * (pg - g) + (pb - b) * (pb - b);
+        if(diff == 0) {
+            return i;
+        }
+        if(diff < bestDiff) {
+            bestDiff = diff;
+            c = i;
         }
     }
-
-    if(c1Error + c0Error < .00001) {
-        *interp = 0.0;
-    } else {
-        *interp = c0Error / (c1Error + c0Error);
-    }
+    return c;
 }
-
-static const float ditherMatrix[3][3] = {
-    {.2, .6},
-    {.4, .8},
-};
 
 static int AppShowImage(int argc, char **argv)
 {
@@ -75,9 +63,11 @@ static int AppShowImage(int argc, char **argv)
     VideoModeGetInfo(VideoGetCurrentMode(), &info);
     VideoModeGetParameters(&params);
 
-    if(info.pixelFormat != PALETTE_8BIT) {
-        printf("current mode is not 8-bit palettized.\n");
-        return COMMAND_FAILED;
+    if(0) {
+        if(info.pixelFormat != PALETTE_8BIT) {
+            printf("current mode is not 8-bit palettized.\n");
+            return COMMAND_FAILED;
+        }
     }
 
     FIL file;
@@ -88,7 +78,9 @@ static int AppShowImage(int argc, char **argv)
     }
 
     uint32_t width, height;
-    static unsigned char rowRGB[2560][3];
+    static unsigned char rowRGB[1024][3];
+    static signed short rowError[2][1026][3]; // + 1 in either direction
+    int currentErrorRow = 0;
     static unsigned char palette[256][3];
 
     UINT wasread;
@@ -103,6 +95,7 @@ static int AppShowImage(int argc, char **argv)
             width, filename, sizeof(rowRGB) / sizeof(rowRGB[0]));
         return COMMAND_FAILED;
     }
+    memset(rowError, 0, sizeof(rowError));
 
     result = f_read(&file, &height, sizeof(width), &wasread);
     if(result) {
@@ -121,8 +114,37 @@ static int AppShowImage(int argc, char **argv)
         printf("ERROR: couldn't read palette from \"%s\", result %d\n", filename, result);
         return COMMAND_FAILED;
     }
-    for(int i = 0; i < 256; i++) {
-        VideoModeSetPaletteEntry(whichPalette, i, palette[i][0] / 255.0f, palette[i][1] / 255.0f, palette[i][2] / 255.0f);
+    int paletteSize;
+    if(info.paletteSize >= 256) {
+        SetPalette(whichPalette, 256, palette);
+        paletteSize = 256;
+    } else if(info.paletteSize > 0) {
+        MakePalette(whichPalette, info.paletteSize, palette);
+        paletteSize = info.paletteSize;
+    } else {
+        if(info.pixelFormat == BITMAP) {
+            paletteSize = 2;
+            palette[0][0] = 0;
+            palette[0][1] = 0;
+            palette[0][2] = 0;
+            palette[1][0] = 255;
+            palette[1][1] = 255;
+            palette[1][2] = 255;
+        } else if(info.pixelFormat == GRAY_2BIT) {
+            paletteSize = 4;
+            palette[0][0] = 0;
+            palette[0][1] = 0;
+            palette[0][2] = 0;
+            palette[1][0] = 85;
+            palette[1][1] = 85;
+            palette[1][2] = 85;
+            palette[2][0] = 170;
+            palette[2][1] = 170;
+            palette[2][2] = 170;
+            palette[3][0] = 255;
+            palette[3][1] = 255;
+            palette[3][2] = 255;
+        }
     }
 
     int prevY = -1;
@@ -140,32 +162,52 @@ static int AppShowImage(int argc, char **argv)
 
             VideoModeSetRowPalette(y, whichPalette);
 
+            short (*errorThisRowFixed8)[3] = rowError[currentErrorRow] + 1; // So we can access -1 without bounds check
+
+            int nextErrorRow = (currentErrorRow + 1) % 2;
+            memset(rowError[nextErrorRow], 0, sizeof(rowError[0]));
+            short (*errorNextRowFixed8)[3] = rowError[nextErrorRow] + 1;   // So we can access -1 without bounds check
+
             for(int x = 0; x < info.width; x++) {
                 int srcCol = (x * width + width - 1) / info.width;
-#if 0
-                int c0, c1;
-                float dist;
-                FindClosestColors(palette, 256, rowRGB[srcCol][0], rowRGB[srcCol][1], rowRGB[srcCol][2], &c0, &c1, &dist);
-                if(dist > ditherMatrix[x % 2][y % 2]) {
-                    SetPixel(x, y, c1);
-                } else {
-                    SetPixel(x, y, c0);
+
+                // get the color with error diffused from previous pixels
+                int correctedRGB[3];
+                for(int i = 0; i < 3; i++) {
+                     correctedRGB[i] = rowRGB[srcCol][i] + errorThisRowFixed8[x][i] / 256;
                 }
-#else
-                int i;
-                for(i = 0; i < 256; i++) {
-                    if(
-                        rowRGB[srcCol][0] == palette[i][0] &&
-                        rowRGB[srcCol][1] == palette[i][1] &&
-                        rowRGB[srcCol][2] == palette[i][2]) {
-                        break;
-                    }
+
+                // Find the closest color in our palette
+                int c = FindClosestColor(palette, paletteSize, correctedRGB[0], correctedRGB[1], correctedRGB[2]);
+
+                SetPixel(x, y, c);
+
+                // Calculate our error between what we wanted and what we got
+                // and distribute it a la Floyd-Steinberg
+                int errorFixed8[3];
+                for(int i = 0; i < 3; i++) {
+                    errorFixed8[i] = 255 * (correctedRGB[i] - palette[c][i]);
                 }
-                SetPixel(x, y, i);
-#endif
+                for(int i = 0; i < 3; i++) {
+                    errorThisRowFixed8[x + 1][i] += errorFixed8[i] * 7 / 16;
+                }
+                for(int i = 0; i < 3; i++) {
+                    errorNextRowFixed8[x - 1][i] += errorFixed8[i] * 3 / 16;
+                }
+                for(int i = 0; i < 3; i++) {
+                    errorNextRowFixed8[x    ][i] += errorFixed8[i] * 5 / 16;
+                }
+                for(int i = 0; i < 3; i++) {
+                    errorNextRowFixed8[x + 1][i] += errorFixed8[i] * 1 / 16;
+                }
             }
             prevY = y;
+            currentErrorRow = nextErrorRow;
         }
+    }
+    {
+        int q;
+        printf("q is at %p\n", &q);
     }
 
     whichPalette = (whichPalette + 1) % 2;

@@ -41,14 +41,14 @@ int worldMap[mapWidth][mapHeight]=
   {2,2,2,2,1,2,2,2,2,2,2,1,2,2,2,5,5,5,5,5,5,5,5,5}
 };
 
-int visualHeight = 90;
-
 float epsilon = .000001f;
 
-void Raycast(VideoWolfensteinInfo* info, VideoWolfensteinElement* buffer, float eyeX, float eyeZ, float rot)
+void Raycast(VideoWolfensteinInfo* info, VideoWolfensteinElement* buffer, float eyeX, float eyeZ, float rot, float fieldOfViewDegrees)
 {
+    float fovX = tanf(fieldOfViewDegrees  / 180.0f * M_PI / 2.0f);
+    float fovY = fovX ; // XXX /aspect
     for(int column = 0; column < info->width; column++) {
-        float dirX0 = (column + .5) / info->width - .5;
+        float dirX0 = ((column + .5) / info->width - .5) * fovX;
         float dirZ0 = -0.5f;
 
         float dirX = dirX0 * cosf(rot) + dirZ0 * sinf(rot);
@@ -128,7 +128,7 @@ void Raycast(VideoWolfensteinInfo* info, VideoWolfensteinElement* buffer, float 
             }
 
             if(worldMap[cellX][cellZ] != 0) {
-                buffer[column].height = 1.0f / T;
+                buffer[column].height = 1.0f / fovY / T;
                 buffer[column].id = worldMap[cellX][cellZ] - 1;
                 if(hitX) {
                     float s = eyeZ + dirZ * T;
@@ -193,11 +193,11 @@ static int AppWolf(int argc, char **argv)
                 break;
             }
             case 'a': {
-                rot += M_PI / 40;
+                rot += M_PI / 50;
                 break;
             }
             case 'd': {
-                rot -= M_PI / 40;
+                rot -= M_PI / 50;
                 break;
             }
             case 'w': {
@@ -219,7 +219,7 @@ static int AppWolf(int argc, char **argv)
                 break;
             }
         }
-        Raycast(&info, elements, eyeX, eyeZ, rot);
+        Raycast(&info, elements, eyeX, eyeZ, rot, 80);
         VideoModeWaitFrame();
         params.setElements(elements);
     } while(!quit);

@@ -5,64 +5,79 @@
 
 float PaletteEntryRGBs[256][3];
 
-const static float HSVFor4BitPalette[][3] = {
-    { M_PI / 3 * 0, 1.0, 1.0 },
-    { M_PI / 3 * 1, 1.0, 1.0 },
-    { M_PI / 3 * 2, 1.0, 1.0 },
-    { M_PI / 3 * 3, 1.0, 1.0 },
-    { M_PI / 3 * 4, 1.0, 1.0 },
-    { M_PI / 3 * 5, 1.0, 1.0 },
-    { M_PI / 3 * 0, 0.25, 0.5 },
-    { M_PI / 3 * 1, 0.25, 0.5 },
-    { M_PI / 3 * 2, 0.25, 0.5 },
-    { M_PI / 3 * 3, 0.25, 0.5 },
-    { M_PI / 3 * 4, 0.25, 0.5 },
-    { M_PI / 3 * 5, 0.25, 0.5 },
-    { 0.0, 0.0, 1.0},
-    { 0.0, 0.0, .66},
-    { 0.0, 0.0, .33},
-    { 0.0, 0.0, .0},
+const static unsigned char RGBFor4BitPalette[][3] = {
+    // From Arne's 16-color general purpose palette
+    {0, 0, 0},
+    {164,213,235},
+    {38,143,239},
+    {8,67,112},
+    {16,24,34},
+    {148,200,26},
+    {52,122,16},
+    {32,54,59},
+    {245,222,89},
+    {228,117,35},
+    {146,79,23},
+    {54,43,28},
+    {215,86,120},
+    {167,11,34},
+    {255,255,255},
+    {140,140,140},
 };
 
-int MakePalette(int whichPalette)
+void MakePalette(int whichPalette, int paletteSize, unsigned char (*palette)[3])
 {
-    if(VideoModeGetType(VideoGetCurrentMode()) == VIDEO_MODE_PIXMAP) {
-        VideoPixmapInfo info;
-        VideoPixmapParameters params;
-        VideoModeGetInfo(VideoGetCurrentMode(), &info);
-        VideoModeGetParameters(&params);
-        switch(info.paletteSize) {
-            case -1: break; /* no palette */
-            case 16:  {
-                for(int entry = 0; entry < 16; entry++) {
-                    const float *hsv = HSVFor4BitPalette[entry];
-                    float r, g, b;
-                    HSVToRGB3f(hsv[0], hsv[1], hsv[2], &r, &g, &b);
-                    PaletteEntryRGBs[entry][0] = r;
-                    PaletteEntryRGBs[entry][1] = g;
-                    PaletteEntryRGBs[entry][2] = b;
-                    VideoModeSetPaletteEntry(whichPalette, entry, r, g, b);
+    switch(paletteSize) {
+        case -1: break; /* no palette */
+        case 16:  {
+            for(int entry = 0; entry < 16; entry++) {
+                float r = RGBFor4BitPalette[entry][0] / 255.0f;
+                float g = RGBFor4BitPalette[entry][1] / 255.0f;
+                float b = RGBFor4BitPalette[entry][2] / 255.0f;
+                PaletteEntryRGBs[entry][0] = r;
+                PaletteEntryRGBs[entry][1] = g;
+                PaletteEntryRGBs[entry][2] = b;
+                if(palette != NULL) {
+                    for(int i = 0; i < 3; i++) {
+                        palette[entry][i] = RGBFor4BitPalette[entry][i];
+                    }
                 }
-                break;
+                VideoModeSetPaletteEntry(whichPalette, entry, r, g, b);
             }
-            case 256: {
-                // H3S2V3
-                for(unsigned int entry = 0; entry < 256; entry++) {
-                    float h = ((entry >> 5) & 7) / 7.0f * M_PI * 2;
-                    float s = ((entry >> 3) & 3) / 3.0f;
-                    float v = ((entry >> 0) & 7) / 7.0f;
-                    float r, g, b;
-                    HSVToRGB3f(h, s, v, &r, &g, &b);
-                    PaletteEntryRGBs[entry][0] = r;
-                    PaletteEntryRGBs[entry][1] = g;
-                    PaletteEntryRGBs[entry][2] = b;
-                    VideoModeSetPaletteEntry(whichPalette, entry, r, g, b);
+            break;
+        }
+        case 256: {
+            // H3S2V3
+            for(unsigned int entry = 0; entry < 256; entry++) {
+                float h = ((entry >> 5) & 7) / 7.0f * M_PI * 2;
+                float s = ((entry >> 3) & 3) / 3.0f;
+                float v = ((entry >> 0) & 7) / 7.0f;
+                float r, g, b;
+                HSVToRGB3f(h, s, v, &r, &g, &b);
+                PaletteEntryRGBs[entry][0] = r;
+                PaletteEntryRGBs[entry][1] = g;
+                PaletteEntryRGBs[entry][2] = b;
+                if(palette != NULL) {
+                    palette[entry][0] = r * 255;
+                    palette[entry][1] = g * 255;
+                    palette[entry][2] = b * 255;
                 }
+                VideoModeSetPaletteEntry(whichPalette, entry, r, g, b);
             }
         }
-        return 1;
-    } else {
-        return 0;
+    }
+}
+
+void SetPalette(int whichPalette, int paletteSize, unsigned char (*palette)[3])
+{
+    for(unsigned int entry = 0; entry < 256; entry++) {
+        float r = palette[entry][0] / 255.0f;
+        float g = palette[entry][1] / 255.0f;
+        float b = palette[entry][2] / 255.0f;
+        PaletteEntryRGBs[entry][0] = r;
+        PaletteEntryRGBs[entry][1] = g;
+        PaletteEntryRGBs[entry][2] = b;
+        VideoModeSetPaletteEntry(whichPalette, entry, r, g, b);
     }
 }
 
@@ -82,6 +97,16 @@ int SetPixel(int x, int y, int c)
                     unsigned char value = c << (x % 8);
                     unsigned char mask = ~(1 << (x % 8));
                     unsigned char *byte = params.base + y * params.rowSize + x / 8;
+                    *byte = (*byte & mask) | value;
+                    break;
+                }
+                case GRAY_2BIT:
+                {
+                    int whichByte = x / 4;
+                    int whichTwoBits = x % 4;
+                    unsigned char value = c << (whichTwoBits * 2);
+                    unsigned char mask = ~(0x3 << (whichTwoBits * 2));
+                    unsigned char *byte = params.base + y * params.rowSize + whichByte;
                     *byte = (*byte & mask) | value;
                     break;
                 }
@@ -110,63 +135,6 @@ int SetPixel(int x, int y, int c)
     }
 }
 
-int SetColorPixel(int x, int y, float r, float g, float b)
-{
-    float bestError = 1000.0f;
-    int best = -1;
-    float bestError2nd = 1000.0f;
-    int best2nd = -1;
-
-    static const float ditherMatrix[3][3] = {
-        {.2, .6},
-        {.4, .8},
-    };
-
-    if(VideoModeGetType(VideoGetCurrentMode()) == VIDEO_MODE_PIXMAP) {
-
-        VideoPixmapInfo info;
-        VideoPixmapParameters params;
-        VideoModeGetInfo(VideoGetCurrentMode(), &info);
-        VideoModeGetParameters(&params);
-
-        if(info.paletteSize == -1) {
-
-            if(Luminance(r, g, b) > ditherMatrix[x % 2][y % 2]) {
-                SetPixel(x, y, 1);
-            } else {
-                SetPixel(x, y, 0);
-            }
-
-        } else {
-
-            for(int i = 0; i < info.paletteSize; i++) {
-                float pr = PaletteEntryRGBs[i][0];
-                float pg = PaletteEntryRGBs[i][1];
-                float pb = PaletteEntryRGBs[i][2];
-                float error = ColorDistance(r, g, b, pr, pg, pb);
-                if(error < bestError) {
-                    bestError2nd = bestError;
-                    best2nd = best;
-                    bestError = error;
-                    best = i;
-                } else if(error < bestError2nd) {
-                    bestError2nd = error;
-                    best2nd = i;
-                }
-            }
-            float fraction = bestError / (bestError + bestError2nd);
-            if(fraction > ditherMatrix[x % 2][y % 2]) {
-                SetPixel(x, y, best);
-            } else {
-                SetPixel(x, y, best2nd);
-            }
-        }
-        return 1;
-    } else {
-        return 0;
-    }
-}
-
 void ClearPixmap(int c)
 {
     VideoPixmapInfo info;
@@ -182,8 +150,9 @@ void ClearPixmap(int c)
 void DrawFilledCircle(int cx, int cy, int r, int c, int aspX, int aspY)
 {
     int aspr = (r + aspX - 1) * aspY / aspX;
-    for(int y = cy - r; y < cy + r; y++) {
-        for(int x = cx - aspr; x < cx + aspr; x++) {
+    /* should clip here */
+    for(int y = cy - r - 1; y < cy + r + 1; y++) {
+        for(int x = cx - aspr - 1; x < cx + aspr + 1; x++) {
             int dx = (x - cx) * aspX / aspY;
             int dy = (y - cy);
             int distsquared = dx * dx + dy * dy;
@@ -199,6 +168,7 @@ void DrawLine(int x0, int y0, int x1, int y1, int c)
     int dx = x1 - x0;
     int dy = y1 - y0;
 
+    /* should clip here */
     if(abs(dx) > abs(dy)) {
         if(x1 < x0) {
             int tx = x1; x1 = x0; x0 = tx;

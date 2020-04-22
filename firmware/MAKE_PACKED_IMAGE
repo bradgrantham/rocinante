@@ -1,1 +1,8 @@
-djpeg $1 | pnmscale -x 512 -y 512 > /tmp/test.ppm ; pnmcolormap 256 /tmp/test.ppm >/tmp/colormap.pnm ; pnmremap -fs -mapfile=/tmp/colormap.pnm /tmp/test.ppm > /tmp/test.quant.ppm ; (writepacked 512 512 ; dd bs=1 if=/tmp/colormap.pnm skip=13; dd if=/tmp/test.quant.ppm bs=1 skip=15 ) > $2
+if [ a$1 == a -o a$2 == a ]
+then
+    echo "usage: $0 inputJPEG output.rgb"
+    exit 1
+fi
+
+djpeg $1 | pnmscale -xyfit 800 480 > /tmp/test.ppm ; pnmcolormap 256 /tmp/test.ppm >/tmp/colormap.pnm ; read a b c width d height dummy < <(pnmfile /tmp/test.ppm) ; (writepacked $width $height ; dd bs=1 if=/tmp/colormap.pnm skip=13; tail +4 /tmp/test.ppm ) > $2
+# pnmremap -mapfile=/tmp/colormap.pnm /tmp/test.ppm > /tmp/test.quant.ppm 

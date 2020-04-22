@@ -3,6 +3,10 @@
 
 #include <stddef.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif /* __cplusplus */
+
 //--------------------------------------------------------------------------
 // Wolfenstein raycaster mode
 
@@ -34,7 +38,7 @@ typedef struct VideoPixmapInfo
 {
     // This part can be static
     int width, height;  /* pixels or text */
-    enum PixelFormat { BITMAP, GRAY_4BIT, GRAY_8BIT, PALETTE_4BIT, PALETTE_8BIT} pixelFormat;
+    enum PixelFormat { BITMAP, GRAY_2BIT, GRAY_4BIT, GRAY_8BIT, PALETTE_4BIT, PALETTE_8BIT} pixelFormat;
     /* pixels are LSB, so 4BIT pixel N is in byte N/2 bits 0-3, and pixel N+1 is in byte N/2 bits 4-7 */
     int paletteSize; /* for convenience, matches pixelFormat, -1 if a bitmap */
     int color;          /* for convenience, matches pixelFormat */
@@ -108,6 +112,8 @@ void VideoModeWaitFrame();      // Wait for VBlank/VSync, whatever
 // int setTextportCursor(int x, int y);
 // int setTextportCursorType(enum { SOLID, FLASH, UNDERLINE } );
 
-
+#ifdef __cplusplus
+};
+#endif /* __cplusplus */
 
 #endif /* _VIDEO_MODE_H_ */
