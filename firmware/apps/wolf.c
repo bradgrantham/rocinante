@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 #include <math.h>
 
 #include "videomode.h"
@@ -13,7 +14,7 @@
 
 /* data cribbed from https://lodev.org/cgtutor/raycasting2.html */
 
-int worldMap[mapWidth][mapHeight]=
+const static int worldMap[mapWidth][mapHeight]=
 {
   {8,8,8,8,8,8,8,8,8,8,8,4,4,6,4,4,6,4,6,4,4,4,6,4},
   {8,0,0,0,0,0,0,0,0,0,8,4,0,0,0,0,0,0,0,0,0,0,0,4},
@@ -155,8 +156,6 @@ int empty(float x, float z)
     return worldMap[cellX][cellZ] == 0;
 }
 
-VideoWolfensteinElement elements[1024]; /* tmp ; need to be in CCM? */ 
-
 static int AppWolf(int argc, char **argv)
 {
     int chosen = -1;
@@ -177,6 +176,12 @@ static int AppWolf(int argc, char **argv)
     VideoWolfensteinParameters params;
     VideoModeGetInfo(chosen, &info);
     VideoModeGetParameters(&params);
+
+    VideoWolfensteinElement *elements;
+    if((elements = malloc(sizeof(VideoWolfensteinElement) * info.width)) == NULL) {
+        printf("ERROR: couldn't allocate raycasting elements\n");
+        return COMMAND_FAILED;
+    }
     
     float eyeX = 4.5;
     float eyeZ = 4.5;
@@ -223,6 +228,8 @@ static int AppWolf(int argc, char **argv)
         VideoModeWaitFrame();
         params.setElements(elements);
     } while(!quit);
+
+    free(elements);
 
     return COMMAND_CONTINUE;
 }

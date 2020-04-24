@@ -7,7 +7,7 @@
 
 static UART_HandleTypeDef gUARTHandle;
 
-#define TRANSMIT_BUFFER_SIZE 512
+#define TRANSMIT_BUFFER_SIZE 128
 volatile unsigned char gTransmitBuffers[2][TRANSMIT_BUFFER_SIZE];
 volatile int gNextTransmitBuffer = 0;
 volatile int gTransmitBufferLengths[2] = {0, 0};

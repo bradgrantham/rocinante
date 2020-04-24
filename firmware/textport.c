@@ -376,8 +376,12 @@ cursor_report()
 int VT102Putchar(unsigned char c)
 {
     if((terminal.state == ESnormal) && (c >= ' ') && (c <= 255)) {
-        textport_draw_character(c, text_flag_none);
-        screen_cursor_forward();
+        if(c != '\a') {
+            textport_draw_character(c, text_flag_none);
+            screen_cursor_forward();
+        } else {
+            // beep
+        }
         return 0;
     }
     

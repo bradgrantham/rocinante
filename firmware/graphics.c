@@ -3,8 +3,6 @@
 #include "utility.h"
 #include "videomode.h"
 
-float PaletteEntryRGBs[256][3];
-
 const static unsigned char RGBFor4BitPalette[][3] = {
     // From Arne's 16-color general purpose palette
     {0, 0, 0},
@@ -34,9 +32,6 @@ void MakePalette(int whichPalette, int paletteSize, unsigned char (*palette)[3])
                 float r = RGBFor4BitPalette[entry][0] / 255.0f;
                 float g = RGBFor4BitPalette[entry][1] / 255.0f;
                 float b = RGBFor4BitPalette[entry][2] / 255.0f;
-                PaletteEntryRGBs[entry][0] = r;
-                PaletteEntryRGBs[entry][1] = g;
-                PaletteEntryRGBs[entry][2] = b;
                 if(palette != NULL) {
                     for(int i = 0; i < 3; i++) {
                         palette[entry][i] = RGBFor4BitPalette[entry][i];
@@ -54,9 +49,6 @@ void MakePalette(int whichPalette, int paletteSize, unsigned char (*palette)[3])
                 float v = ((entry >> 0) & 7) / 7.0f;
                 float r, g, b;
                 HSVToRGB3f(h, s, v, &r, &g, &b);
-                PaletteEntryRGBs[entry][0] = r;
-                PaletteEntryRGBs[entry][1] = g;
-                PaletteEntryRGBs[entry][2] = b;
                 if(palette != NULL) {
                     palette[entry][0] = r * 255;
                     palette[entry][1] = g * 255;
@@ -74,9 +66,6 @@ void SetPalette(int whichPalette, int paletteSize, unsigned char (*palette)[3])
         float r = palette[entry][0] / 255.0f;
         float g = palette[entry][1] / 255.0f;
         float b = palette[entry][2] / 255.0f;
-        PaletteEntryRGBs[entry][0] = r;
-        PaletteEntryRGBs[entry][1] = g;
-        PaletteEntryRGBs[entry][2] = b;
         VideoModeSetPaletteEntry(whichPalette, entry, r, g, b);
     }
 }

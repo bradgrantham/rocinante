@@ -241,7 +241,6 @@ int con_scroll(int n)
 /* TODO: cursor key handling */
 int con_getch(void)
 {
-	uint8_t c;
 	con_flush();
 	return __io_getchar();
 }
@@ -479,7 +478,7 @@ int colon_mode(void);
  *	when we started and now' (lets us do d^ d$ etc nicely)
  */
 
-keytable_t table[] = {
+const static keytable_t table[] = {
 #ifdef KEY_LEFT
 	{KEY_LEFT, 0, left},
 	{KEY_RIGHT, 0, right},
@@ -1430,15 +1429,16 @@ void display_line(void)
 
 int ALLOC = 16384;
 
+#define USE_MALLOC 1
+
 int main(int argc, char *argv[])
 {
 	// int fd;
-	uint8_t mem;
 	uint8_t i;
 
     dobss(); // XXX really need a special mode for apps with their own private BSS...
 
-#if 0
+#if USE_MALLOC
         buf = malloc(ALLOC);
         if (buf == NULL) {
                 printf("out of memory.\n");
@@ -1460,11 +1460,14 @@ int main(int argc, char *argv[])
                 FRESULT result = f_open (&file, argv[1], FA_READ | FA_OPEN_EXISTING);
                 if(result) {
                     printf("ERROR: couldn't open \"%s\" for reading, FatFS result %d\n", argv[1], result);
+#if USE_MALLOC
+                    free(buf);
+#endif /* USE_MALLOC */
                     return COMMAND_FAILED;
                 } else {
 			size_t size;
 			size_t o = 0;
-			int n = 0;
+			unsigned int n = 0;
 			size = ebuf - buf;
 			/* We can have 32bit ptr, 16bit int even in theory */
 			if (size > INT_MAX) {
@@ -1481,6 +1484,9 @@ int main(int argc, char *argv[])
 	}
 
 	if (con_init()) {
+#if USE_MALLOC
+                free(buf);
+#endif /* USE_MALLOC */
 		return COMMAND_FAILED;
         }
 
@@ -1510,6 +1516,9 @@ int main(int argc, char *argv[])
 	con_newline();
 	con_flush();
         con_exit();
+#if USE_MALLOC
+        free(buf);
+#endif /* USE_MALLOC */
 	return COMMAND_SUCCESS;
 }
 

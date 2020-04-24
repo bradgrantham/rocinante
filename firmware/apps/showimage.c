@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "videomode.h"
@@ -46,6 +47,10 @@ int FindClosestColor(unsigned char palette[][3], int paletteSize, int r, int g, 
     return c;
 }
 
+enum {
+    MAX_ROW_SIZE = 1024,
+};
+
 static int AppShowImage(int argc, char **argv)
 {
     const char *filename = argv[1];
@@ -78,10 +83,6 @@ static int AppShowImage(int argc, char **argv)
     }
 
     uint32_t width, height;
-    static unsigned char rowRGB[1024][3];
-    static signed short rowError[2][1026][3]; // + 1 in either direction
-    int currentErrorRow = 0;
-    static unsigned char palette[256][3];
 
     UINT wasread;
     result = f_read(&file, &width, sizeof(width), &wasread);
@@ -90,28 +91,57 @@ static int AppShowImage(int argc, char **argv)
         return COMMAND_FAILED;
     }
 
-    if(width * 3 > sizeof(rowRGB)) {
+    if(width > MAX_ROW_SIZE) {
 	printf("ERROR: width %lu of image in \"%s\" is too large for static row of %u pixels\n",
-            width, filename, sizeof(rowRGB) / sizeof(rowRGB[0]));
+            width, filename, MAX_ROW_SIZE);
         return COMMAND_FAILED;
     }
-    memset(rowError, 0, sizeof(rowError));
 
-    result = f_read(&file, &height, sizeof(width), &wasread);
+    result = f_read(&file, &height, sizeof(height), &wasread);
     if(result) {
         printf("ERROR: couldn't read height from \"%s\", result %d\n", filename, result);
         return COMMAND_FAILED;
     }
-    printf("image is %lu by %lu\n", width, height);
+    printf("image is %lu by %lu\n", width, height); SERIAL_flush();
 
     if((width == 0) || (height == 0)) {
         printf("width or height are 0 so will skip this image.\n");
         return COMMAND_FAILED;
     }
 
-    result = f_read(&file, &palette, 256 * 3, &wasread);
+    static unsigned char (*rowRGB)[3];
+    rowRGB = malloc(sizeof(rowRGB[0]) * MAX_ROW_SIZE);
+    if(rowRGB == NULL) {
+        printf("failed to allocate row for pixel data\n");
+        return COMMAND_FAILED;
+    }
+
+    signed short (*rowError)[MAX_ROW_SIZE][3]; // + 1 in either direction
+    int currentErrorRow = 0;
+    rowError = malloc(sizeof(rowError[0]) * 2);
+    memset(rowError, 0, sizeof(rowError[0]) * 2);
+    if(rowError == NULL) {
+        printf("failed to allocate row for error data\n");
+        free(rowRGB);
+        return COMMAND_FAILED;
+    }
+
+    unsigned char (*palette)[3];
+    palette = malloc(sizeof(palette[0]) * 256);
+    if(palette == NULL) {
+        printf("failed to allocate palette\n");
+        free(rowError);
+        free(rowRGB);
+        return COMMAND_FAILED;
+    }
+
+    result = f_read(&file, palette, 256 * 3, &wasread);
     if(result) {
         printf("ERROR: couldn't read palette from \"%s\", result %d\n", filename, result);
+        SERIAL_flush();
+        free(palette);
+        free(rowError);
+        free(rowRGB);
         return COMMAND_FAILED;
     }
     int paletteSize;
@@ -153,6 +183,10 @@ static int AppShowImage(int argc, char **argv)
         result = f_read(&file, rowRGB, width * 3, &wasread);
         if(result) {
             printf("ERROR: couldn't read row %d from \"%s\", result %d\n", srcRow, filename, result);
+        SERIAL_flush();
+            free(palette);
+            free(rowError);
+            free(rowRGB);
             return COMMAND_FAILED;
         }
 
@@ -205,12 +239,12 @@ static int AppShowImage(int argc, char **argv)
             currentErrorRow = nextErrorRow;
         }
     }
-    {
-        int q;
-        printf("q is at %p\n", &q);
-    }
 
     whichPalette = (whichPalette + 1) % 2;
+
+    free(palette);
+    free(rowError);
+    free(rowRGB);
 
     return COMMAND_CONTINUE;
 }

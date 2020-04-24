@@ -286,8 +286,6 @@ void errorchar_flush()
 
 FATFS gFATVolume;
 
-unsigned char sd_buffer[SD_BLOCK_SIZE];
-
 void check_exceptional_conditions()
 {
     if(gConsoleOverflowed) {
@@ -352,7 +350,7 @@ void console_queue_init()
 //----------------------------------------------------------------------------
 // DAC
 
-#define DAC_VALUE_LIMIT 0xF8
+#define DAC_VALUE_LIMIT 0xFF
 
 #define MAX_DAC_VOLTAGE 1.22f
 
@@ -373,10 +371,10 @@ unsigned char voltageToDACValue(float voltage)
 
 int __attribute__((section (".ccmram"))) markHandlerInSamples = 0;
 
-uint32_t __attribute__((section (".ccmram"))) rowCyclesSpent[262];
+uint16_t __attribute__((section (".ccmram"))) rowCyclesSpent[525];
 uint32_t __attribute__((section (".ccmram"))) DMAFIFOUnderruns = 0;
 uint32_t __attribute__((section (".ccmram"))) DMATransferErrors = 0;
-typedef enum { NTSC_COLOR_TEST, NTSC_SCAN_TEST, NTSC_USE_VIDEO_MODE} VideoMode;
+typedef enum { NTSC_SOLID_FILL, NTSC_COLOR_TEST, NTSC_SCAN_TEST, NTSC_USE_VIDEO_MODE} VideoMode;
 VideoMode __attribute__((section (".ccmram"))) NTSCMode = NTSC_COLOR_TEST;
 int __attribute__((section (".ccmram"))) videoScanTestLeft = 200;
 int __attribute__((section (".ccmram"))) videoScanTestRight = 700;
@@ -393,13 +391,12 @@ int __attribute__((section (".ccmram"))) videoScanTestBottom = 200;
 #define NTSC_COLORBURST_FREQUENCY       3579545
 #define NTSC_EQPULSE_LINES	3
 #define NTSC_VSYNC_LINES	3
-#define NTSC_VBLANK_LINES	12      /* Closed-captioning is on line 20 (21st line) ? */
-#define NTSC_FIELD_LINES	262
-#define NTSC_PIXEL_LINES	(NTSC_FIELD_LINES - NTSC_VBLANK_LINES - NTSC_VSYNC_LINES - NTSC_EQPULSE_LINES * 2)
+#define NTSC_VBLANK_LINES	11
+#define NTSC_FRAME_LINES	525
 #define NTSC_EQ_PULSE_INTERVAL	.04
 #define NTSC_VSYNC_BLANK_INTERVAL	.43
 #define NTSC_HOR_SYNC_DUR	.075
-#define NTSC_FIELDS		59.94
+#define NTSC_FRAMES		(59.94 / 2)
 #define NTSC_FRONTPORCH		.02
 /* BACKPORCH including COLORBURST */
 #define NTSC_BACKPORCH		.075
@@ -412,7 +409,7 @@ int __attribute__((section (".ccmram"))) videoScanTestBottom = 200;
 
 // These are in CCM to reduce contention with SRAM1 during DMA 
 unsigned char __attribute__((section (".ccmram"))) NTSCEqSyncPulseLine[ROW_SAMPLES];
-unsigned char __attribute__((section (".ccmram"))) NTSCVsyncLine[ROW_SAMPLES];
+unsigned char __attribute__((section (".ccmram"))) NTSCVSyncLine[ROW_SAMPLES];
 unsigned char __attribute__((section (".ccmram"))) NTSCBlankLine[ROW_SAMPLES];
 
 unsigned char __attribute__((section (".ccmram"))) NTSCSyncTip;
@@ -425,7 +422,7 @@ int NTSCEqPulseClocks;
 int NTSCVSyncClocks;
 int NTSCHSyncClocks;
 int NTSCLineClocks;
-int NTSCFieldClocks;
+int NTSCFrameClocks;
 int NTSCFrontPorchClocks;
 int NTSCBackPorchClocks;
 
@@ -440,22 +437,15 @@ int NTSCBackPorchClocks;
 // 400 wide would be 9 inches, and 128 high would be 6.656 inches, and that's 1.352, so it's not too bad
 unsigned char __attribute__((section (".ccmram"))) imgBuffer[IMGBUFFER_SIZE];
 
-#define MAX_PALETTE_ENTRIES 254
-#define PALETTE_WHITE 255
-#define PALETTE_BLACK 254
-
-uint32_t __attribute__((section (".ccmram"))) paletteUInt32[2][256];
-unsigned char __attribute__((section (".ccmram"))) rowPalette[256];
-
-unsigned char *imgBufferRow(int row) { return imgBuffer + row * 200; } // XXX this may not fit!
-unsigned char *imgBufferPixel(int x, int y) { return imgBufferRow(y) + x; }
+uint32_t __attribute__((section (".ccmram"))) paletteToWave[2][256];
+unsigned char __attribute__((section (".ccmram"))) rowPalette[525];
 
 // XXX these are in SRAM2 to reduce contention with SRAM1 during DMA
 #define SWATCH_SIZE     1
 unsigned char __attribute__((section (".sram2"))) row0[ROW_SAMPLES * SWATCH_SIZE];
 unsigned char __attribute__((section (".sram2"))) row1[ROW_SAMPLES * SWATCH_SIZE];
-unsigned char __attribute__((section (".sram2"))) audio0[512];
-unsigned char __attribute__((section (".sram2"))) audio1[512];
+// unsigned char __attribute__((section (".sram2"))) audio0[512];
+// unsigned char __attribute__((section (".sram2"))) audio1[512];
 
 unsigned char NTSCYIQToDAC(float y, float i, float q, float tcycles)
 {
@@ -469,7 +459,7 @@ unsigned char NTSCYIQToDAC(float y, float i, float q, float tcycles)
     return voltageToDACValue(NTSC_SYNC_BLACK_VOLTAGE + signal * (NTSC_SYNC_WHITE_VOLTAGE - NTSC_SYNC_BLACK_VOLTAGE));
 }
 
-uint32_t NTSCYIQToUInt32(float y, float i, float q)
+uint32_t NTSCYIQToWave(float y, float i, float q)
 {
     unsigned char b0 = NTSCYIQToDAC(y, i, q,  .0f);
     unsigned char b1 = NTSCYIQToDAC(y, i, q, .25f);
@@ -487,8 +477,8 @@ unsigned char NTSCColorburst270;
 void NTSCCalculateParameters(float clock)
 {
     // Calculate values for a scanline
-    NTSCFieldClocks = floorf(clock * 1000000.0 / NTSC_FIELDS + 0.5);
-    // NTSCLineClocks = floorf((double)NTSCFieldClocks / NTSC_FIELD_LINES + 0.5);
+    NTSCFrameClocks = floorf(clock * 1000000.0 / NTSC_FRAMES + 0.5);
+    // NTSCLineClocks = floorf((double)NTSCFrameClocks / NTSC_FRAME_LINES + 0.5);
     NTSCLineClocks = ROW_SAMPLES;
     NTSCHSyncClocks = floorf(NTSCLineClocks * NTSC_HOR_SYNC_DUR + 0.5);
     NTSCFrontPorchClocks = NTSCLineClocks * NTSC_FRONTPORCH;
@@ -509,12 +499,12 @@ void NTSCCalculateParameters(float clock)
     NTSCColorburst270 = NTSCSyncPorch + .6 * NTSCSyncPorch;
 
     // System reserved palette entries
-    paletteUInt32[1][255] = paletteUInt32[0][255] = 
+    paletteToWave[1][255] = paletteToWave[0][255] = 
         (NTSCWhite <<  0) |
         (NTSCWhite <<  8) |
         (NTSCWhite << 16) |
         (NTSCWhite << 24);
-    paletteUInt32[1][254] = paletteUInt32[0][254] = 
+    paletteToWave[1][254] = paletteToWave[0][254] = 
         (NTSCBlack <<  0) |
         (NTSCBlack <<  8) |
         (NTSCBlack << 16) |
@@ -587,7 +577,7 @@ void NTSCGenerateLineBuffers()
     //     280 cycles at double clock
 
     NTSCFillEqPulseLine(NTSCEqSyncPulseLine);
-    NTSCFillVSyncLine(NTSCVsyncLine);
+    NTSCFillVSyncLine(NTSCVSyncLine);
     NTSCFillBlankLine(NTSCBlankLine, 1);
 }
 
@@ -597,34 +587,70 @@ int NTSCSetRowPalette(int row, int palette)
     return 0;
 }
 
-VideoModeEntry NTSCModes[];
+static const VideoModeEntry NTSCModes[];
 VideoFillRowFunc __attribute__((section (".ccmram"))) VideoCurrentFillRow;
+uint32_t __attribute__((section (".ccmram"))) solidFillWave;
 
 
-void NTSCFillRowBuffer(int fieldNumber, int rowNumber, unsigned char *rowBuffer)
+void NTSCFillRowBuffer(int frameNumber, int lineNumber, unsigned char *rowBuffer)
 {
+    // XXX could optimize these by having one branch be lines < 21
     /*
      * Rows 0 through 8 are equalizing pulse, then vsync, then equalizing pulse
      */
-    if(rowNumber < NTSC_EQPULSE_LINES) {
+    if(lineNumber < NTSC_EQPULSE_LINES) {
 
-        // XXX should just change DMA source address but then these need to be in SRAM2
         memcpy(rowBuffer, NTSCEqSyncPulseLine, sizeof(NTSCEqSyncPulseLine));
 
-    } else if(rowNumber - NTSC_EQPULSE_LINES < NTSC_VSYNC_LINES) {
+    } else if(lineNumber - NTSC_EQPULSE_LINES < NTSC_VSYNC_LINES) {
 
-        // XXX should just change DMA source address but then these need to be in SRAM2
-        memcpy(rowBuffer, NTSCVsyncLine, sizeof(NTSCVsyncLine));
+        memcpy(rowBuffer, NTSCVSyncLine, sizeof(NTSCVSyncLine));
 
-    } else if(rowNumber - (NTSC_EQPULSE_LINES + NTSC_VSYNC_LINES) < NTSC_EQPULSE_LINES) {
+    } else if(lineNumber - (NTSC_EQPULSE_LINES + NTSC_VSYNC_LINES) < NTSC_EQPULSE_LINES) {
 
-        // XXX should just change DMA source address but then these need to be in SRAM2
         memcpy(rowBuffer, NTSCEqSyncPulseLine, sizeof(NTSCEqSyncPulseLine));
 
-    } else if(rowNumber - (NTSC_EQPULSE_LINES + NTSC_VSYNC_LINES + NTSC_EQPULSE_LINES) < NTSC_VBLANK_LINES) {
+    } else if(lineNumber - (NTSC_EQPULSE_LINES + NTSC_VSYNC_LINES + NTSC_EQPULSE_LINES) < NTSC_VBLANK_LINES) {
 
         /*
-         * Rows 9 through 23 are other part of vertical blank
+         * Rows 9 through 2X are other part of vertical blank
+         */
+
+        // XXX should just change DMA source address, then this needs to be in SRAM2
+        memcpy(rowBuffer, NTSCBlankLine, sizeof(NTSCBlankLine));
+
+    } else if(lineNumber >= 263 && lineNumber <= 271) {
+        // Interlacing handling weird lines
+        if(lineNumber <= 264) {
+            //lines 263, 264 - last 405 of eq pulse then first 405 of eq pulse
+            memcpy(rowBuffer, NTSCEqSyncPulseLine + ROW_SAMPLES / 2, ROW_SAMPLES / 2);
+            memcpy(rowBuffer + ROW_SAMPLES / 2, NTSCEqSyncPulseLine, ROW_SAMPLES / 2);
+        } else if(lineNumber == 265) {
+            //line 265 - last 405 of eq pulse then first 405 of vsync
+            memcpy(rowBuffer, NTSCEqSyncPulseLine + ROW_SAMPLES / 2, ROW_SAMPLES / 2);
+            memcpy(rowBuffer + ROW_SAMPLES / 2, NTSCVSyncLine, ROW_SAMPLES / 2);
+        } else if(lineNumber <= 267) {
+            //lines 266, 267 - last 405 of vsync then first 405 of vsync
+            memcpy(rowBuffer, NTSCVSyncLine + ROW_SAMPLES / 2, ROW_SAMPLES / 2);
+            memcpy(rowBuffer + ROW_SAMPLES / 2, NTSCVSyncLine, ROW_SAMPLES / 2);
+        } else if(lineNumber == 268) {
+            //lines 268 - last 405 of vsync then first 405 of eq pulse
+            memcpy(rowBuffer, NTSCVSyncLine + ROW_SAMPLES / 2, ROW_SAMPLES / 2);
+            memcpy(rowBuffer + ROW_SAMPLES / 2, NTSCEqSyncPulseLine, ROW_SAMPLES / 2);
+        } else if(lineNumber <= 270) {
+            //lines 269, 270 - last 405 of eq pulse then first 405 of eq pulse
+            memcpy(rowBuffer, NTSCEqSyncPulseLine + ROW_SAMPLES / 2, ROW_SAMPLES / 2);
+            memcpy(rowBuffer + ROW_SAMPLES / 2, NTSCEqSyncPulseLine, ROW_SAMPLES / 2);
+        } else if(lineNumber == 271) {
+            //line 271 - last 405 of eq pulse then 405 of SyncPorch
+            memcpy(rowBuffer, NTSCEqSyncPulseLine + ROW_SAMPLES / 2, ROW_SAMPLES / 2);
+            memset(rowBuffer + ROW_SAMPLES / 2, NTSCSyncPorch, ROW_SAMPLES / 2);
+        }
+
+    } else if((lineNumber >= 272) && (lineNumber <= 281)) { // XXX half line at 282
+
+        /*
+         * Rows 272 through 2XX are other part of vertical blank
          */
 
         // XXX should just change DMA source address, then this needs to be in SRAM2
@@ -632,20 +658,23 @@ void NTSCFillRowBuffer(int fieldNumber, int rowNumber, unsigned char *rowBuffer)
 
     } else {
 
-        // XXX copying a lot of bytes here that are immediately overwritten...
-        // memcpy(rowBuffer, NTSCBlankLine, sizeof(NTSCBlankLine));
-
         // Don't need to do these because did both buffers at some point during vertical blank?
-        // memcpy(rowBuffer, NTSCBlankLine, NTSCHSyncClocks + NTSCBackPorchClocks);
-        // memcpy(rowBuffer + ROW_SAMPLES - NTSCFrontPorchClocks, NTSCBlankLine + ROW_SAMPLES - NTSCFrontPorchClocks, NTSCFrontPorchClocks);
+        memcpy(rowBuffer, NTSCBlankLine, NTSCHSyncClocks + NTSCBackPorchClocks);
+        memcpy(rowBuffer + ROW_SAMPLES - NTSCFrontPorchClocks, NTSCBlankLine + ROW_SAMPLES - NTSCFrontPorchClocks, NTSCFrontPorchClocks);
 
         // 244 lines
         // 189 columns @ 4 per pixel
-        int y = rowNumber - (NTSC_EQPULSE_LINES + NTSC_VSYNC_LINES + NTSC_EQPULSE_LINES + NTSC_VBLANK_LINES);
+        int y = lineNumber - (NTSC_EQPULSE_LINES + NTSC_VSYNC_LINES + NTSC_EQPULSE_LINES + NTSC_VBLANK_LINES);
 
         switch(NTSCMode) {
             case NTSC_COLOR_TEST: {
-                if(y > 20 && y < 230) {
+                if((y > 20 && y < 230) || (y > 283 && y < 493)) {
+                    
+                    // Clear pixels outside of text area 
+                    memset(rowBuffer + NTSCHSyncClocks + NTSCBackPorchClocks, NTSCBlack, 80);
+                    int clocksToRightEdge = 169 * 4;
+                    memset(rowBuffer + clocksToRightEdge, NTSCBlack, ROW_SAMPLES - clocksToRightEdge - NTSCFrontPorchClocks);
+
                     unsigned char *rowOut = rowBuffer + (NTSCHSyncClocks + NTSCBackPorchClocks + 3) / 4 * 4 + 20 * 4;
                     uint32_t* rowWords = (uint32_t*)rowOut;
                     unsigned char v = NTSCBlack + (NTSCWhite - NTSCBlack) / 2;
@@ -662,8 +691,18 @@ void NTSCFillRowBuffer(int fieldNumber, int rowNumber, unsigned char *rowBuffer)
                 }
                 break;
             }
+            case NTSC_SOLID_FILL: {
+                if((y % 263) > 20 && (y % 263) < 230) {
+                    unsigned char *rowOut = rowBuffer + (NTSCHSyncClocks + NTSCBackPorchClocks + 3) / 4 * 4 + 20 * 4;
+                    uint32_t* rowWords = (uint32_t*)rowOut;
+                    for(int col = 20; col < 169; col++) {
+                        *rowWords++ = solidFillWave;
+                    }
+                }
+                break;
+            }
             case NTSC_SCAN_TEST: {
-                if(rowNumber >= videoScanTestTop && rowNumber <= videoScanTestBottom) {
+                if((lineNumber % 263) >= videoScanTestTop && (lineNumber % 263) <= videoScanTestBottom) {
                     for(int row = videoScanTestLeft; row < videoScanTestRight; row++) {
                         rowBuffer[row] = 200;
                     }
@@ -671,12 +710,19 @@ void NTSCFillRowBuffer(int fieldNumber, int rowNumber, unsigned char *rowBuffer)
                 break;
             }
             case NTSC_USE_VIDEO_MODE: {
-                VideoCurrentFillRow(fieldNumber, rowNumber, rowBuffer);
+                VideoCurrentFillRow(frameNumber, lineNumber, rowBuffer);
                 break;
             }
         }
+        if(lineNumber == 262) {
+            //line 262 - overwrite last 405 samples with first 405 samples of EQ pulse
+            memcpy(rowBuffer + ROW_SAMPLES / 2, NTSCEqSyncPulseLine, ROW_SAMPLES / 2);
+        } else if(lineNumber == 282) {
+            //special line 282 - write SyncPorch from BackPorch to middle of line after mode's fillRow()
+            memset(rowBuffer + NTSCHSyncClocks + NTSCBackPorchClocks, NTSCSyncPorch, ROW_SAMPLES / 2 - (NTSCHSyncClocks + NTSCBackPorchClocks));
+        }
     }
-    // if(rowNumber == 0) { rowBuffer[0] = 255;}
+    // if(lineNumber == 0) { rowBuffer[0] = 255;}
 }
 
 // debug overlay scanout
@@ -698,7 +744,7 @@ char __attribute__((section (".ccmram"))) debugDisplay[debugDisplayHeight][debug
 // static int font8x16Width = 8, font8x16Height = 16;
 // static unsigned char font8x16Bits[] = /* was a bracket here */
 
-void fillRowDebugOverlay(int fieldNumber, int rowNumber, unsigned char* nextRowBuffer)
+void fillRowDebugOverlay(int frameNumber, int lineNumber, unsigned char* nextRowBuffer)
 {
     uint32_t NTSCWhiteLong =
         (NTSCWhite <<  0) |
@@ -707,7 +753,7 @@ void fillRowDebugOverlay(int fieldNumber, int rowNumber, unsigned char* nextRowB
         (NTSCWhite << 24);
     int debugFontScanlineHeight = font8x16Height * debugFontHeightScale;
 
-    int rowWithinDebugArea = rowNumber - debugDisplayTopTick;
+    int rowWithinDebugArea = (lineNumber % 263) - debugDisplayTopTick;
     int charRow = rowWithinDebugArea / debugFontScanlineHeight;
     int charPixelY = (rowWithinDebugArea % debugFontScanlineHeight) / debugFontHeightScale;
 
@@ -747,8 +793,8 @@ void fillRowDebugOverlay(int fieldNumber, int rowNumber, unsigned char* nextRowB
     }
 }
 
-volatile int __attribute__((section (".ccmram"))) rowNumber = 0;
-volatile int __attribute__((section (".ccmram"))) fieldNumber = 0;
+volatile int __attribute__((section (".ccmram"))) lineNumber = 0;
+volatile int __attribute__((section (".ccmram"))) frameNumber = 0;
 
 void MemoryCopyDMA(unsigned char* dst, unsigned char* src, size_t size)
 {
@@ -775,7 +821,7 @@ void MemoryCopyDMA(unsigned char* dst, unsigned char* src, size_t size)
 
 // XXX audio experiment
 // In this mode we woud have a sampling rate of 15.6998 KHz
-unsigned char __attribute__((section (".ccmram"))) audioBuffer[1024];
+unsigned char __attribute__((section (".ccmram"))) audioBuffer[256];
 volatile int audioBufferPosition = 0;
 
 int doPlay(int argc, char **argv)
@@ -832,8 +878,9 @@ void DMA2_Stream2_IRQHandler(void)
         for(int i = 0; i < 28; i++) { GPIOC->ODR = 0xFFFFFFF8; }
     } else {
         // Do a little loop here since FIFO may have starved a little on interrupt
+        // And hope we're early enough in the line that values aren't changing
         uint32_t GPIOC_ODR = GPIOC->ODR;
-        for(int i = 0; i < 28; i++) { GPIOC->ODR = GPIOC_ODR; }
+        for(int i = 0; i < 15; i++) { GPIOC->ODR = GPIOC_ODR; }
     }
 
     if(DMA2->LISR &= DMA_FLAG_FEIF2_6) {
@@ -860,19 +907,19 @@ void DMA2_Stream2_IRQHandler(void)
     unsigned char *nextRowBuffer = (whichIsScanning == 1) ? row0 : row1;
 
     for(int i = 0; i < SWATCH_SIZE; i++) {
-        NTSCFillRowBuffer(fieldNumber, rowNumber, nextRowBuffer + ROW_SAMPLES * i);
+        NTSCFillRowBuffer(frameNumber, lineNumber, nextRowBuffer + ROW_SAMPLES * i);
         if(debugOverlayEnabled) {
-            fillRowDebugOverlay(fieldNumber, rowNumber, nextRowBuffer + ROW_SAMPLES * i);
+            fillRowDebugOverlay(frameNumber, lineNumber, nextRowBuffer + ROW_SAMPLES * i);
         }
-        rowNumber = rowNumber + 1;
-        if(rowNumber == NTSC_FIELD_LINES) {
-            rowNumber = 0;
-            fieldNumber++;
+        lineNumber = lineNumber + 1;
+        if(lineNumber == NTSC_FRAME_LINES) {
+            lineNumber = 0;
+            frameNumber++;
         }
     }
 
     TIM2->CR1 = 0;            /* stop the timer */
-    rowCyclesSpent[rowNumber] = TIM2->CNT * 2;  // TIM2 is on APB1, so this should be * 4...??
+    rowCyclesSpent[lineNumber] = TIM2->CNT * 2;  // TIM2 is on APB1, so this should be * 4...??
 
     // A little pulse so we know where we are on the line
     if(markHandlerInSamples) {
@@ -923,8 +970,8 @@ void DMAStartScanout(uint32_t dmaCount)
     TIM1->SR = 0;                       /* reset status */
     TIM1->ARR = dmaCount - 1;           /* load the register with this */
 
-    rowNumber = 1; // Next up is row 1
-    fieldNumber = 0; 
+    lineNumber = 1; // Next up is row 1
+    frameNumber = 0; 
 
     // Clear FIFO and transfer error flags
     DMA2->LIFCR |= DMA_LIFCR_CFEIF2;
@@ -1138,7 +1185,7 @@ unsigned char __attribute__((section (".ccmram"))) font8x8Bits[] = {
 
 // Video mode specifics follow
 
-int SetPaletteEntryAlwaysFails(VideoModeEntry* modeEntry, int palette, int which, float r, float g, float b)
+int SetPaletteEntryAlwaysFails(const VideoModeEntry* modeEntry, int palette, int which, float r, float g, float b)
 {
     return 0;
 }
@@ -1147,10 +1194,10 @@ void SetPaletteEntry(int palette, int which, float r, float g, float b)
 {
     float y, i, q;
     RGBToYIQ(r, g, b, &y, &i, &q);
-    paletteUInt32[palette][which] = NTSCYIQToUInt32(y, i, q);
+    paletteToWave[palette][which] = NTSCYIQToWave(y, i, q);
 }
 
-int SetRowPalette(struct VideoModeEntry* modeEntry, int row, int palette)
+int SetRowPalette(const struct VideoModeEntry* modeEntry, int row, int palette)
 {
     return NTSCSetRowPalette(row, palette);
 }
@@ -1215,18 +1262,18 @@ int TextportPlain40x24CursorY = 0;
 int TextportPlain40x24CursorFlash = 1;
 
 // Textport video mode structs
-VideoTextportInfo TextportPlain40x24Info = {
+const static VideoTextportInfo TextportPlain40x24Info = {
     TextportPlain40x24Width, TextportPlain40x24Height,
     TEXT_8BIT_BLACK_ON_WHITE,
 };
 
-void TextportPlain40x24Setup(VideoModeEntry *modeEntry)
+void TextportPlain40x24Setup(const VideoModeEntry *modeEntry)
 {
     /* const VideoTextportInfo *info = (VideoTextportInfo*)info_; */
     NTSCFillBlankLine(NTSCBlankLine, 0);        /* monochrome text */
 }
 
-void TextportPlain40x24GetParameters(VideoModeEntry *modeEntry, void *params_)
+void TextportPlain40x24GetParameters(const VideoModeEntry *modeEntry, void *params_)
 {
     const VideoTextportInfo *info = (VideoTextportInfo*)modeEntry->info;
     VideoTextportParameters *params = (VideoTextportParameters*)params_;
@@ -1236,13 +1283,13 @@ void TextportPlain40x24GetParameters(VideoModeEntry *modeEntry, void *params_)
     params->rowSize = info->width;
 }
 
-void TextportPlain40x24FillRow(int fieldNumber, int rowNumber, unsigned char *rowBuffer)
+void TextportPlain40x24FillRow(int frameNumber, int lineNumber, unsigned char *rowBuffer)
 {
-    int rowWithinArea = rowNumber - TextportPlain40x24TopTick;
+    int rowWithinArea = (lineNumber % 263) - TextportPlain40x24TopTick;
     int charRow = rowWithinArea / font8x8Height;
     int charPixelY = (rowWithinArea % font8x8Height);
 
-    int invert = (TextportPlain40x24CursorFlash == 0) || (fieldNumber / 15 % 2 == 0);
+    int invert = (TextportPlain40x24CursorFlash == 0) || (frameNumber / 15 % 2 == 0);
 
 // XXX this code assumes font width <= 8 and each row padded out to a byte
     if((rowWithinArea >= 0) && (charRow < TextportPlain40x24Height)) {
@@ -1282,18 +1329,18 @@ int TextportPlain80x24CursorY = 0;
 int TextportPlain80x24CursorFlash = 0;
 
 // Textport video mode structs
-VideoTextportInfo TextportPlain80x24Info = {
+const static VideoTextportInfo TextportPlain80x24Info = {
     TextportPlain80x24Width, TextportPlain80x24Height,
     TEXT_8BIT_WHITE_ON_BLACK,
 };
 
-void TextportPlain80x24Setup(VideoModeEntry *modeEntry)
+void TextportPlain80x24Setup(const VideoModeEntry *modeEntry)
 {
     /* const VideoTextportInfo *info = (VideoTextportInfo*)info_; */
     NTSCFillBlankLine(NTSCBlankLine, 0);        /* monochrome text */
 }
 
-void TextportPlain80x24GetParameters(VideoModeEntry *modeEntry, void *params_)
+void TextportPlain80x24GetParameters(const VideoModeEntry *modeEntry, void *params_)
 {
     const VideoTextportInfo *info = (VideoTextportInfo*)modeEntry->info;
     VideoTextportParameters *params = (VideoTextportParameters*)params_;
@@ -1303,18 +1350,18 @@ void TextportPlain80x24GetParameters(VideoModeEntry *modeEntry, void *params_)
     params->rowSize = info->width;
 }
 
-int TextportPlain80x24SetPaletteEntry(VideoModeEntry* modeEntry, int palette, int which, float r, float g, float b)
+int TextportPlain80x24SetPaletteEntry(const VideoModeEntry* modeEntry, int palette, int which, float r, float g, float b)
 {
     return 0;
 }
 
-void TextportPlain80x24FillRow(int fieldNumber, int rowNumber, unsigned char *rowBuffer)
+void TextportPlain80x24FillRow(int frameNumber, int lineNumber, unsigned char *rowBuffer)
 {
-    int rowWithinArea = rowNumber - TextportPlain80x24TopTick;
+    int rowWithinArea = (lineNumber % 263) - TextportPlain80x24TopTick;
     int charRow = rowWithinArea / font8x8Height;
     int charPixelY = (rowWithinArea % font8x8Height);
 
-    int invert = (TextportPlain80x24CursorFlash == 0) || (fieldNumber / 15 % 2 == 0);
+    int invert = (TextportPlain80x24CursorFlash == 0) || (frameNumber / 15 % 2 == 0);
 
 // XXX this code assumes font width <= 8 and each row padded out to a byte
     if((rowWithinArea >= 0) && (charRow < TextportPlain80x24Height)) {
@@ -1356,7 +1403,7 @@ void TextportPlain80x24FillRow(int fieldNumber, int rowNumber, unsigned char *ro
 #endif
 
 // Pixmap video mode structs
-VideoPixmapInfo ColorMaxResInfo = {
+const static VideoPixmapInfo ColorMaxResInfo = {
     MAX_RES_MODE_WIDTH, MAX_RES_MODE_HEIGHT,
     PALETTE_8BIT,
     256,
@@ -1366,7 +1413,7 @@ VideoPixmapInfo ColorMaxResInfo = {
 };
 
 
-void ColorMaxResSetup(VideoModeEntry *modeEntry)
+void ColorMaxResSetup(const VideoModeEntry *modeEntry)
 {
     /* const VideoTextportInfo *info = (VideoTextportInfo*)info_; */
     NTSCFillBlankLine(NTSCBlankLine, 1);
@@ -1376,7 +1423,7 @@ void ColorMaxResSetup(VideoModeEntry *modeEntry)
     }
 }
 
-void ColorMaxResGetParameters(VideoModeEntry *modeEntry, void *params_)
+void ColorMaxResGetParameters(const VideoModeEntry *modeEntry, void *params_)
 {
     const VideoPixmapInfo *info = (VideoPixmapInfo*)modeEntry->info;
     VideoPixmapParameters *params = (VideoPixmapParameters*)params_;
@@ -1390,7 +1437,7 @@ void ColorMaxResGetParameters(VideoModeEntry *modeEntry, void *params_)
 #define ColorMaxResTop (142 - MAX_RES_MODE_HEIGHT / 2)
 #define ColorMaxResHeight MAX_RES_MODE_HEIGHT
 
-int ColorMaxResSetPaletteEntry(VideoModeEntry* modeEntry, int palette, int which, float r, float g, float b)
+int ColorMaxResSetPaletteEntry(const VideoModeEntry* modeEntry, int palette, int which, float r, float g, float b)
 {
     if(which >= 256) {
         return 1;
@@ -1400,9 +1447,9 @@ int ColorMaxResSetPaletteEntry(VideoModeEntry* modeEntry, int palette, int which
 }
 
 // XXX assumes ColorMaxResLeft is /4 and ColorMaxResWidth /4
-void ColorMaxResFillRow(int fieldNumber, int rowNumber, unsigned char *rowBuffer)
+void ColorMaxResFillRow(int frameNumber, int lineNumber, unsigned char *rowBuffer)
 {
-    int rowWithin = rowNumber - ColorMaxResTop;
+    int rowWithin = (lineNumber % 263) - ColorMaxResTop;
 
     if((rowWithin >= 0) && (rowWithin < ColorMaxResHeight)) {
 
@@ -1414,7 +1461,7 @@ void ColorMaxResFillRow(int fieldNumber, int rowNumber, unsigned char *rowBuffer
         unsigned char *srcPixels = imgBuffer + rowWithin * ColorMaxResWidth;
         uint32_t *dstWords = (uint32_t*)(rowBuffer + ColorMaxResLeft);
 
-        uint32_t *palette = paletteUInt32[rowPalette[rowWithin]];
+        uint32_t *palette = paletteToWave[rowPalette[rowWithin]];
 
         for(int i = 0; i < ColorMaxResWidth; i += 4) {
             uint32_t waveformPart0 = palette[srcPixels[i + 0]] & 0x000000FF;
@@ -1445,7 +1492,7 @@ void ColorMaxResFillRow(int fieldNumber, int rowNumber, unsigned char *rowBuffer
 #endif
 
 // Pixmap video mode structs
-VideoPixmapInfo Color175x230Info = {
+const static VideoPixmapInfo Color175x230Info = {
     Color175x230WidthSamples / 4, Color175x230Height,
     PALETTE_8BIT,
     256,
@@ -1454,7 +1501,7 @@ VideoPixmapInfo Color175x230Info = {
     900, 520,
 };
 
-void Color175x230Setup(VideoModeEntry *modeEntry)
+void Color175x230Setup(const VideoModeEntry *modeEntry)
 {
     /* const VideoTextportInfo *info = (VideoTextportInfo*)info_; */
     NTSCFillBlankLine(NTSCBlankLine, 1);
@@ -1464,7 +1511,7 @@ void Color175x230Setup(VideoModeEntry *modeEntry)
     }
 }
 
-void Color175x230GetParameters(VideoModeEntry *modeEntry, void *params_)
+void Color175x230GetParameters(const VideoModeEntry *modeEntry, void *params_)
 {
     const VideoPixmapInfo *info = (VideoPixmapInfo*)modeEntry->info;
     VideoPixmapParameters *params = (VideoPixmapParameters*)params_;
@@ -1472,7 +1519,7 @@ void Color175x230GetParameters(VideoModeEntry *modeEntry, void *params_)
     params->rowSize = info->width;
 }
 
-int Color175x230SetPaletteEntry(VideoModeEntry* modeEntry, int palette, int which, float r, float g, float b)
+int Color175x230SetPaletteEntry(const VideoModeEntry* modeEntry, int palette, int which, float r, float g, float b)
 {
     if(which >= 256) {
         return 1;
@@ -1481,9 +1528,9 @@ int Color175x230SetPaletteEntry(VideoModeEntry* modeEntry, int palette, int whic
     return 0;
 }
 
-void Color175x230FillRow(int fieldNumber, int rowNumber, unsigned char *rowBuffer)
+void Color175x230FillRow(int frameNumber, int lineNumber, unsigned char *rowBuffer)
 {
-    int rowWithin = rowNumber - Color175x230Top;
+    int rowWithin = (lineNumber % 263) - Color175x230Top;
 
     if((rowWithin >= 0) && (rowWithin < Color175x230Height)) {
 
@@ -1495,7 +1542,7 @@ void Color175x230FillRow(int fieldNumber, int rowNumber, unsigned char *rowBuffe
         unsigned char *srcPixels = imgBuffer + rowWithin * (Color175x230WidthSamples / 4);
         unsigned char *dstBytes = rowBuffer + Color175x230Left;
 
-        uint32_t *palette = paletteUInt32[rowPalette[rowWithin]];
+        uint32_t *palette = paletteToWave[rowPalette[rowWithin]];
 
         for(int i = 0; i < Color175x230WidthSamples; i += 4) {
             int p = srcPixels[i / 4];
@@ -1523,7 +1570,7 @@ void Color175x230FillRow(int fieldNumber, int rowNumber, unsigned char *rowBuffe
 #endif
 
 // Pixmap video mode structs
-VideoPixmapInfo Color160x192Info = {
+const static VideoPixmapInfo Color160x192Info = {
     Color160x192WidthSamples / 4, Color160x192Height,
     PALETTE_8BIT,
     256,
@@ -1532,7 +1579,7 @@ VideoPixmapInfo Color160x192Info = {
     900, 520,
 };
 
-void Color160x192Setup(VideoModeEntry *modeEntry)
+void Color160x192Setup(const VideoModeEntry *modeEntry)
 {
     /* const VideoTextportInfo *info = (VideoTextportInfo*)info_; */
     NTSCFillBlankLine(NTSCBlankLine, 1);
@@ -1542,7 +1589,7 @@ void Color160x192Setup(VideoModeEntry *modeEntry)
     }
 }
 
-void Color160x192GetParameters(VideoModeEntry *modeEntry, void *params_)
+void Color160x192GetParameters(const VideoModeEntry *modeEntry, void *params_)
 {
     const VideoPixmapInfo *info = (VideoPixmapInfo*)modeEntry->info;
     VideoPixmapParameters *params = (VideoPixmapParameters*)params_;
@@ -1550,7 +1597,7 @@ void Color160x192GetParameters(VideoModeEntry *modeEntry, void *params_)
     params->rowSize = info->width;
 }
 
-int Color160x192SetPaletteEntry(VideoModeEntry* modeEntry, int palette, int which, float r, float g, float b)
+int Color160x192SetPaletteEntry(const VideoModeEntry* modeEntry, int palette, int which, float r, float g, float b)
 {
     if(which >= 256) {
         return 1;
@@ -1559,9 +1606,9 @@ int Color160x192SetPaletteEntry(VideoModeEntry* modeEntry, int palette, int whic
     return 0;
 }
 
-void Color160x192FillRow(int fieldNumber, int rowNumber, unsigned char *rowBuffer)
+void Color160x192FillRow(int frameNumber, int lineNumber, unsigned char *rowBuffer)
 {
-    int rowWithin = rowNumber - Color160x192Top;
+    int rowWithin = (lineNumber % 263) - Color160x192Top;
 
     if((rowWithin >= 0) && (rowWithin < Color160x192Height)) {
 
@@ -1573,7 +1620,7 @@ void Color160x192FillRow(int fieldNumber, int rowNumber, unsigned char *rowBuffe
         unsigned char *srcPixels = imgBuffer + rowWithin * (Color160x192WidthSamples / 4);
         unsigned char *dstBytes = rowBuffer + Color160x192Left;
 
-        uint32_t *palette = paletteUInt32[rowPalette[rowWithin]];
+        uint32_t *palette = paletteToWave[rowPalette[rowWithin]];
 
         for(int i = 0; i < Color160x192WidthSamples; i += 4) {
             int p = srcPixels[i / 4];
@@ -1601,7 +1648,7 @@ void Color160x192FillRow(int fieldNumber, int rowNumber, unsigned char *rowBuffe
 #endif
 
 // Pixmap video mode structs
-VideoPixmapInfo Color350x230Info = {
+const static VideoPixmapInfo Color350x230Info = {
     Color350x230WidthSamples / 2, Color350x230Height,
     PALETTE_4BIT,
     16,
@@ -1610,7 +1657,7 @@ VideoPixmapInfo Color350x230Info = {
     450, 520,
 };
 
-void Color350x230Setup(VideoModeEntry *modeEntry)
+void Color350x230Setup(const VideoModeEntry *modeEntry)
 {
     /* const VideoTextportInfo *info = (VideoTextportInfo*)info_; */
     NTSCFillBlankLine(NTSCBlankLine, 1);
@@ -1620,7 +1667,7 @@ void Color350x230Setup(VideoModeEntry *modeEntry)
     }
 }
 
-void Color350x230GetParameters(VideoModeEntry *modeEntry, void *params_)
+void Color350x230GetParameters(const VideoModeEntry *modeEntry, void *params_)
 {
     const VideoPixmapInfo *info = (VideoPixmapInfo*)modeEntry->info;
     VideoPixmapParameters *params = (VideoPixmapParameters*)params_;
@@ -1628,7 +1675,7 @@ void Color350x230GetParameters(VideoModeEntry *modeEntry, void *params_)
     params->rowSize = info->width / 2;
 }
 
-int Color350x230SetPaletteEntry(VideoModeEntry* modeEntry, int palette, int which, float r, float g, float b)
+int Color350x230SetPaletteEntry(const VideoModeEntry* modeEntry, int palette, int which, float r, float g, float b)
 {
     if(which >= 16) {
         return 1;
@@ -1637,9 +1684,9 @@ int Color350x230SetPaletteEntry(VideoModeEntry* modeEntry, int palette, int whic
     return 0;
 }
 
-void Color350x230FillRow(int fieldNumber, int rowNumber, unsigned char *rowBuffer)
+void Color350x230FillRow(int frameNumber, int lineNumber, unsigned char *rowBuffer)
 {
-    int rowWithin = rowNumber - Color350x230Top;
+    int rowWithin = (lineNumber % 263) - Color350x230Top;
 
     if((rowWithin >= 0) && (rowWithin < Color350x230Height)) {
 
@@ -1651,7 +1698,7 @@ void Color350x230FillRow(int fieldNumber, int rowNumber, unsigned char *rowBuffe
         unsigned char *srcPixels = imgBuffer + rowWithin * (Color350x230WidthSamples / 4);
         unsigned char *dstBytes = rowBuffer + Color350x230Left;
 
-        uint32_t *palette = paletteUInt32[rowPalette[rowWithin]];
+        uint32_t *palette = paletteToWave[rowPalette[rowWithin]];
 
         for(int i = 0; i < Color350x230WidthSamples / 2; i++) { /* loop over pixels */
 
@@ -1687,7 +1734,7 @@ void Color350x230FillRow(int fieldNumber, int rowNumber, unsigned char *rowBuffe
 #endif
 
 // Pixmap video mode structs
-VideoPixmapInfo Color320x192Info = {
+const static VideoPixmapInfo Color320x192Info = {
     Color320x192WidthSamples / 2, Color320x192Height,
     PALETTE_4BIT,
     16,
@@ -1696,7 +1743,7 @@ VideoPixmapInfo Color320x192Info = {
     450, 520,
 };
 
-void Color320x192Setup(VideoModeEntry *modeEntry)
+void Color320x192Setup(const VideoModeEntry *modeEntry)
 {
     /* const VideoTextportInfo *info = (VideoTextportInfo*)info_; */
     NTSCFillBlankLine(NTSCBlankLine, 1);
@@ -1706,7 +1753,7 @@ void Color320x192Setup(VideoModeEntry *modeEntry)
     }
 }
 
-void Color320x192GetParameters(VideoModeEntry *modeEntry, void *params_)
+void Color320x192GetParameters(const VideoModeEntry *modeEntry, void *params_)
 {
     const VideoPixmapInfo *info = (VideoPixmapInfo*)modeEntry->info;
     VideoPixmapParameters *params = (VideoPixmapParameters*)params_;
@@ -1714,7 +1761,7 @@ void Color320x192GetParameters(VideoModeEntry *modeEntry, void *params_)
     params->rowSize = info->width / 2;
 }
 
-int Color320x192SetPaletteEntry(VideoModeEntry* modeEntry, int palette, int which, float r, float g, float b)
+int Color320x192SetPaletteEntry(const VideoModeEntry* modeEntry, int palette, int which, float r, float g, float b)
 {
     if(which >= 16) {
         return 1;
@@ -1723,9 +1770,9 @@ int Color320x192SetPaletteEntry(VideoModeEntry* modeEntry, int palette, int whic
     return 0;
 }
 
-void Color320x192FillRow(int fieldNumber, int rowNumber, unsigned char *rowBuffer)
+void Color320x192FillRow(int frameNumber, int lineNumber, unsigned char *rowBuffer)
 {
-    int rowWithin = rowNumber - Color320x192Top;
+    int rowWithin = (lineNumber % 263) - Color320x192Top;
 
     if((rowWithin >= 0) && (rowWithin < Color320x192Height)) {
 
@@ -1737,7 +1784,7 @@ void Color320x192FillRow(int fieldNumber, int rowNumber, unsigned char *rowBuffe
         unsigned char *srcPixels = imgBuffer + rowWithin * (Color320x192WidthSamples / 4);
         unsigned char *dstBytes = rowBuffer + Color320x192Left;
 
-        uint32_t *palette = paletteUInt32[rowPalette[rowWithin]];
+        uint32_t *palette = paletteToWave[rowPalette[rowWithin]];
 
         for(int i = 0; i < Color320x192WidthSamples / 2; i++) { /* loop over pixels */
 
@@ -1773,7 +1820,7 @@ void Color320x192FillRow(int fieldNumber, int rowNumber, unsigned char *rowBuffe
 #endif
 
 // Pixmap video mode structs
-VideoPixmapInfo Grayscale704x230Info = {
+const static VideoPixmapInfo Grayscale704x230Info = {
     Grayscale704x230WidthSamples, Grayscale704x230Height,
     GRAY_2BIT,
     -1,
@@ -1782,13 +1829,13 @@ VideoPixmapInfo Grayscale704x230Info = {
     225, 520,
 };
 
-void Grayscale704x230Setup(VideoModeEntry *modeEntry)
+void Grayscale704x230Setup(const VideoModeEntry *modeEntry)
 {
     /* const VideoTextportInfo *info = (VideoTextportInfo*)info_; */
     NTSCFillBlankLine(NTSCBlankLine, 0);        /* grayscale mode */
 }
 
-void Grayscale704x230GetParameters(VideoModeEntry *modeEntry, void *params_)
+void Grayscale704x230GetParameters(const VideoModeEntry *modeEntry, void *params_)
 {
     const VideoPixmapInfo *info = (VideoPixmapInfo*)modeEntry->info;
     VideoPixmapParameters *params = (VideoPixmapParameters*)params_;
@@ -1796,9 +1843,9 @@ void Grayscale704x230GetParameters(VideoModeEntry *modeEntry, void *params_)
     params->rowSize = info->width / 4;
 }
 
-void Grayscale704x230FillRow(int fieldNumber, int rowNumber, unsigned char *rowBuffer)
+void Grayscale704x230FillRow(int frameNumber, int lineNumber, unsigned char *rowBuffer)
 {
-    int rowWithin = rowNumber - Grayscale704x230Top;
+    int rowWithin = (lineNumber % 263) - Grayscale704x230Top;
 
     if((rowWithin >= 0) && (rowWithin < Grayscale704x230Height)) {
 
@@ -1842,7 +1889,7 @@ void Grayscale704x230FillRow(int fieldNumber, int rowNumber, unsigned char *rowB
 #endif
 
 // Pixmap video mode structs
-VideoPixmapInfo Bitmap704x230Info = {
+const static VideoPixmapInfo Bitmap704x230Info = {
     Bitmap704x230WidthSamples, Bitmap704x230Height,
     BITMAP,
     -1,
@@ -1851,13 +1898,13 @@ VideoPixmapInfo Bitmap704x230Info = {
     225, 520,
 };
 
-void Bitmap704x230Setup(VideoModeEntry *modeEntry)
+void Bitmap704x230Setup(const VideoModeEntry *modeEntry)
 {
     /* const VideoTextportInfo *info = (VideoTextportInfo*)info_; */
     NTSCFillBlankLine(NTSCBlankLine, 0);        /* monochrome text */
 }
 
-void Bitmap704x230GetParameters(VideoModeEntry *modeEntry, void *params_)
+void Bitmap704x230GetParameters(const VideoModeEntry *modeEntry, void *params_)
 {
     const VideoPixmapInfo *info = (VideoPixmapInfo*)modeEntry->info;
     VideoPixmapParameters *params = (VideoPixmapParameters*)params_;
@@ -1884,9 +1931,9 @@ uint32_t __attribute__((section (".ccmram"))) NybblesToMasks[16] = {
     0xFFFFFFFF,
 };
 
-void Bitmap704x230FillRow(int fieldNumber, int rowNumber, unsigned char *rowBuffer)
+void Bitmap704x230FillRow(int frameNumber, int lineNumber, unsigned char *rowBuffer)
 {
-    int rowWithin = rowNumber - Bitmap704x230Top;
+    int rowWithin = (lineNumber % 263) - Bitmap704x230Top;
 
     if((rowWithin >= 0) && (rowWithin < Bitmap704x230Height)) {
 
@@ -1930,7 +1977,7 @@ void Bitmap704x230FillRow(int fieldNumber, int rowNumber, unsigned char *rowBuff
 #endif
 
 // Pixmap video mode structs
-VideoPixmapInfo Bitmap640x192Info = {
+const static VideoPixmapInfo Bitmap640x192Info = {
     Bitmap640x192WidthSamples, Bitmap640x192Height,
     BITMAP,
     -1,
@@ -1939,13 +1986,13 @@ VideoPixmapInfo Bitmap640x192Info = {
     225, 520,
 };
 
-void Bitmap640x192Setup(VideoModeEntry *modeEntry)
+void Bitmap640x192Setup(const VideoModeEntry *modeEntry)
 {
     /* const VideoTextportInfo *info = (VideoTextportInfo*)info_; */
     NTSCFillBlankLine(NTSCBlankLine, 0);        /* monochrome text */
 }
 
-void Bitmap640x192GetParameters(VideoModeEntry *modeEntry, void *params_)
+void Bitmap640x192GetParameters(const VideoModeEntry *modeEntry, void *params_)
 {
     const VideoPixmapInfo *info = (VideoPixmapInfo*)modeEntry->info;
     VideoPixmapParameters *params = (VideoPixmapParameters*)params_;
@@ -1953,9 +2000,9 @@ void Bitmap640x192GetParameters(VideoModeEntry *modeEntry, void *params_)
     params->rowSize = info->width / 8;
 }
 
-void Bitmap640x192FillRow(int fieldNumber, int rowNumber, unsigned char *rowBuffer)
+void Bitmap640x192FillRow(int frameNumber, int lineNumber, unsigned char *rowBuffer)
 {
-    int rowWithin = rowNumber - Bitmap640x192Top;
+    int rowWithin = (lineNumber % 263) - Bitmap640x192Top;
 
     if((rowWithin >= 0) && (rowWithin < Bitmap640x192Height)) {
 
@@ -1988,11 +2035,11 @@ void Bitmap640x192FillRow(int fieldNumber, int rowNumber, unsigned char *rowBuff
 
 #define WolfensteinWidthSamples 440
 #define WolfensteinLeft (512 - WolfensteinWidthSamples / 2)
-#define WolfensteinTop 27
-#define WolfensteinHeight 192
+#define WolfensteinTop (27 * 2)
+#define WolfensteinHeight (192 * 2)
 
 // Pixmap video mode structs
-VideoWolfensteinInfo WolfensteinInfo = {
+const static VideoWolfensteinInfo WolfensteinInfo = {
     WolfensteinWidthSamples,
     WolfensteinHeight,
 };
@@ -2562,14 +2609,14 @@ void WolfensteinSetElements(VideoWolfensteinElement* row)
     }
 }
 
-void WolfensteinGetParameters(VideoModeEntry *modeEntry, void *params_)
+void WolfensteinGetParameters(const VideoModeEntry *modeEntry, void *params_)
 {
     //const VideoWolfensteinInfo *info = (VideoWolfensteinInfo*)modeEntry->info;
     VideoWolfensteinParameters *params = (VideoWolfensteinParameters*)params_;
     params->setElements = WolfensteinSetElements;
 }
 
-void WolfensteinSetup(VideoModeEntry *modeEntry)
+void WolfensteinSetup(const VideoModeEntry *modeEntry)
 {
     NTSCFillBlankLine(NTSCBlankLine, 1);
     WolfensteinPrivateElement *private = (WolfensteinPrivateElement *)imgBuffer;
@@ -2582,9 +2629,9 @@ void WolfensteinSetup(VideoModeEntry *modeEntry)
     }
 }
 
-void WolfensteinFillRow(int fieldNumber, int rowNumber, unsigned char *rowBuffer)
+void WolfensteinFillRow(int frameNumber, int lineNumber, unsigned char *rowBuffer)
 {
-    int rowWithin = rowNumber - WolfensteinTop;
+    int rowWithin = (lineNumber % 263) * 2 + lineNumber / 263 - WolfensteinTop;
 
     if((rowWithin >= 0) && (rowWithin < WolfensteinHeight)) {
 
@@ -2640,7 +2687,7 @@ void WolfensteinFillRow(int fieldNumber, int rowNumber, unsigned char *rowBuffer
 // ----------------------------------------
 // Video mode table
 
-VideoModeEntry NTSCModes[] =
+const static VideoModeEntry NTSCModes[] =
 {
     {
         VIDEO_MODE_TEXTPORT,
@@ -2770,7 +2817,7 @@ enum VideoModeType VideoModeGetType(int n)
 
 void VideoModeGetInfo(int n, void *info)
 {
-    VideoModeEntry* entry = NTSCModes + n;
+    const VideoModeEntry* entry = NTSCModes + n;
     switch(entry->type) {
         case VIDEO_MODE_PIXMAP: {
             *(VideoPixmapInfo*)info = *(VideoPixmapInfo*)entry->info;
@@ -2801,7 +2848,7 @@ void VideoModeGetInfo(int n, void *info)
 
 void VideoSetMode(int n)
 {
-    VideoModeEntry* entry = NTSCModes + n;
+    const VideoModeEntry* entry = NTSCModes + n;
     entry->setup(entry);
     CurrentVideoMode = n;
     VideoCurrentFillRow = entry->fillRow;
@@ -2814,194 +2861,26 @@ int VideoGetCurrentMode()
 
 void VideoModeGetParameters(void *params)
 {
-    VideoModeEntry* entry = NTSCModes + CurrentVideoMode;
+    const VideoModeEntry* entry = NTSCModes + CurrentVideoMode;
     entry->getParameters(entry, params);
 }
 
 int VideoModeSetPaletteEntry(int palette, int which, float r, float g, float b)
 {
-    VideoModeEntry* entry = NTSCModes + CurrentVideoMode;
+    const VideoModeEntry* entry = NTSCModes + CurrentVideoMode;
     return entry->setPaletteEntry(entry, palette, which, r, g, b);
 }
 
 int VideoModeSetRowPalette(int row, int palette)
 {
-    VideoModeEntry* entry = NTSCModes + CurrentVideoMode;
+    const VideoModeEntry* entry = NTSCModes + CurrentVideoMode;
     return entry->setRowPalette(entry, row, palette);
 }
 
 void VideoModeWaitFrame()
 {
-    while(rowNumber < 257); // Wait for VBLANK; should do something smarter
-}
-
-uint32_t GetPaletteUInt32(float h, float s, float v)
-{
-    float r, g, b;
-    HSVToRGB3f(h, s, v, &r, &g, &b);
-    float y, i, q;
-    RGBToYIQ(r, g, b, &y, &i, &q);
-    return NTSCYIQToUInt32(y, i, q);
-}
-
-void showSolidFramebuffer(uint32_t word)
-{
-    paletteUInt32[0][0] = word;
-    for(int y = 0; y < 224; y++) {
-        rowPalette[y] = 0;
-        unsigned char *imgRow = imgBufferRow(y);
-
-        for(int x = 0; x < 194; x++) {
-            imgRow[x] = 0;
-        }
-    }
-}
-
-int __errno; // XXX fmod
-void showVectorScopeImage(int phaseDegrees)
-{
-    for(int a = 0; a < MAX_PALETTE_ENTRIES; a++) {
-        float hueDegrees = a * 360.0f / MAX_PALETTE_ENTRIES;
-        float r, g, b;
-        float hueRadians = hueDegrees / 180.0f * M_PI;
-        HSVToRGB3f(hueRadians, 1, 1, &r, &g, &b);
-        float y, i, q;
-        RGBToYIQ(r, g, b, &y, &i, &q);
-        paletteUInt32[0][a] = NTSCYIQToUInt32(y, i, q);
-    }
-
-    for(int y = 0; y < 224; y++) {
-        unsigned char *imgRow = imgBufferRow(y);
-        rowPalette[y] = 0;
-
-        for(int x = 0; x < 194; x++) {
-            float u = (x - 194.0f / 2.0f) / 194.0f; /* left to right */
-            float v = - (y - 224.0f / 2.0f) / 224.0f; /* bottom to top */
-            float degrees = atan2f(v, u) / M_PI * 180.0f; // HSV Red would be all the way to the right, Yellow-Green up
-            float vectorScopeDegrees = degrees; // - 103.0f;
-            float hue = fmodf((360.0f + vectorScopeDegrees + phaseDegrees) / 180.0f * M_PI, M_PI * 2);
-            imgRow[x] = (unsigned char)(hue / (M_PI * 2) * MAX_PALETTE_ENTRIES);
-        }
-    }
-}
-
-unsigned char whichPalette = 0;
-
-int readPalettized(const char *filename, float *duration)
-{
-    // Configure timer TIM5 - Only TIM2 and TIM5 are 32-bit
-    TIM5->SR = 0;                       /* reset status */
-    TIM5->ARR = 0xFFFFFFFF;
-    TIM5->CNT = 0;
-    TIM5->CR1 = TIM_CR1_CEN;            /* enable the timer */
-
-    FIL file;
-    FRESULT result = f_open (&file, filename, FA_READ | FA_OPEN_EXISTING);
-    if(result) {
-        logprintf(DEBUG_ERRORS, "ERROR: couldn't open \"%s\" for reading, FatFS result %d\n", filename, result);
-        return 1;
-    }
-
-    UINT wasread;
-    result = f_read(&file, paletteUInt32[whichPalette], sizeof(uint32_t) * 254, &wasread);
-    if(result) {
-        logprintf(DEBUG_ERRORS, "ERROR: couldn't read palette from \"%s\", result %d\n", filename, result);
-        return 1;
-    }
-
-    static unsigned char rowTmp[194];
-    for(int y = 0; y < 224; y++) {
-        result = f_read(&file, rowTmp, 194, &wasread);
-        // XXX wait until end of visible pixels?
-        rowPalette[y] = whichPalette;
-        memcpy(imgBufferRow(y), rowTmp, 194);
-
-        if(result) {
-            logprintf(DEBUG_ERRORS, "ERROR: couldn't read row %d from \"%s\", result %d\n", filename, y, result);
-            return 1;
-        }
-    }
-    uint32_t clocks = TIM5->CNT;
-    TIM5->CR1 = 0;            /* stop the timer */
-
-    uint32_t hundredthsSeconds = clocks / (SystemCoreClock / 100);
-    if(0) {
-        printf("image load took %lu.%02lu seconds (%lu clocks)\n", hundredthsSeconds / 100, hundredthsSeconds % 100, clocks);
-    }
-    *duration = hundredthsSeconds / 100.0f;
-
-    whichPalette = (whichPalette + 1) % 2;
-
-    return 0;
-}
-
-int readImage(const char *filename)
-{
-    static unsigned char rgbRow[194][3]; 
-    static unsigned char palette[256][3];
-
-    int paletteNext = 0;
-
-    // Configure timer TIM5 - Only TIM2 and TIM5 are 32-bit
-    TIM5->SR = 0;                       /* reset status */
-    TIM5->ARR = 0xFFFFFFFF;
-    TIM5->CNT = 0;
-    TIM5->CR1 = TIM_CR1_CEN;            /* enable the timer */
-
-    FIL file;
-    FRESULT result = f_open (&file, filename, FA_READ | FA_OPEN_EXISTING);
-    if(result) {
-        logprintf(DEBUG_ERRORS, "ERROR: couldn't open \"%s\" for reading, FatFS result %d\n", filename, result);
-        return 1;
-    }
-
-    for(int y = 0; y < 224; y++) {
-        UINT wasread;
-        result = f_read(&file, rgbRow, sizeof(rgbRow), &wasread);
-
-        if(result) {
-            logprintf(DEBUG_ERRORS, "ERROR: couldn't read row %d from \"%s\", result %d\n", filename, y, result);
-            return 1;
-        }
-
-        unsigned char *imgRow = imgBufferRow(y);
-        rowPalette[y] = whichPalette;
-
-        for(int x = 0; x < 194; x++) {
-            unsigned char r = rgbRow[x][0];
-            unsigned char g = rgbRow[x][1];
-            unsigned char b = rgbRow[x][2];
-            int c;
-            for(c = 0; c < paletteNext; c++) {
-                if(palette[c][0] == r && palette[c][1] == g && palette[c][2] == b) {
-                    break;
-                }
-            }
-            if(c == paletteNext) {
-                if(c == MAX_PALETTE_ENTRIES) {
-                    printf("ran out of palette!\n");
-                    return 1;
-                } else {
-                    palette[c][0] = r;
-                    palette[c][1] = g;
-                    palette[c][2] = b;
-                    float y, i, q;
-                    RGBToYIQ(r / 255.0f, g / 255.0f, b / 255.0f, &y, &i, &q);
-                    paletteUInt32[whichPalette][c] = NTSCYIQToUInt32(y, i, q);
-                    paletteNext++;
-                }
-            }
-            imgRow[x] = c;
-        }
-    }
-    uint32_t clocks = TIM5->CNT;
-    TIM5->CR1 = 0;            /* stop the timer */
-    uint32_t hundredthsSeconds = clocks / (SystemCoreClock / 100);
-    printf("image load took %lu.%02lu seconds (%lu clocks)\n", hundredthsSeconds / 100, hundredthsSeconds % 100, clocks);
-
-    whichPalette = (whichPalette + 1) % 2;
-
-    return 0;
+    // NTSC won't actually go lineNumber >= 525...
+    while(!(lineNumber > 257 && lineNumber < 262) || (lineNumber > 520 && lineNumber < 525)); // Wait for VBLANK; should do something smarter
 }
 
 //----------------------------------------------------------------------------
@@ -3171,7 +3050,7 @@ int doCommandStream(int wordCount, char **words)
         int frameNumber = start + (int)(displayTime * 30.0);
         sprintf(formattedName, formatName, frameNumber);
         // Must have been quantized to 256 colors!
-        // while(rowNumber < 224); // Wait for VBLANK-ish
+        // while(lineNumber < 224); // Wait for VBLANK-ish
         float duration;
         if(readPalettized(formattedName, &duration)) {
             printf("failed to show \"%s\"\n", formattedName); 
@@ -3223,13 +3102,14 @@ int doCommandShowLineEnd(int wordCount, char **words)
 int doCommandScanoutCycles(int wordCount, char **words)
 {
     int cyclesPerLine = SystemCoreClock / 59.94 / 262;
-    for(int i = 0; i < 262; i++) {
-        printf("row %3d: %8lu cycles, %lu microseconds", i, rowCyclesSpent[i],
+    // XXX Use a histogram instead
+    for(int i = 0; i < 525; i++) {
+        printf("row %3d: %8u cycles, %lu microseconds", i, rowCyclesSpent[i],
             rowCyclesSpent[i] / (SystemCoreClock / 1000000));
         if(rowCyclesSpent[i] > cyclesPerLine) {
-            printf(", overrun by %lu%%\n", rowCyclesSpent[i] * 100 / cyclesPerLine - 100);
+            printf(", overrun by %u%%\n", rowCyclesSpent[i] * 100 / cyclesPerLine - 100);
         } else { 
-            printf(", %lu%% remained\n", (cyclesPerLine - rowCyclesSpent[i]) * 100 / cyclesPerLine);
+            printf(", %u%% remained\n", (cyclesPerLine - rowCyclesSpent[i]) * 100 / cyclesPerLine);
         }
     }
     printf("%d cyclesPerLine were available\n", cyclesPerLine);
@@ -3267,12 +3147,9 @@ int doCommandLS(int wordCount, char **words)
 
 int doCommandSolidFill(int wordCount, char **words)
 {
-#if 0
-    uint32_t fill = strtoul(words[1], NULL, 0);
-    NTSCMode = VIDEO_PALETTIZED;
-    printf("solid image with %08lX word\n", fill);
-    showSolidFramebuffer(fill);
-#endif
+    solidFillWave = strtoul(words[1], NULL, 0);
+    NTSCMode = NTSC_SOLID_FILL;
+    printf("solid image with %08lX word\n", solidFillWave);
     return COMMAND_CONTINUE;
 }
 
@@ -3294,6 +3171,12 @@ int doCommandTestSDSpeed(int wordCount, char **words)
 
     SERIAL_flush();
 
+    unsigned char *sd_buffer = malloc(SD_BLOCK_SIZE);
+    if(sd_buffer == NULL) {
+        printf("couldn't allocate block buffer\n");
+        return COMMAND_FAILED;
+    }
+
     int then = HAL_GetTick();
     for(int i = 0; i < megabytes * 1024 * 1024 / SD_BLOCK_SIZE; i++)
         SDCARD_readblock(i, sd_buffer);
@@ -3304,6 +3187,8 @@ int doCommandTestSDSpeed(int wordCount, char **words)
     int kb_per_second = kilobytes * 1000 / millis;
 
     printf("done, %d KB per second\n", kb_per_second);
+
+    free(sd_buffer);
 
     return COMMAND_CONTINUE;
 }
@@ -3352,9 +3237,15 @@ int doCommandSetDebugLevel(int wordCount, char **words)
 int doCommandReadBlock(int wordCount, char **words)
 {
     int n = strtol(words[1], NULL, 0);
+    unsigned char *sd_buffer = malloc(SD_BLOCK_SIZE);
+    if(sd_buffer == NULL) {
+        printf("couldn't allocate block buffer\n");
+        return COMMAND_FAILED;
+    }
     if(SDCARD_readblock(n, sd_buffer)) {
         dump_buffer_hex(4, sd_buffer, sizeof(sd_buffer));
     }
+    free(sd_buffer);
     return COMMAND_CONTINUE;
 }
 
@@ -3396,6 +3287,7 @@ Command commands[MAX_COMMANDS];
 int commandsCount = 0;
 
 extern caddr_t _sbrk(int incr);
+extern void* sbrk(int incr);
 
 int RegisterApp(const char* name, int minWords, ProcessCommandFunc go, const char *form, const char *help)
 {
@@ -3408,10 +3300,8 @@ int RegisterApp(const char* name, int minWords, ProcessCommandFunc go, const cha
 
     newcmd->name = name;
     newcmd->minWords = minWords;
-    // Need to initialize app BSS
     newcmd->go = go;
     // Need to close all open files,
-    // reset brk
     newcmd->form = form;
     newcmd->help = help;
 
@@ -3459,9 +3349,6 @@ static void RegisterAllApplets()
     );
     RegisterApp( "solid", 2, doCommandSolidFill, "fillword",
         "fill video with specified long int"
-    );
-    RegisterApp( "scope", 2, doCommandScopeFill, "degrees",
-        "fill with scope signal with degree offset"
     );
     RegisterApp( "sdspeed", 1, doCommandTestSDSpeed, "",
         "test SD read speed"
@@ -3537,7 +3424,59 @@ int processCommandLine(char *line)
                 printf("expected at least %d words for command \"%s\", parsed only %d\n", cmd->minWords, cmd->name, wordsCount);
                 usage();
             } else {
-                return cmd->go(wordsCount, words);
+
+#if 0
+                // save memory allocation state to restore later
+                extern unsigned int __malloc_sbrk_base;
+                extern unsigned int __malloc_trim_threshold;
+                extern char *__malloc_av_[0x408];
+                static unsigned int save__malloc_sbrk_base;
+                static unsigned int save__malloc_trim_threshold;
+                static unsigned char save__malloc_av_[0x408];
+                void* oldbrk = sbrk(0);
+                printf("previous brk = %p\n", oldbrk);
+                save__malloc_sbrk_base = __malloc_sbrk_base;
+                save__malloc_trim_threshold = __malloc_trim_threshold;
+                memcpy(save__malloc_av_, __malloc_av_, sizeof(save__malloc_av_));
+                printf("old __malloc_sbrk_base: %08X\n", *(unsigned int*) save__malloc_sbrk_base);
+                printf("old __malloc_trim_threshold: %08X\n", *(unsigned int*) save__malloc_trim_threshold);
+                printf("old __malloc__av_:\n");
+                printf("    ");
+                for(int i = 0; i < 102; i++) {
+                     printf(" %08X", *(unsigned int*)(save__malloc_av_ + i * 4));
+                     if((i % 8 == 0) && (i != 101)) {
+                         printf("\n    ");
+                     }
+                }
+                printf("\n");
+                SERIAL_flush();
+#endif
+
+                // Need to initialize app BSS somehow - need mini-loader
+                int result = cmd->go(wordsCount, words);
+
+#if 0
+                // reset memory allocation bss
+                extern unsigned char __malloc_current_mallinfo[0x28];
+                extern unsigned int __malloc_max_sbrked_mem;
+                extern unsigned int __malloc_max_total_mem;
+                extern unsigned int __malloc_top_pad;
+                memset(__malloc_current_mallinfo, 0, 0x28);
+                __malloc_max_sbrked_mem = 0;
+                __malloc_max_total_mem = 0;
+                __malloc_top_pad = 0;
+                // restore memory allocation data
+                __malloc_sbrk_base = save__malloc_sbrk_base;
+                __malloc_trim_threshold = save__malloc_trim_threshold;
+                memcpy(__malloc_av_, save__malloc_av_, sizeof(save__malloc_av_));
+                printf("new brk = %p\n", sbrk(0));
+                int brkdiff = sbrk(0) - oldbrk;
+                memset(oldbrk, 0, brkdiff);
+                sbrk(-brkdiff);
+                printf("reset brk = %p\n", sbrk(0));
+#endif
+
+                return result;
             }
         }
     }
@@ -3583,7 +3522,7 @@ void process_local_key(unsigned char c)
     }
 }
 
-uint32_t vectorTable[100] __attribute__ ((aligned (512)));
+uint32_t /* __attribute__((section (".ccmram"))) */ vectorTable[100] __attribute__ ((aligned (512)));
 
 extern int KBDInterrupts;
 extern int UARTInterrupts;
@@ -3595,7 +3534,7 @@ int main()
     memcpy(vectorTable, oldVectorTable, sizeof(vectorTable));
     SCB->VTOR = (uint32_t)vectorTable; // This didn't help glitching, and can't be in *data* CCM RAM
 
-    SystemClock_Config(); // XXX resets all CCM variables.
+    SystemClock_Config(); 
 
     LED_init();
     LED_beat_heart();
@@ -3687,16 +3626,16 @@ int main()
     { 
         GPIO_InitTypeDef  GPIO_InitStruct;
 
-        GPIO_InitStruct.Pin = GPIO_PIN_9;
+        GPIO_InitStruct.Pin = GPIO_PIN_13;
         GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
         GPIO_InitStruct.Pull = GPIO_PULLDOWN;
         GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-        HAL_GPIO_Init(GPIOC, &GPIO_InitStruct); 
+        HAL_GPIO_Init(GPIOA, &GPIO_InitStruct); 
     }
     delay_ms(50);
 
     // If button is pushed down, enter clock config inspector
-    if(HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_9)) {
+    if(HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_13)) {
 
         debugOverlayEnabled = 1;
         memset(debugDisplay, 0, debugDisplayWidth * debugDisplayHeight);
@@ -3707,7 +3646,7 @@ int main()
         sprintf(debugDisplay[debugLine++], "Inspector");
 
         delay_ms(50);
-        while(HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_9));
+        while(HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_13));
         delay_ms(50);
 
         int counter = 0; 
@@ -3762,13 +3701,13 @@ int main()
             { 
                 GPIO_InitTypeDef  GPIO_InitStruct;
 
-                GPIO_InitStruct.Pin = GPIO_PIN_9;
+                GPIO_InitStruct.Pin = GPIO_PIN_13;
                 GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
                 GPIO_InitStruct.Pull = GPIO_PULLDOWN;
                 GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-                HAL_GPIO_Init(GPIOC, &GPIO_InitStruct); 
+                HAL_GPIO_Init(GPIOA, &GPIO_InitStruct); 
             }
-            while(!HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_9)) {
+            while(!HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_13)) {
                 delay_ms(50);
             }
             delay_ms(250);
@@ -3808,8 +3747,8 @@ int main()
         // Should be in VBlank callback so is continuously updated
         if(showScanoutStats) {
             debugOverlayEnabled = 1;
-            uint32_t currentField = fieldNumber;
-            while(currentField == fieldNumber); // Wait for VBLANK
+            uint32_t currentFrame = frameNumber;
+            while(currentFrame == frameNumber); // Wait for VBLANK
             memset(debugDisplay, 0, debugDisplayWidth * debugDisplayHeight);
             sprintf(debugDisplay[debugDisplayHeight - 4], "UART %d", UARTInterrupts);
             sprintf(debugDisplay[debugDisplayHeight - 3], "KBD %d", KBDInterrupts);
