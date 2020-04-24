@@ -4,22 +4,16 @@
 #include "utility.h"
 #include "graphics.h"
 #include "rocinante.h"
-#include "ff.h"
 
 static int AppLess(int argc, char **argv)
 {
     const char *filename = argv[1];
 
-    FIL file;
-    FRESULT result = f_open (&file, argv[1], FA_READ | FA_OPEN_EXISTING);
-    if(result) {
-        printf("ERROR: couldn't open \"%s\" for reading, FatFS result %d\n", filename, result);
-        return COMMAND_FAILED;
-    }
+    FILE *fp = fopen(argv[1], "r");
 
     int lineNumber = 0;
     static char line[80];
-    while(f_gets(line, sizeof(line), &file)) {
+    while(fgets(line, sizeof(line), fp)) {
         if(lineNumber++ > 22) { // XXX probe textport height
             printf("... PRESS ANY KEY TO CONTINUE\n");
 	    __io_getchar();
@@ -29,7 +23,7 @@ static int AppLess(int argc, char **argv)
             putchar(*p);
     }
 
-    f_close(&file);
+    fclose(fp);
 
     return COMMAND_CONTINUE;
 }
