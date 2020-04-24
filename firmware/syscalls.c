@@ -16,6 +16,8 @@
 #include <unistd.h>
 #include <sys/wait.h>
 
+#include "ff.h"
+
 #undef errno
 extern int errno;
 
@@ -65,6 +67,7 @@ int _gettimeofday (struct timeval * tp, struct timezone * tzp)
 
   return 0;
 }
+
 void initialise_monitor_handles()
 {
 }
@@ -86,8 +89,16 @@ void _exit (int status)
 	while (1) {}
 }
 
+#define MAX_FILES 8
+enum { FD_OFFSET = 3};
+static FIL files[MAX_FILES];    /* starting with fd=3, so fd 3 through 10 */
+static int filesOpened[MAX_FILES];
+
 int _write(int file, char *ptr, int len)
 {
+    if(file < 0) { errno =  EINVAL; return -1; }
+
+    if((file == 0) || (file == 1) || (file == 2)) {
 	int DataIdx;
 
 		for (DataIdx = 0; DataIdx < len; DataIdx++)
@@ -95,11 +106,34 @@ int _write(int file, char *ptr, int len)
 		   __io_putchar( *ptr++ );
 		}
 	return len;
+    } else {
+        int myFile = file - FD_OFFSET;
+        if(!filesOpened[myFile]) {
+            printf("XXX write: file not opened\n");
+            errno = EBADF;
+            return -1;
+        }
+        unsigned int wrote;
+        FRESULT result = f_write(&files[myFile], ptr, len, &wrote);
+        if(result != FR_OK) {
+            printf("XXX write: file result %d\n", result);
+            errno = EIO;
+            return -1;
+        }
+        return wrote;
+    }
 }
 
 int _close(int file)
 {
-	return -1;
+    int myFile = file - FD_OFFSET;
+    if(!filesOpened[myFile]) {
+        errno = EBADF;
+        return -1;
+    }
+    f_close(&files[myFile]);
+    filesOpened[myFile] = 0;
+    return 0;
 }
 
 int _fstat(int file, struct stat *st)
@@ -115,25 +149,109 @@ int _isatty(int file)
 
 int _lseek(int file, int ptr, int dir)
 {
+    if(file < 0) { errno =  EINVAL; return -1; }
+
+    if((file == 0) || (file == 1) || (file == 2)) {
 	return 0;
+    } else {
+        int myFile = file - FD_OFFSET;
+        if(!filesOpened[myFile]) {
+            printf("XXX lseek: file not opened %d\n", myFile);
+            errno = EBADF;
+            return -1;
+        }
+        FRESULT result;
+        if(dir == SEEK_SET) {
+            result = f_lseek(&files[myFile], ptr);
+        } else if(dir == SEEK_CUR) {
+            result = f_lseek(&files[myFile], ptr + f_tell(&files[myFile]));
+        } else /* SEEK_END */ {
+            result = f_lseek(&files[myFile], f_size(&files[myFile]) - 1 - ptr);
+        }
+        if(result != FR_OK) {
+            printf("XXX lseek: result not OK %d\n", result);
+            errno = EIO;
+            return -1;
+        }
+        return f_tell(&files[myFile]);
+    }
 }
 
 int _read(int file, char *ptr, int len)
 {
+    if(file < 0) { errno =  EINVAL; return -1; }
+
+    if((file == 0) || (file == 1) || (file == 2)) {
 	int DataIdx;
 
 	for (DataIdx = 0; DataIdx < len; DataIdx++)
 	{
 	  *ptr++ = __io_getchar();
 	}
-
-   return len;
+        return len;
+    } else {
+        int myFile = file - FD_OFFSET;
+        if(!filesOpened[myFile]) {
+            printf("XXX read: file not opened %d\n", myFile);
+            errno = EBADF;
+            return -1;
+        }
+        unsigned int wasRead;
+        FRESULT result = f_read(&files[myFile], ptr, len, &wasRead);
+        if(result != FR_OK) {
+            printf("XXX read: result not OK %d\n", result);
+            errno = EIO;
+            return -1;
+        }
+        return wasRead;
+    }
 }
 
 int _open(char *path, int flags, ...)
 {
-	/* Pretend like we always fail */
-	return -1;
+    if(path == NULL) {
+        errno = EFAULT;
+        return -1;
+    }
+
+    int which = 0;
+    while(which < MAX_FILES && filesOpened[which]) {
+        which++;
+    }
+    if(which >= MAX_FILES) {
+        return ENFILE;
+    }
+
+    int FatFSFlags = 0;
+
+    if(flags == O_RDONLY) {
+        FatFSFlags |= FA_READ | FA_OPEN_EXISTING;
+    } else if(flags & O_WRONLY) {
+        FatFSFlags |= FA_WRITE;
+    } else if(flags & O_RDWR) {
+        FatFSFlags |= FA_WRITE | FA_READ;
+    }
+
+    if(flags & O_APPEND) {
+        FatFSFlags |= FA_OPEN_APPEND;
+    }
+    if(flags & O_CREAT) {
+        FatFSFlags |= FA_CREATE_NEW;
+    }
+    if(flags & O_TRUNC) {
+        FatFSFlags |= FA_CREATE_ALWAYS;
+    }
+    errno = 0;
+    printf("XXX opened from flags 0x%X with FatFSFlags 0x%X\n", flags, FatFSFlags);
+    FRESULT result = f_open (&files[which], path, FatFSFlags);
+    if(result) {
+        printf("XXX open couldn't open \"%s\" for reading, FatFS result %d\n", path, result);
+        errno = EIO;
+        return -1;
+    }
+    filesOpened[which] = 1;
+
+    return which + FD_OFFSET;
 }
 
 int _wait(int *status)
