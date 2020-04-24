@@ -56,7 +56,7 @@ typedef struct VideoPixmapParameters
 //--------------------------------------------------------------------------
 // Textport video mode enums and structs
 
-enum VideoTextportAttributes { TEXT_8BIT_WHITE_ON_BLACK, TEXT_8BIT_BLACK_ON_WHITE, TEXT_16BIT_8_3_3_2_RICH } attributes;
+enum VideoTextportAttributes { TEXT_8BIT_WHITE_ON_BLACK, TEXT_8BIT_BLACK_ON_WHITE, TEXT_16BIT_8_3_3_2_RICH };
 
 typedef struct VideoTextportInfo
 {
