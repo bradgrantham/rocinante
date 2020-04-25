@@ -1,170 +1,170 @@
-Rein it in... or not
-    How to wrap up with a bow fast?
-        board with 415 or 745 and microSD, two DB9s, PS/2 keyboard, NTSC composite out, mono Line-out, USB in for power and programming and stick an FTDI for UART?
-        Be able to demo
-            Wolfenstein
-            ColecoVision
-            show
-            3D Spin
-            play sound (in background?)
-        Leave *potential* to hook Channel F 9-pin to DB9s
-        Blog post
-        Build docs
-        API docs
-    try out HSI oscillator - can NTSC color be stable?
-    system button kicks back to text 0?
-    clean up rect mode
-    setup a software interrupt for VBlank processing (e.g. update scanout stats, audio goop) and trigger it from row=262 and row = 525 -> event interrupt?
-    make a scrollback buffer (how to scroll back?)
-        2 pages of 80x24 = 3840 bytes, need to keep in RAM somewhere
-    frame stats should be a histogram
-    Regularize I/O, get keyboard and serial combined into one queue
-        serial and textport cooked should flush on '\n'
-        serial and keyboard should interrupt and fill one buffer
-        int InputGetChar(c);    // -1 if no key waiting, maybe support raw modes for PS/2
-        int InputWaitChar(c);
-        OutputPutChar(int c);
-    help and other output should be paged -
-        have a special mode in non-VT102 mode?  Start Paging / Stop Paging?
-        OutputSetPaging(int paging)
-    Move NTSC goop to another .c
-    Move Audio goop to another .c
-    Add some things to shell
-        startup.sh # run from disk, quit scripting on blue button
-        # run from a file
-            will recursion work the way you've set it up?
-        # parse between "" as one word
-        # break commands on ";" outside ""
-        # ignore everything after '#' outside ""
-        sleep floatseconds # easy
-        # variables - "$var"?
-        getchar [var] # get a single character
-        read [var] # get everything up to ENTER
-        echo everything afterwards is echoed # easy
-        # pixmap only :
-            palette N r g b
-            circle N x y r
-            line N x0 y0 x1 y1
-            clear N
-        # expressions
-        for var = A to B [step C] ; endfor
-        for var in A B C D E F G ; endfor
-    VideoModeGetInfo should take a type so it can avoid copying wrong struct
-    everything should return 0 on success or non-zero error or void if it can't fail
-    audio
-        22050Hz?  11025Hz?  8000Hz?
-        write audio sample immediately on entry to line ISR?  Then calculate next one right after that, then do video calculation?
-            Then audio resampling would happen at the line rate for whatever video mode is current...
-        Do DMA at 22050 from double-buffered 512-byte buffers?  Could conflict with video but should be able to set priority lower.
-        stereo audio output?
-        audio modes:
-            MIXED: add a finite-length U8 with arbitrary sample rate to the stream, audio processing will add up all active ones
-            DIRECT: app callback to fill a buffer at a rate given to the callback
-        does there need to be a mix in the DIRECT mode for things like beep, etc?
-    vile sucks, figure it out or replace it; issues:
-        #dd doesn't work
-        O and o behave weirdly
-        0 does not go to the beginning of the line
-        a and then enter does not scroll down
-        #G uses line numbers off by one - is this termios?
-    VT102 handling (in combination with vile) doesn't handle inserting a line?
-    image viewer should add together lines and pixels so data is not abandoned
-    would be nice if video modes could have multiple submodes
-        pixmap *and* text for last 4 rows
-        wolfenstein *and* pixmap for bottom stats *and* upper-left small pixmap or text for FPS
-    Chaiscript?
-    special segment mode - 320 pixels wide (so 640 clocks, 2 clocks wide)
-        app
-            transforms lit, gouraud triangles to screen
-            intersect scanlines with triangles
-                output list of scanline edges
-                do intersection and clipping of edges in depth
-                sort in X including background
-        video mode
-            walks segments in turn assuming they touch all pixels
-            interpolating, what?  RGB probably too slow - HSV?
-            test program = circle
-        Look up texture?  May be too hard to do perspective correction?
-    Should debug overlay XOR or just have black background?
-        find pixel under and set white or black based on that?
-    Should NTSC modes take an RGB and use some kind of optimized lookup of 4 pixels at a time?
-        If DVDs really have 700 vertical lines resolution, what do they do when going to Composite?
-    Get DB9 joystick working
-        uint32_t InputGetJoystickDir(int whichJoy) // flags or'd ; JOYSTICK_LEFT, etc
-        uint32_t InputGetJoystickButton(int whichJoy) // flags or'd ; JOYSTICK_BUTTON0, JOYSTICK_BUTTON1, etc
-        get Coleco joystick working
-    Raycaster game!
-        monsters come after you, can be shot, inflict damage within certain range
-        need sprites for powerups, monsters other goop
-        gun
-        bottom row shows health, points
-        health powerups?
-        put texture on ceiling and floor
-    video needs a "switching" mode
-        old mode -> blank (fillrow does black) -> new mode
-    PS/2 mouse?
-    "Apps"
-        Apps should have some kind of heap for their use freed up before each app
-            limit use by main as much as possible - mark heap with some kind of symbol?
-        Should have a POSIX harness for running and testing the apps
-            at least one of all modes for testing (how to do weird modes?)
-        System APIs that Apps can call
-            OS/stdlib calls
-                putchar?  getchar?
-                malloc, free, etc
-                fopen, fclose, etc
-            video mode and config (NTSC vs VGA handled by hard board switch)
-            serial port control
-            register vblank handler
-            get time and sleep
-            audio mode and config
-            get keyboard input
-            read DB9 joystick
-            use Chan's FatFS directly, routines implemented in main
-            layered facilities
-                textport
-                VT102 terminal processing (on textport)
-                    essentially just init() and putchar()
-                graphics routines
+Are things any different if nothing is in ccm?
+How to wrap up with a bow fast?
+    board with 415 or 745 and microSD, two DB9s, PS/2 keyboard, NTSC composite out, mono Line-out, USB in for power and programming and stick an FTDI for UART?
+    Be able to demo
         Wolfenstein
-        Image Viewer (ppm?)
-        3D viewer
-        BASIC
-        movie player
-        CP/M emulation
-        Colecovision
-        Apple2e
-        WeFAX decoder
-    Additional video modes
-        TMS 9918A mode - expose the chip I/O
-            TMS pixels area is 192 lines high
-        Apple //e mode - give pointers to memory and soft switches
-        DCT mode
-        scanline edge rendered mode - make RGB-to-byte as fast as possible
-    Channel F emulator, 9pin header adapters (bake into controller for Bart)
-        need 16 pins for two controllers!
-    Colecovision emulator
-    Some kind of 3D uberdemo, realtime scan out, buffer of sorted scanline segments?
+        ColecoVision
+        show
+        3D Spin
+        play sound (in background?)
+    Leave *potential* to hook Channel F 9-pin to DB9s
+    Blog post
+    Build docs
+    API docs
+try out HSI oscillator - can NTSC color be stable?
+system button kicks back to text 0?
+clean up rect mode
+setup a software interrupt for VBlank processing (e.g. update scanout stats, audio goop) and trigger it from row=262 and row = 525 -> event interrupt?
+make a scrollback buffer (how to scroll back?)
+    2 pages of 80x24 = 3840 bytes, need to keep in RAM somewhere
+frame stats should be a histogram
+Regularize I/O, get keyboard and serial combined into one queue
+    serial and textport cooked should flush on '\n'
+    serial and keyboard should interrupt and fill one buffer
+    int InputGetChar(c);    // -1 if no key waiting, maybe support raw modes for PS/2
+    int InputWaitChar(c);
+    OutputPutChar(int c);
+help and other output should be paged -
+    have a special mode in non-VT102 mode?  Start Paging / Stop Paging?
+    OutputSetPaging(int paging)
+Move NTSC goop to another .c
+Move Audio goop to another .c
+Add some things to shell
+    startup.sh # run from disk, quit scripting on blue button
+    # run from a file
+        will recursion work the way you've set it up?
+    # parse between "" as one word
+    # break commands on ";" outside ""
+    # ignore everything after '#' outside ""
+    sleep floatseconds # easy
+    # variables - "$var"?
+    getchar [var] # get a single character
+    read [var] # get everything up to ENTER
+    echo everything afterwards is echoed # easy
+    # pixmap only :
+        palette N r g b
+        circle N x y r
+        line N x0 y0 x1 y1
+        clear N
+    # expressions
+    for var = A to B [step C] ; endfor
+    for var in A B C D E F G ; endfor
+VideoModeGetInfo should take a type so it can avoid copying wrong struct
+everything should return 0 on success or non-zero error or void if it can't fail
+audio
+    22050Hz?  11025Hz?  8000Hz?
+    write audio sample immediately on entry to line ISR?  Then calculate next one right after that, then do video calculation?
+        Then audio resampling would happen at the line rate for whatever video mode is current...
+    Do DMA at 22050 from double-buffered 512-byte buffers?  Could conflict with video but should be able to set priority lower.
+    stereo audio output?
+    audio modes:
+        MIXED: add a finite-length U8 with arbitrary sample rate to the stream, audio processing will add up all active ones
+        DIRECT: app callback to fill a buffer at a rate given to the callback
+    does there need to be a mix in the DIRECT mode for things like beep, etc?
+vile sucks, figure it out or replace it; issues:
+    #dd doesn't work
+    O and o behave weirdly
+    0 does not go to the beginning of the line
+    a and then enter does not scroll down
+    #G uses line numbers off by one - is this termios?
+VT102 handling (in combination with vile) doesn't handle inserting a line?
+image viewer should add together lines and pixels so data is not abandoned
+would be nice if video modes could have multiple submodes
+    pixmap *and* text for last 4 rows
+    wolfenstein *and* pixmap for bottom stats *and* upper-left small pixmap or text for FPS
+Chaiscript?
+special segment mode - 320 pixels wide (so 640 clocks, 2 clocks wide)
+    app
+        transforms lit, gouraud triangles to screen
+        intersect scanlines with triangles
+            output list of scanline edges
+            do intersection and clipping of edges in depth
+            sort in X including background
+    video mode
+        walks segments in turn assuming they touch all pixels
+        interpolating, what?  RGB probably too slow - HSV?
+        test program = circle
+    Look up texture?  May be too hard to do perspective correction?
+Should debug overlay XOR or just have black background?
+    find pixel under and set white or black based on that?
+Should NTSC modes take an RGB and use some kind of optimized lookup of 4 pixels at a time?
+    If DVDs really have 700 vertical lines resolution, what do they do when going to Composite?
+Get DB9 joystick working
+    uint32_t InputGetJoystickDir(int whichJoy) // flags or'd ; JOYSTICK_LEFT, etc
+    uint32_t InputGetJoystickButton(int whichJoy) // flags or'd ; JOYSTICK_BUTTON0, JOYSTICK_BUTTON1, etc
+    get Coleco joystick working
+Raycaster game!
+    monsters come after you, can be shot, inflict damage within certain range
+    need sprites for powerups, monsters other goop
+    gun
+    bottom row shows health, points
+    health powerups?
+    put texture on ceiling and floor
+video needs a "switching" mode
+    old mode -> blank (fillrow does black) -> new mode
+PS/2 mouse?
+"Apps"
+    Apps should have some kind of heap for their use freed up before each app
+        limit use by main as much as possible - mark heap with some kind of symbol?
+    Should have a POSIX harness for running and testing the apps
+        at least one of all modes for testing (how to do weird modes?)
+    System APIs that Apps can call
+        OS/stdlib calls
+            putchar?  getchar?
+            malloc, free, etc
+            fopen, fclose, etc
+        video mode and config (NTSC vs VGA handled by hard board switch)
+        serial port control
+        register vblank handler
+        get time and sleep
+        audio mode and config
+        get keyboard input
+        read DB9 joystick
+        use Chan's FatFS directly, routines implemented in main
+        layered facilities
+            textport
+            VT102 terminal processing (on textport)
+                essentially just init() and putchar()
+            graphics routines
+    Wolfenstein
+    Image Viewer (ppm?)
+    3D viewer
     BASIC
-        just implement 80x24 text mode for now
-        video N # set video mode N
-        lut c, r, g, b # calculate lut entry c for int r, g, b
-        plot x, y, c    # plot pixel x, y with lut c
-        line x0, y0, x1, y1, c # plot line
-        clear c # clear screen to LUT color
-        text N # text mode
-        split {0,1} # split screen graphics and text (dependent on the modes?)
-        handle a bunch of old BASIC programs like STARTREK, WUMPUS, ...?
-        implement lunar lander
-        Life: https://www.atariarchives.org/basicgames/showpage.php?page=100
-            https://github.com/rricharz/R65/blob/master/Basic/life.bas
-        Lunar Lander: https://www.atariarchives.org/basicgames/showpage.php?page=106
-            http://vintage-basic.net/bcg/lunar.bas
-        Sine Wave: https://www.atariarchives.org/basicgames/showpage.php?page=146
-            http://www.vintage-basic.net/bcg/sinewave.bas
-        Super Star Trek: https://www.atariarchives.org/basicgames/showpage.php?page=157
-        3D Plot: https://www.atariarchives.org/basicgames/showpage.php?page=167
-            http://vintage-basic.net/bcg/3dplot.bas
+    movie player
+    CP/M emulation
+    Colecovision
+    Apple2e
+    WeFAX decoder
+Additional video modes
+    TMS 9918A mode - expose the chip I/O
+        TMS pixels area is 192 lines high
+    Apple //e mode - give pointers to memory and soft switches
+    DCT mode
+    scanline edge rendered mode - make RGB-to-byte as fast as possible
+Channel F emulator, 9pin header adapters (bake into controller for Bart)
+    need 16 pins for two controllers!
+Colecovision emulator
+Some kind of 3D uberdemo, realtime scan out, buffer of sorted scanline segments?
+BASIC
+    just implement 80x24 text mode for now
+    video N # set video mode N
+    lut c, r, g, b # calculate lut entry c for int r, g, b
+    plot x, y, c    # plot pixel x, y with lut c
+    line x0, y0, x1, y1, c # plot line
+    clear c # clear screen to LUT color
+    text N # text mode
+    split {0,1} # split screen graphics and text (dependent on the modes?)
+    handle a bunch of old BASIC programs like STARTREK, WUMPUS, ...?
+    implement lunar lander
+    Life: https://www.atariarchives.org/basicgames/showpage.php?page=100
+        https://github.com/rricharz/R65/blob/master/Basic/life.bas
+    Lunar Lander: https://www.atariarchives.org/basicgames/showpage.php?page=106
+        http://vintage-basic.net/bcg/lunar.bas
+    Sine Wave: https://www.atariarchives.org/basicgames/showpage.php?page=146
+        http://www.vintage-basic.net/bcg/sinewave.bas
+    Super Star Trek: https://www.atariarchives.org/basicgames/showpage.php?page=157
+    3D Plot: https://www.atariarchives.org/basicgames/showpage.php?page=167
+        http://vintage-basic.net/bcg/3dplot.bas
 
 
 4/13
@@ -302,8 +302,12 @@ interlaced?  Does there need to be a non-interlaced vs interlaced mode?
         special line 282 - write SyncPorch fron BackPorch to middle of line after mode's fillRow()
         fix all fillRows to handle row > 250
 
-/Users/grantham/packages/gcc-arm-none-eabi-7-2018-q2-update/bin/arm-none-eabi-objdump -x main.elf
 
 Why is there purple where there should be brown? -> palette setting failure?  Clamping in YIQ calculations?
     looks like a DAC issue - switch from 0x7F to 0x80 is a big voltage drop
     Assume this would get fixed with .1% tolerance resistors (or even 1% tolerance)
+
+objdump - dump all sections:
+    /Users/grantham/packages/gcc-arm-none-eabi-7-2018-q2-update/bin/arm-none-eabi-objdump -x main.elf
+objdump - Sort regions 0x2000000 - 0x2000ffff by size (sort of, key not quite right)
+    /Users/grantham/packages/gcc-arm-none-eabi-7-2018-q2-update/bin/arm-none-eabi-objdump -x main.elf | egrep ^2000 | sort -n -k 1.22,1.80
