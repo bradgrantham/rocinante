@@ -24,6 +24,8 @@
 #include "keyboard.h"
 #include "reset_button.h"
 
+#define SECTION_CCMRAM __attribute__((section (".ccmram")))
+
 // System APIs
 #include "videomode.h"
 #include "graphics.h"
@@ -264,8 +266,12 @@ int __io_getchar(void)
 
 void __io_putchar( char c )
 {
-    if(gOutputDevices & OUTPUT_TO_SERIAL)
+    if(gOutputDevices & OUTPUT_TO_SERIAL) {
         SERIAL_enqueue_one_char(c);
+        if(c == '\n') {
+            SERIAL_flush();
+        }
+    }
     if(gOutputDevices & OUTPUT_TO_TEXTPORT) {
         TextportPutchar(c);
     }
@@ -369,17 +375,17 @@ unsigned char voltageToDACValue(float voltage)
 //----------------------------------------------------------------------------
 // NTSC Video goop
 
-int __attribute__((section (".ccmram"))) markHandlerInSamples = 0;
+int SECTION_CCMRAM markHandlerInSamples = 0;
 
-uint16_t __attribute__((section (".ccmram"))) rowCyclesSpent[525];
-uint32_t __attribute__((section (".ccmram"))) DMAFIFOUnderruns = 0;
-uint32_t __attribute__((section (".ccmram"))) DMATransferErrors = 0;
+uint16_t SECTION_CCMRAM rowCyclesSpent[525];
+uint32_t SECTION_CCMRAM DMAFIFOUnderruns = 0;
+uint32_t SECTION_CCMRAM DMATransferErrors = 0;
 typedef enum { NTSC_SOLID_FILL, NTSC_COLOR_TEST, NTSC_SCAN_TEST, NTSC_USE_VIDEO_MODE} VideoMode;
-VideoMode __attribute__((section (".ccmram"))) NTSCMode = NTSC_COLOR_TEST;
-int __attribute__((section (".ccmram"))) videoScanTestLeft = 200;
-int __attribute__((section (".ccmram"))) videoScanTestRight = 700;
-int __attribute__((section (".ccmram"))) videoScanTestTop = 50;
-int __attribute__((section (".ccmram"))) videoScanTestBottom = 200;
+VideoMode SECTION_CCMRAM NTSCMode = NTSC_COLOR_TEST;
+int SECTION_CCMRAM videoScanTestLeft = 200;
+int SECTION_CCMRAM videoScanTestRight = 700;
+int SECTION_CCMRAM videoScanTestTop = 50;
+int SECTION_CCMRAM videoScanTestBottom = 200;
 
 // Number of samples we target, 4x colorburst yields 227.5 cycles, or 910 samples at 14.318180MHz
 // But we cheat and actually scan out 912 cycles to be a multiple
@@ -408,15 +414,15 @@ int __attribute__((section (".ccmram"))) videoScanTestBottom = 200;
 #define NTSC_SYNC_WHITE_VOLTAGE   1.0f  /* VCR had .912v */
 
 // These are in CCM to reduce contention with SRAM1 during DMA 
-unsigned char __attribute__((section (".ccmram"))) NTSCEqSyncPulseLine[ROW_SAMPLES];
-unsigned char __attribute__((section (".ccmram"))) NTSCVSyncLine[ROW_SAMPLES];
-unsigned char __attribute__((section (".ccmram"))) NTSCBlankLine[ROW_SAMPLES];
+unsigned char SECTION_CCMRAM NTSCEqSyncPulseLine[ROW_SAMPLES];
+unsigned char SECTION_CCMRAM NTSCVSyncLine[ROW_SAMPLES];
+unsigned char SECTION_CCMRAM NTSCBlankLine[ROW_SAMPLES];
 
-unsigned char __attribute__((section (".ccmram"))) NTSCSyncTip;
-unsigned char __attribute__((section (".ccmram"))) NTSCSyncPorch;
-unsigned char __attribute__((section (".ccmram"))) NTSCBlack;
-unsigned char __attribute__((section (".ccmram"))) NTSCWhite;
-unsigned char __attribute__((section (".ccmram"))) NTSCMaxAllowed;
+unsigned char SECTION_CCMRAM NTSCSyncTip;
+unsigned char SECTION_CCMRAM NTSCSyncPorch;
+unsigned char SECTION_CCMRAM NTSCBlack;
+unsigned char SECTION_CCMRAM NTSCWhite;
+unsigned char SECTION_CCMRAM NTSCMaxAllowed;
 
 int NTSCEqPulseClocks;
 int NTSCVSyncClocks;
@@ -435,10 +441,10 @@ int NTSCBackPorchClocks;
 // So for 53248, a reasonable 4:3 framebuffer is 400x128
 // 4:3 aspect would be 1.333
 // 400 wide would be 9 inches, and 128 high would be 6.656 inches, and that's 1.352, so it's not too bad
-unsigned char __attribute__((section (".ccmram"))) imgBuffer[IMGBUFFER_SIZE];
+unsigned char SECTION_CCMRAM imgBuffer[IMGBUFFER_SIZE];
 
-uint32_t __attribute__((section (".ccmram"))) paletteToWave[2][256];
-unsigned char __attribute__((section (".ccmram"))) rowPalette[525];
+uint32_t SECTION_CCMRAM paletteToWave[2][256];
+unsigned char SECTION_CCMRAM rowPalette[525];
 
 // XXX these are in SRAM2 to reduce contention with SRAM1 during DMA
 #define SWATCH_SIZE     1
@@ -588,8 +594,8 @@ int NTSCSetRowPalette(int row, int palette)
 }
 
 static const VideoModeEntry NTSCModes[];
-VideoFillRowFunc __attribute__((section (".ccmram"))) VideoCurrentFillRow;
-uint32_t __attribute__((section (".ccmram"))) solidFillWave;
+VideoFillRowFunc SECTION_CCMRAM VideoCurrentFillRow;
+uint32_t SECTION_CCMRAM solidFillWave;
 
 
 void NTSCFillRowBuffer(int frameNumber, int lineNumber, unsigned char *rowBuffer)
@@ -727,7 +733,7 @@ void NTSCFillRowBuffer(int frameNumber, int lineNumber, unsigned char *rowBuffer
 
 // debug overlay scanout
 
-int __attribute__((section (".ccmram"))) debugOverlayEnabled = 0;
+int SECTION_CCMRAM debugOverlayEnabled = 0;
 
 #define debugDisplayWidth 19
 #define debugDisplayHeight 13
@@ -738,7 +744,7 @@ int __attribute__((section (".ccmram"))) debugOverlayEnabled = 0;
 #define debugCharGapPixels 1
 #define debugFontHeightScale 1
 
-char __attribute__((section (".ccmram"))) debugDisplay[debugDisplayHeight][debugDisplayWidth];
+char SECTION_CCMRAM debugDisplay[debugDisplayHeight][debugDisplayWidth];
 
 #include "8x16.h"
 // static int font8x16Width = 8, font8x16Height = 16;
@@ -793,8 +799,8 @@ void fillRowDebugOverlay(int frameNumber, int lineNumber, unsigned char* nextRow
     }
 }
 
-volatile int __attribute__((section (".ccmram"))) lineNumber = 0;
-volatile int __attribute__((section (".ccmram"))) frameNumber = 0;
+volatile int SECTION_CCMRAM lineNumber = 0;
+volatile int SECTION_CCMRAM frameNumber = 0;
 
 void MemoryCopyDMA(unsigned char* dst, unsigned char* src, size_t size)
 {
@@ -821,7 +827,7 @@ void MemoryCopyDMA(unsigned char* dst, unsigned char* src, size_t size)
 
 // XXX audio experiment
 // In this mode we woud have a sampling rate of 15.6998 KHz
-unsigned char __attribute__((section (".ccmram"))) audioBuffer[256];
+unsigned char SECTION_CCMRAM audioBuffer[256];
 volatile int audioBufferPosition = 0;
 
 int doPlay(int argc, char **argv)
@@ -992,7 +998,7 @@ void DMAStopScanout()
 #define font8x8Width 8
 #define font8x8Height 8
 
-unsigned char __attribute__((section (".ccmram"))) font8x8Bits[] = {
+unsigned char SECTION_CCMRAM font8x8Bits[] = {
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0C, 0x12, 0x10,
     0x7C, 0x10, 0x12, 0x7C, 0x00, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08,
     0x08, 0x00, 0x04, 0x08, 0x3C, 0x42, 0x7E, 0x40, 0x3C, 0x00, 0x24,
@@ -1911,7 +1917,7 @@ void Bitmap704x230GetParameters(const VideoModeEntry *modeEntry, void *params_)
     params->rowSize = info->width / 8;
 }
 
-uint32_t __attribute__((section (".ccmram"))) NybblesToMasks[16] = {
+uint32_t SECTION_CCMRAM NybblesToMasks[16] = {
     0x00000000,
     0x000000FF,
     0x0000FF00,
@@ -2802,7 +2808,7 @@ const static VideoModeEntry NTSCModes[] =
 
 // Generic videomode functions
 
-int __attribute__((section (".ccmram"))) CurrentVideoMode = -1;
+int SECTION_CCMRAM CurrentVideoMode = -1;
 
 int VideoGetModeCount()
 {
@@ -3521,7 +3527,7 @@ void process_local_key(unsigned char c)
     }
 }
 
-uint32_t /* __attribute__((section (".ccmram"))) */ vectorTable[100] __attribute__ ((aligned (512)));
+uint32_t /* SECTION_CCMRAM */ vectorTable[100] __attribute__ ((aligned (512)));
 
 extern int KBDInterrupts;
 extern int UARTInterrupts;
