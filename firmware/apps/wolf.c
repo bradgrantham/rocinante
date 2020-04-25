@@ -187,9 +187,11 @@ static int AppWolf(int argc, char **argv)
     float eyeZ = 4.5;
     float rot = 0;
 
+    setvbuf(stdin, NULL, _IONBF, 0);
+
     int quit = 0;
     do {
-        int key = __io_getchar();
+        int key = getchar();
         float newEyeX;
         float newEyeZ;
         switch(key) {

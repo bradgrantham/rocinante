@@ -870,6 +870,12 @@ static void RegisterCommandPlay(void)
 
 void DMA2_Stream2_IRQHandler(void)
 {
+    // Configure timer TIM2 for performance measurement
+    // TIM9->SR = 0;                       /* reset status */
+    // TIM9->ARR = 0xFFFFFFFF;
+    TIM9->CNT = 0;
+    TIM9->CR1 = TIM_CR1_CEN;            /* enable the timer */
+
     // Clear interrupt flag
     DMA2->LIFCR |= DMA_LIFCR_CTCIF2;
     // DMA2->LIFCR |= DMA_LIFCR_CHTIF2;
@@ -883,11 +889,11 @@ void DMA2_Stream2_IRQHandler(void)
         for(int i = 0; i < 15; i++) { GPIOC->ODR = GPIOC_ODR; }
     }
 
-    if(DMA2->LISR &= DMA_FLAG_FEIF2_6) {
+    if(DMA2->LISR & DMA_FLAG_FEIF2_6) {
         DMA2->LIFCR |= DMA_LIFCR_CFEIF2;
         DMAFIFOUnderruns++;
     }
-    if(DMA2->LISR &= DMA_FLAG_TEIF2_6) {
+    if(DMA2->LISR & DMA_FLAG_TEIF2_6) {
         DMA2->LIFCR |= DMA_LIFCR_CTEIF2;
         DMATransferErrors++;
     }
@@ -896,30 +902,23 @@ void DMA2_Stream2_IRQHandler(void)
     DAC1->DHR8R1 = audioBuffer[audioBufferPosition];
     audioBufferPosition = (audioBufferPosition + 1) % sizeof(audioBuffer);
 
-    // Configure timer TIM2 for performance measurement
-    TIM2->SR = 0;                       /* reset status */
-    TIM2->ARR = 0xFFFFFFFF;
-    TIM2->CNT = 0;
-    TIM2->CR1 = TIM_CR1_CEN;            /* enable the timer */
-
     int whichIsScanning = (DMA2_Stream2->CR & DMA_SxCR_CT) ? 1 : 0;
 
     unsigned char *nextRowBuffer = (whichIsScanning == 1) ? row0 : row1;
 
-    for(int i = 0; i < SWATCH_SIZE; i++) {
-        NTSCFillRowBuffer(frameNumber, lineNumber, nextRowBuffer + ROW_SAMPLES * i);
-        if(debugOverlayEnabled) {
-            fillRowDebugOverlay(frameNumber, lineNumber, nextRowBuffer + ROW_SAMPLES * i);
-        }
-        lineNumber = lineNumber + 1;
-        if(lineNumber == NTSC_FRAME_LINES) {
-            lineNumber = 0;
-            frameNumber++;
-        }
+    NTSCFillRowBuffer(frameNumber, lineNumber, nextRowBuffer);
+    if(debugOverlayEnabled) {
+        fillRowDebugOverlay(frameNumber, lineNumber, nextRowBuffer);
     }
 
-    TIM2->CR1 = 0;            /* stop the timer */
-    rowCyclesSpent[lineNumber] = TIM2->CNT * 2;  // TIM2 is on APB1, so this should be * 4...??
+    lineNumber = lineNumber + 1;
+    if(lineNumber == NTSC_FRAME_LINES) {
+        lineNumber = 0;
+        frameNumber++;
+    }
+
+    TIM9->CR1 = 0;            /* stop the timer */
+    rowCyclesSpent[lineNumber] = TIM9->CNT * 2;  // TIM2 is on APB1, so this should be * 4...??
 
     // A little pulse so we know where we are on the line
     if(markHandlerInSamples) {

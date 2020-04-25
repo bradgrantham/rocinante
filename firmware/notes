@@ -11,17 +11,12 @@ Rein it in... or not
         Blog post
         Build docs
         API docs
-    Why is there purple where there should be brown? -> palette setting failure?  Clamping in YIQ calculations?
-        looks like a DAC issue - switch from 0x7F to 0x80 is a big voltage drop
     try out HSI oscillator - can NTSC color be stable?
-    blue button kicks back to text 0
-    shrink cabling to blue button - do I have any other solderless breadboard buttons?
-    clean up all other video modes
-        still want a rect mode?  solid fill mode?
+    system button kicks back to text 0?
+    clean up rect mode
     setup a software interrupt for VBlank processing (e.g. update scanout stats, audio goop) and trigger it from row=262 and row = 525 -> event interrupt?
     make a scrollback buffer (how to scroll back?)
         2 pages of 80x24 = 3840 bytes, need to keep in RAM somewhere
-    should make a RAM map, understand where I have large uses of memory
     frame stats should be a histogram
     Regularize I/O, get keyboard and serial combined into one queue
         serial and textport cooked should flush on '\n'
@@ -33,6 +28,7 @@ Rein it in... or not
         have a special mode in non-VT102 mode?  Start Paging / Stop Paging?
         OutputSetPaging(int paging)
     Move NTSC goop to another .c
+    Move Audio goop to another .c
     Add some things to shell
         startup.sh # run from disk, quit scripting on blue button
         # run from a file
@@ -64,6 +60,7 @@ Rein it in... or not
         audio modes:
             MIXED: add a finite-length U8 with arbitrary sample rate to the stream, audio processing will add up all active ones
             DIRECT: app callback to fill a buffer at a rate given to the callback
+        does there need to be a mix in the DIRECT mode for things like beep, etc?
     vile sucks, figure it out or replace it; issues:
         #dd doesn't work
         O and o behave weirdly
@@ -304,4 +301,9 @@ interlaced?  Does there need to be a non-interlaced vs interlaced mode?
         line 271 - last 405 of eq pulse then 405 of SyncPorch
         special line 282 - write SyncPorch fron BackPorch to middle of line after mode's fillRow()
         fix all fillRows to handle row > 250
+
 /Users/grantham/packages/gcc-arm-none-eabi-7-2018-q2-update/bin/arm-none-eabi-objdump -x main.elf
+
+Why is there purple where there should be brown? -> palette setting failure?  Clamping in YIQ calculations?
+    looks like a DAC issue - switch from 0x7F to 0x80 is a big voltage drop
+    Assume this would get fixed with .1% tolerance resistors (or even 1% tolerance)

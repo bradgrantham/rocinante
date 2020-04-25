@@ -242,7 +242,7 @@ int con_scroll(int n)
 int con_getch(void)
 {
 	con_flush();
-	return __io_getchar();
+	return getchar();
 }
 
 int con_size(uint8_t c)
@@ -264,11 +264,14 @@ void con_exit(void)
 
 int con_init(void)
 {
+    setvbuf(stdin, NULL, _IONBF, 0);
+
     TextportSetRaw(1);
     VideoTextportInfo info;
     VideoModeGetInfo(VideoGetCurrentMode(), &info);
     screen_width = info.width;
     screen_height = info.height;
+
     return 0;
 }
 

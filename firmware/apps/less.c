@@ -9,14 +9,20 @@ static int AppLess(int argc, char **argv)
 {
     const char *filename = argv[1];
 
-    FILE *fp = fopen(argv[1], "r");
+    FILE *fp = fopen(filename, "r");
+    if(fp == NULL) {
+        printf("couldn't open \"%s\" for reading\n", filename);
+        return COMMAND_FAILED;
+    }
+
+    setvbuf(stdin, NULL, _IONBF, 0);
 
     int lineNumber = 0;
     static char line[80];
     while(fgets(line, sizeof(line), fp)) {
         if(lineNumber++ > 22) { // XXX probe textport height
-            printf("... PRESS ANY KEY TO CONTINUE\n");
-	    __io_getchar();
+            printf("... PRESS ANY KEY TO CONTINUE\n"); SERIAL_flush();
+	    getchar();
             lineNumber = 0;
         }
         for(char *p = line; *p; p++)
