@@ -37,8 +37,8 @@ ENTRY(Reset_Handler)
 _estack = 0x1000FFFC;    /* end of CCMRAM */
 
 /* Generate a link error if heap and stack don't fit into RAM */
-_Min_Heap_Size = 0xD000;;      /* required amount of heap  */
-_Min_Stack_Size = 0x400;; /* required amount of stack */
+_Min_Heap_Size = 0x19000;      /* required amount of heap - actually not required amount - required amount more like 0x9000, but take up all remaining heap as of 4/25 to force being stingy */
+_Min_Stack_Size = 0x400; /* required amount of stack */
 
 /* Specify the memory areas */
 MEMORY
@@ -192,7 +192,7 @@ SECTIONS
 
 
   /* . = ALIGN(8); */
-  /*heap_low = .; *//* for _sbrk */
+  /*heap_low = .; */ /* for _sbrk */
   /*. = . + 0x10000; */ /* 64kB of heap memory */
    /* heap_top = .; */ /* for _sbrk */
   /*  . = . + 0x10000; */ /* 64kB of stack memory */
