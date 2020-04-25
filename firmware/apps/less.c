@@ -21,7 +21,7 @@ static int AppLess(int argc, char **argv)
     static char line[80];
     while(fgets(line, sizeof(line), fp)) {
         if(lineNumber++ > 22) { // XXX probe textport height
-            printf("... PRESS ANY KEY TO CONTINUE\n"); SERIAL_flush();
+            printf("... PRESS ANY KEY TO CONTINUE\n");
 	    getchar();
             lineNumber = 0;
         }

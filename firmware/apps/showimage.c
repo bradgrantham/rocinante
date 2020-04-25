@@ -102,7 +102,7 @@ static int AppShowImage(int argc, char **argv)
         printf("ERROR: couldn't read height from \"%s\", result %d\n", filename, result);
         return COMMAND_FAILED;
     }
-    printf("image is %lu by %lu\n", width, height); SERIAL_flush();
+    printf("image is %lu by %lu\n", width, height);
 
     if((width == 0) || (height == 0)) {
         printf("width or height are 0 so will skip this image.\n");
@@ -138,13 +138,12 @@ static int AppShowImage(int argc, char **argv)
     result = f_read(&file, palette, 256 * 3, &wasread);
     if(result) {
         printf("ERROR: couldn't read palette from \"%s\", result %d\n", filename, result);
-        SERIAL_flush();
         free(palette);
         free(rowError);
         free(rowRGB);
         return COMMAND_FAILED;
     }
-    int paletteSize;
+    int paletteSize = 0;
     if(info.paletteSize >= 256) {
         SetPalette(whichPalette, 256, palette);
         paletteSize = 256;
@@ -183,7 +182,6 @@ static int AppShowImage(int argc, char **argv)
         result = f_read(&file, rowRGB, width * 3, &wasread);
         if(result) {
             printf("ERROR: couldn't read row %d from \"%s\", result %d\n", srcRow, filename, result);
-        SERIAL_flush();
             free(palette);
             free(rowError);
             free(rowRGB);
