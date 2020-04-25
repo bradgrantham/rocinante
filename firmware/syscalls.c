@@ -89,9 +89,9 @@ void _exit (int status)
 	while (1) {}
 }
 
-#define MAX_FILES 8
+#define MAX_FILES 4
 enum { FD_OFFSET = 3};
-static FIL files[MAX_FILES];    /* starting with fd=3, so fd 3 through 10 */
+static FIL files[MAX_FILES];    /* starting with fd=3, so fd 3 through 3 + MAX_FILES - 1 */
 static int filesOpened[MAX_FILES];
 
 int _write(int file, char *ptr, int len)
