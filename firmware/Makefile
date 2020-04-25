@@ -11,7 +11,7 @@ GCC_LIB         ?=      $(TOOLROOT)/lib/gcc/arm-none-eabi/7.3.1
 
 SOURCE_ROOT             ?=       $(shell pwd)
 
-CORTEX_M4_HWFP_CC_FLAGS = -mthumb -mcpu=cortex-m4 -mfloat-abi=hard -mfpu=fpv4-sp-d16 -mlittle-endian
+CORTEX_M4_HWFP_CC_FLAGS = -mthumb -mcpu=cortex-m4 -mfloat-abi=hard -mfpu=fpv4-sp-d16 -mlittle-endian -mslow-flash-data
 TARGET = STM32F415xx
 STM32F4XX_CMSIS_INC_PATH        = $(STM32FCUBEROOT)/Drivers/CMSIS/Include/
 CORTEX_M4_HWFP_LIB_PATH = $(GCC_LIB)/armv7e-m/fpu
@@ -55,7 +55,7 @@ COBJECTS = \
         # need ff_unicode if ExFAT and LFN support are compiled in
 
 MICRORAY_APP_OBJECT     = # apps/microray.o
-MICRORAY_SOURCE         = # -L$(HOME)/trees/microray/
+MICRORAY_SOURCE         = # $(HOME)/trees/microray/
 MICRORAY_LIB_DIR        = # -L$(MICRORAY_SOURCE)/build/arm
 MICRORAY_INC_DIR        = # -I$(MICRORAY_SOURCE)/lib/ray
 MICRORAY_LIB            = # -lmray
