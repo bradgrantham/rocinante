@@ -1,4 +1,3 @@
-Are things any different if nothing is in ccm?
 How to wrap up with a bow fast?
     board with 415 or 745 and microSD, two DB9s, PS/2 keyboard, NTSC composite out, mono Line-out, USB in for power and programming and stick an FTDI for UART?
     Be able to demo
@@ -311,3 +310,5 @@ objdump - dump all sections:
     /Users/grantham/packages/gcc-arm-none-eabi-7-2018-q2-update/bin/arm-none-eabi-objdump -x main.elf
 objdump - Sort regions 0x2000000 - 0x2000ffff by size (sort of, key not quite right)
     /Users/grantham/packages/gcc-arm-none-eabi-7-2018-q2-update/bin/arm-none-eabi-objdump -x main.elf | egrep ^2000 | sort -n -k 1.22,1.80
+
+glitching appears no different if nothing is in CCM.  :(
