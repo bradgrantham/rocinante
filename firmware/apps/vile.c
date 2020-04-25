@@ -1430,7 +1430,7 @@ void display_line(void)
 }
 
 
-int ALLOC = 16384;
+int ALLOC = 32768;
 
 #define USE_MALLOC 1
 
