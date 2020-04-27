@@ -219,16 +219,17 @@ int _open(char *path, int flags, ...)
         which++;
     }
     if(which >= MAX_FILES) {
-        return ENFILE;
+        errno = ENFILE;
+        return -1;
     }
 
     int FatFSFlags = 0;
 
-    if(flags == O_RDONLY) {
+    if((flags & O_ACCMODE) == O_RDONLY) {
         FatFSFlags |= FA_READ | FA_OPEN_EXISTING;
-    } else if(flags & O_WRONLY) {
+    } else if((flags & O_ACCMODE) == O_WRONLY) {
         FatFSFlags |= FA_WRITE;
-    } else if(flags & O_RDWR) {
+    } else if((flags & O_ACCMODE) == O_RDWR) {
         FatFSFlags |= FA_WRITE | FA_READ;
     }
 
@@ -242,7 +243,6 @@ int _open(char *path, int flags, ...)
         FatFSFlags |= FA_CREATE_ALWAYS;
     }
     errno = 0;
-    printf("XXX opened from flags 0x%X with FatFSFlags 0x%X\n", flags, FatFSFlags);
     FRESULT result = f_open (&files[which], path, FatFSFlags);
     if(result) {
         printf("XXX open couldn't open \"%s\" for reading, FatFS result %d\n", path, result);
