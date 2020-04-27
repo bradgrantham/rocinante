@@ -64,3 +64,39 @@ void Rasterize(int x0, int w, float y0, float i0, float q0, float dy, float di, 
         q0 += 4 * dq;
     }
 }
+
+#if 0
+    float sine = sinf(wt + 33.0f / 180.0f * M_PI);
+    float cosine = cosf(wt + 33.0f / 180.0f * M_PI);
+    float signal = y + .41f * (b - y) * sine + .48f * (r - y) * sine + -.27f * (b - y) * cosine+ .74f * (r - y) * cosine;
+    float signal =
+        y + .41f * sine * b - .41 * sine * y +
+        .48f * sine * r - .48f * sine * y + 
+        -.27f * cosine * b + .27f * cosine & y +
+        + .74f * cosine * r - .74f * cosine * y
+#endif
+
+uint32_t rgb[ROW_SAMPLES]; // xrgb
+
+    float signal = y + q * sine + i * cosine;
+
+    // q_ = q * 127 / 152 + 128;
+    // q = q_ * 152 / 127 - 128  * 152 / 127;
+    // i_ = i * 127 / 134 + 128
+    // i = i_ * 134 / 127 - 128  * 134 / 127;
+    // float signal = y + (q_ * 152 / 127 - 128  * 152 / 127) * sine + (i_ * 134 / 127 - 128  * 134 / 127) * cosine;
+    // But this has larger range than signed char:
+    signal = y +
+        q_ * 152 / 127 * sine + 
+        - 128 * 152 / 127 * sine +
+        i_ * 134 / 127 * cosine +
+        - 128  * 134 / 127 * cosine;
+
+    Want, what?  each pixel is:
+        calculate new YI'Q' somehow, each are within [0,256) or [-128,127]
+        Possible use 16-bit signed: __SMLAD, leave them as 16-bit YIQ
+            int32_t YFixed16;   // this is in the range 0x00000000(0) to 0x0000FFFF(.99999)
+            uint32_t IpFixed8QpFixed8;     // Each in the range [
+            int32_t CosFixed8SinFixed8; // Only 4 of these
+            int32_t WaveFixed16 = __SMLAD(IFixed8QFixed8, CosFixed8SinFixed8, YFixed16);
+            // Then calculate Black + (WhiteMinusBlackFixed0 * WAVEFixed16) >> 16
