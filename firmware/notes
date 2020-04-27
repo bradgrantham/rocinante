@@ -1,8 +1,12 @@
+tab should autocomplete at CLI
+    tab in first completes commands
+    tab in second et al completes filenames
 How to wrap up with a bow fast?
     board with 415 or 745 and microSD, two DB9s, PS/2 keyboard, NTSC composite out, mono Line-out, USB in for power and programming and stick an FTDI for UART?
     Be able to demo
         Wolfenstein
         ColecoVision
+        microray
         show
         3D Spin
         play sound (in background?)
@@ -10,15 +14,35 @@ How to wrap up with a bow fast?
     Blog post
     Build docs
     API docs
-try out HSI oscillator - can NTSC color be stable?
+Video API notes
+    Fundamentally, CCMRAM lacks the memory for more than 1 byte per pixel at ~250x200
+        VideoMode has internals that convert to the display specifics
+        VideoMode is the abstraction hiding the memory limitations from the application.
+            Platform libraries do additional useful work, like converting R8G8B8 rows to 256-entry palettized images with Floyd-Steinberg
+        Carve out 128K from 320K in 746, could easily have 512 * 240 * 256 colors
+        Larger chip with 512K, could spare 256K, yield 640x400
+        ** BUT part of the *novelty* of the project is that video is generated at a higher resolution than RAM allows. **
+            e.g. very small palettes - 1, 2, 4 bit; RLE; DCT; specialized renderer (e.g. Wolfenstein, spin)
+    NTSC output is by necessity Waves (DAC samples represent NTSC waveform at 14.31818 MHZ)
+        Probably not much point in having R8G8B8 at 912 pixels per row - can't be represented
+        So need to filter at least chroma down to 3.58MHz - Gaussian of 5 samples?  Could do box filter for start
+            yiq can range from 
+        Individual VideoModes could filter, or just the ones I care about could filter
+        SET_AND_INCREMENT_WAVE(y, i, q)
+    Commit to 565 for VGA output, use 3 DACs (and a whole 16-bit port?  Yikes!)
+        *might* be able to convert 332 to FS-dithered at scan time
+        Hook up to Parallax 332 DAC to start (and maybe dither), create 565 DAC later
+    HDMI can be whatever as long as I have 3 bytes of RGB to look up in a table
+try out HSI oscillator - can NTSC color be stable with internal oscillator?
 system button kicks back to text 0?
+    need a way to interrupt
+    need a way to cancel and return from apps - longjmp?
 clean up rect mode
 setup a software interrupt for VBlank processing (e.g. update scanout stats, audio goop) and trigger it from row=262 and row = 525 -> event interrupt?
 make a scrollback buffer (how to scroll back?)
     2 pages of 80x24 = 3840 bytes, need to keep in RAM somewhere
 frame stats should be a histogram
 Regularize I/O, get keyboard and serial combined into one queue
-    serial and textport cooked should flush on '\n'
     serial and keyboard should interrupt and fill one buffer
     int InputGetChar(c);    // -1 if no key waiting, maybe support raw modes for PS/2
     int InputWaitChar(c);
@@ -46,8 +70,8 @@ Add some things to shell
         line N x0 y0 x1 y1
         clear N
     # expressions
-    for var = A to B [step C] ; endfor
-    for var in A B C D E F G ; endfor
+    for var = A to B [step C] ; ... ; end
+    for var in A B C D E F G ; ... ; end
 VideoModeGetInfo should take a type so it can avoid copying wrong struct
 everything should return 0 on success or non-zero error or void if it can't fail
 audio
