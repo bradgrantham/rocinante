@@ -1,3 +1,10 @@
+MIPmap Wolfenstein
+    make a texture descriptor with pointers to levels
+    extract and set scanline parameters at SetElements time
+    WolfensteinTextureWidth is baked into WolfensteinFillRow
+        so I could either add a width to the texture descriptor
+        or I could make all MIPmaps also be 64 wide (wasting some space) and then that math is fixed
+    make a "PNG to MIPmapped texture" script/tool
 tab should autocomplete at CLI
     tab in first completes commands
     tab in second et al completes filenames
@@ -127,10 +134,17 @@ video needs a "switching" mode
     old mode -> blank (fillrow does black) -> new mode
 PS/2 mouse?
 "Apps"
-    Apps should have some kind of heap for their use freed up before each app
-        limit use by main as much as possible - mark heap with some kind of symbol?
+    Threading?
+        all system functions have to be thread-safe...  Wrap locks around them
+        then need scheduler
+        if multiple apps can run simultaneously, then pipes would work
+    malloc()/free() and fopen()/fclose() should probably be #defined to SysMalloc() and SysFOpen, etc, to be logged and then cleaned up on thread exit
+    Can rename sections with objcopy (e.g. .data to .lessapp_data)
+        Can single .c's be compiled into apps?
+        then could prefix main() with startup code to copy .data, clear bss, then clean up on return from main
+        could even have a way to receive a signal asynchronously, unwind stack, jump to exit code
     Should have a POSIX harness for running and testing the apps
-        at least one of all modes for testing (how to do weird modes?)
+        at least one of all video modes for testing
     System APIs that Apps can call
         OS/stdlib calls
             putchar?  getchar?
@@ -143,17 +157,15 @@ PS/2 mouse?
         audio mode and config
         get keyboard input
         read DB9 joystick
-        use Chan's FatFS directly, routines implemented in main
         layered facilities
             textport
             VT102 terminal processing (on textport)
                 essentially just init() and putchar()
             graphics routines
     Wolfenstein
-    Image Viewer (ppm?)
     3D viewer
     BASIC
-    movie player
+    movie player... ? Targeted to full-screen 8-bit pixmap?  palette per frame?
     CP/M emulation
     Colecovision
     Apple2e
