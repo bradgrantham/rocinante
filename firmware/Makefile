@@ -29,6 +29,8 @@ COBJECTS = \
         STM32Cube4/stm32f4xx_hal_tim.o \
         STM32Cube4/stm32f4xx_hal_tim_ex.o \
         STM32Cube4/stm32f4xx_hal.o \
+        main.o \
+        wolftextures.o \
         graphics.o \
         syscalls.o \
         ff.o \
@@ -75,7 +77,7 @@ main.hex: main.elf
 
 -include $(DEPS)
 
-main.elf:  $(OBJECTS) main.o
+main.elf:  $(OBJECTS)
 	$(TOOLROOT)/bin/arm-none-eabi-g++ $(OPT) $(CORTEX_M4_HWFP_CC_FLAGS) -DSTM32F415xx -L$(CORTEX_M4_HWFP_LIB_PATH) $(MICRORAY_LIB_DIR) -TSTM32F415RG_FLASH.ld  -lm -Wl,--gc-sections $^ -o $@ $(MICRORAY_LIB)
 
 STM32Cube4/startup_stm32f417xx.o: STM32Cube4/startup_stm32f417xx.s
