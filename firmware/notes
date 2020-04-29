@@ -1,10 +1,3 @@
-MIPmap Wolfenstein
-    make a texture descriptor with pointers to levels
-    extract and set scanline parameters at SetElements time
-    WolfensteinTextureWidth is baked into WolfensteinFillRow
-        so I could either add a width to the texture descriptor
-        or I could make all MIPmaps also be 64 wide (wasting some space) and then that math is fixed
-    make a "PNG to MIPmapped texture" script/tool
 tab should autocomplete at CLI
     tab in first completes commands
     tab in second et al completes filenames
