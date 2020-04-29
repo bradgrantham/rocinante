@@ -1,4 +1,4 @@
-#include <stm32f4xx_hal.h>
+#include <stm32f7xx_hal.h>
 #include "defs.h"
 #include "uart.h"
 
@@ -15,7 +15,7 @@ volatile int gUARTTransmitBusy = 0;
 
 int UARTInterrupts = 0;
 
-void USART1_IRQHandler(void)
+void USART2_IRQHandler(void)
 {
     UARTInterrupts++;
     HAL_UART_IRQHandler(&gUARTHandle);
@@ -30,7 +30,7 @@ void HAL_UART_MspInit(UART_HandleTypeDef *huart)
   // __HAL_RCC_GPIOB_CLK_ENABLE();
   
   /* Enable USART clock */
-  __HAL_RCC_USART1_CLK_ENABLE(); 
+  __HAL_RCC_USART2_CLK_ENABLE(); 
   
   /*##-2- Configure peripheral GPIO ##########################################*/  
   /* UART TX GPIO pin configuration  */
@@ -38,19 +38,19 @@ void HAL_UART_MspInit(UART_HandleTypeDef *huart)
   GPIO_InitStruct.Mode      = GPIO_MODE_AF_PP;
   GPIO_InitStruct.Pull      = GPIO_PULLUP;
   GPIO_InitStruct.Speed     = GPIO_SPEED_FREQ_HIGH;
-  GPIO_InitStruct.Alternate = GPIO_AF7_USART1;
+  GPIO_InitStruct.Alternate = GPIO_AF7_USART2;
   
-  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+  HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
     
   /* UART RX GPIO pin configuration  */
-  GPIO_InitStruct.Pin = GPIO_PIN_7;
-  GPIO_InitStruct.Alternate = GPIO_AF7_USART1;
+  GPIO_InitStruct.Pin = GPIO_PIN_5;
+  GPIO_InitStruct.Alternate = GPIO_AF7_USART2;
     
-  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+  HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
 
   /* NVIC for USART */
-  HAL_NVIC_SetPriority(USART1_IRQn, 4, 1);
-  HAL_NVIC_EnableIRQ(USART1_IRQn);
+  HAL_NVIC_SetPriority(USART2_IRQn, 4, 1);
+  HAL_NVIC_EnableIRQ(USART2_IRQn);
 }
 
 /**
@@ -64,14 +64,14 @@ void HAL_UART_MspInit(UART_HandleTypeDef *huart)
 void HAL_UART_MspDeInit(UART_HandleTypeDef *huart)
 {
   /*##-1- Reset peripherals ##################################################*/
-    __HAL_RCC_USART1_FORCE_RESET();
-    __HAL_RCC_USART1_RELEASE_RESET();
+    __HAL_RCC_USART2_FORCE_RESET();
+    __HAL_RCC_USART2_RELEASE_RESET();
 
   /*##-2- Disable peripherals and GPIO Clocks #################################*/
-  /* Configure UART Tx as alternate function  */
-  HAL_GPIO_DeInit(GPIOB, GPIO_PIN_6);
-  /* Configure UART Rx as alternate function  */
-  HAL_GPIO_DeInit(GPIOB, GPIO_PIN_7);
+  /* Deconfigure UART Tx as alternate function  */
+  HAL_GPIO_DeInit(GPIOD, GPIO_PIN_5);
+  /* Deconfigure UART Rx as alternate function  */
+  HAL_GPIO_DeInit(GPIOD, GPIO_PIN_6);
 }
 
 void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
@@ -140,7 +140,7 @@ void SERIAL_init()
         - Parity = ODD parity
         - BaudRate = 115200 baud
         - Hardware flow control disabled (RTS and CTS signals) */
-    gUARTHandle.Instance          = USART1;
+    gUARTHandle.Instance          = USART2;
     
     gUARTHandle.Init.BaudRate     = 115200;
     gUARTHandle.Init.WordLength   = UART_WORDLENGTH_8B;

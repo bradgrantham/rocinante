@@ -1,7 +1,7 @@
 #ifndef __GPIO_HELPERS__
 #define __GPIO_HELPERS__
 
-#include <stm32f4xx_hal.h>
+#include <stm32f7xx_hal.h>
 
 static inline void set_GPIO_value(GPIO_TypeDef* gpio, int mask, int value)
 {

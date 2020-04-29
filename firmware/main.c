@@ -4,7 +4,12 @@
 #include <ctype.h>
 #include <math.h>
 
-#include <stm32f4xx_hal.h>
+#undef USE_PS2KBD
+#undef USE_SD
+#undef USE_NTSC
+#undef USE_AUDIO
+
+#include <stm32f7xx_hal.h>
 
 #include "ff.h"
 
@@ -91,8 +96,9 @@ typedef struct {
 unsigned int whichConfig = 0;
 static const ClockConfiguration clockConfigs[] =
 {
-    // Base mode we know works
     {200.47, 16000000, 17, 426, 2, 14, 3.579832, 0.000080},
+    // Base mode we know works
+    // {200.47, 16000000, 17, 426, 2, 14, 3.579832, 0.000080},
     // {214.77, 16000000, 13, 349, 2, 15, 3.579487, -0.000016}, // unstable
 
     {157.50, 16000000, 16, 315, 2, 11, 3.579545, 0.000000},
@@ -167,6 +173,7 @@ static void SystemClock_Config(void)
 
   unsigned int PLL_Q = (16000000 / PLL_M * PLL_N / 2 / 24 + 999999) / 1000000;
 
+#if 0
   RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_LSI|RCC_OSCILLATORTYPE_HSE;
   RCC_OscInitStruct.HSEState = RCC_HSE_ON;
   RCC_OscInitStruct.LSIState = RCC_LSI_ON;
@@ -191,6 +198,27 @@ static void SystemClock_Config(void)
   {
     panic();
   }
+#else
+    RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
+  RCC_OscInitStruct.HSIState = RCC_HSI_ON;
+  RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
+  RCC_OscInitStruct.PLL.PLLState = RCC_PLL_NONE;
+  if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
+  {
+    panic();
+  }
+  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
+                              |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
+  RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_HSI;
+  RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
+  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV1;
+  RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
+
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_0) != HAL_OK)
+  {
+    panic();
+  }
+#endif
 
   // 415 comes up by default with D$ and I$ enabled and prefetch enabled, or HAL_Init sets them
   // FLASH->ACR |= FLASH_ACR_PRFTEN
@@ -216,6 +244,11 @@ static void SystemClock_Config(void)
     // Since this relies solely on the clock 
     delay_init();
 }
+
+// Was in the 417's header but not in the 746's header?
+#ifndef RCC_PLLCFGR_RST_VALUE 
+#define RCC_PLLCFGR_RST_VALUE 0x24003010
+#endif
 
 void DeInitRCCAndPLL()
 {
@@ -251,10 +284,12 @@ int gOutputDevices = OUTPUT_TO_SERIAL;
 int __io_getchar(void)
 {
     while(1) {
+#ifdef USE_PS2KBD
         int c = KBD_process_queue(gDumpKeyboardData);
         if(c >= 0) {
             return c;
         }
+#endif
         SERIAL_poll_continue();
         unsigned char isEmpty = queue_isempty(&mon_queue.q);
         if(!isEmpty) {
@@ -273,9 +308,11 @@ void __io_putchar( char c )
             SERIAL_flush();
         }
     }
+#ifdef USE_NTSC
     if(gOutputDevices & OUTPUT_TO_TEXTPORT) {
         TextportPutchar(c);
     }
+#endif
 }
 
 void errorchar(char c)
@@ -291,8 +328,6 @@ void errorchar_flush()
 //----------------------------------------------------------------------------
 // File operations
 
-FATFS gFATVolume;
-
 void check_exceptional_conditions()
 {
     if(gConsoleOverflowed) {
@@ -300,6 +335,7 @@ void check_exceptional_conditions()
         gConsoleOverflowed = 0;
     }
 
+#ifdef USE_PS2KBD
     if(gKeyboardOverflowed) {
         logprintf(DEBUG_WARNINGS, "WARNING: Keyboard data queue overflow\n");
         gKeyboardOverflowed = 0;
@@ -314,6 +350,7 @@ void check_exceptional_conditions()
         logprintf(DEBUG_EVENTS, "EVENT: Received initial BAT with parity error from PS/2 keyboard\n");
         gKeyboardBATBadParity = 0;
     }
+#endif
 }
 
 void process_local_key(unsigned char c);
@@ -356,6 +393,8 @@ void console_queue_init()
 
 //----------------------------------------------------------------------------
 // DAC
+
+#ifdef USE_NTSC
 
 #define DAC_VALUE_LIMIT 0xFF
 
@@ -2384,10 +2423,12 @@ void VideoModeWaitFrame()
     // NTSC won't actually go lineNumber >= 525...
     while(!(lineNumber > 257 && lineNumber < 262) || (lineNumber > 520 && lineNumber < 525)); // Wait for VBLANK; should do something smarter
 }
+#endif
 
 //----------------------------------------------------------------------------
 // Text command interface
 
+#if 0
 int showScanoutStats = 0;
 
 void NTSCGenerateLineBuffers();
@@ -2444,6 +2485,15 @@ int doCommandTestColor(int wordCount, char **words)
 
     return COMMAND_CONTINUE;
 }
+
+static void RegisterCommandTestColor(void) __attribute__((constructor));
+static void RegisterCommandTestColor(void)
+{
+    RegisterApp("testcolor", 1, doCommandTestColor, "",
+        "test color modes"
+        );
+}
+
 
 int doCommandVideoModes(int wordCount, char **words)
 {
@@ -2666,6 +2716,33 @@ int doCommandScopeFill(int wordCount, char **words)
     return COMMAND_CONTINUE;
 }
 
+int doCommandTestRect(int wordCount, char **words)
+{
+    NTSCMode = NTSC_SCAN_TEST;
+    do {
+        SERIAL_poll_continue();
+        unsigned char isEmpty = queue_isempty(&mon_queue.q);
+        if(!isEmpty) {
+            unsigned char c = queue_deq(&mon_queue.q);
+            switch(c) {
+                case 'l': videoScanTestLeft--; break;
+                case 'L': videoScanTestLeft++; break;
+                case 'r': videoScanTestRight--; break;
+                case 'R': videoScanTestRight++; break;
+                case 't': videoScanTestTop--; break;
+                case 'T': videoScanTestTop++; break;
+                case 'b': videoScanTestBottom--; break;
+                case 'B': videoScanTestBottom++; break;
+                case 'q': break; break;
+            }
+            printf("rect is %d, %d, %d, %d\n", videoScanTestLeft, videoScanTestRight, videoScanTestTop, videoScanTestBottom);
+            SERIAL_flush();
+        }
+        delay_ms(10);
+    } while(1);
+    return COMMAND_CONTINUE;
+}
+
 int doCommandTestSDSpeed(int wordCount, char **words)
 {
     const int megabytes = 2;
@@ -2705,6 +2782,24 @@ int doCommandDumpKbdData(int wordCount, char **words)
     return COMMAND_CONTINUE;
 }
 
+int doCommandReadBlock(int wordCount, char **words)
+{
+    int n = strtol(words[1], NULL, 0);
+    unsigned char *sd_buffer = malloc(SD_BLOCK_SIZE);
+    if(sd_buffer == NULL) {
+        printf("couldn't allocate block buffer\n");
+        return COMMAND_FAILED;
+    }
+    if(SDCARD_readblock(n, sd_buffer)) {
+        dump_buffer_hex(4, sd_buffer, sizeof(sd_buffer));
+    }
+    free(sd_buffer);
+    return COMMAND_CONTINUE;
+}
+
+
+#endif
+
 int doCommandFlashInfoLED(int wordCount, char **words)
 {
     for(int i = 0; i < 8; i++) {
@@ -2736,51 +2831,9 @@ int doCommandSetDebugLevel(int wordCount, char **words)
     return COMMAND_CONTINUE;
 }
 
-int doCommandReadBlock(int wordCount, char **words)
-{
-    int n = strtol(words[1], NULL, 0);
-    unsigned char *sd_buffer = malloc(SD_BLOCK_SIZE);
-    if(sd_buffer == NULL) {
-        printf("couldn't allocate block buffer\n");
-        return COMMAND_FAILED;
-    }
-    if(SDCARD_readblock(n, sd_buffer)) {
-        dump_buffer_hex(4, sd_buffer, sizeof(sd_buffer));
-    }
-    free(sd_buffer);
-    return COMMAND_CONTINUE;
-}
-
 int doHalt(int wordCount, char **words)
 {
     while(1) {};
-}
-
-int doCommandTestRect(int wordCount, char **words)
-{
-    NTSCMode = NTSC_SCAN_TEST;
-    do {
-        SERIAL_poll_continue();
-        unsigned char isEmpty = queue_isempty(&mon_queue.q);
-        if(!isEmpty) {
-            unsigned char c = queue_deq(&mon_queue.q);
-            switch(c) {
-                case 'l': videoScanTestLeft--; break;
-                case 'L': videoScanTestLeft++; break;
-                case 'r': videoScanTestRight--; break;
-                case 'R': videoScanTestRight++; break;
-                case 't': videoScanTestTop--; break;
-                case 'T': videoScanTestTop++; break;
-                case 'b': videoScanTestBottom--; break;
-                case 'B': videoScanTestBottom++; break;
-                case 'q': break; break;
-            }
-            printf("rect is %d, %d, %d, %d\n", videoScanTestLeft, videoScanTestRight, videoScanTestTop, videoScanTestBottom);
-            SERIAL_flush();
-        }
-        delay_ms(10);
-    } while(1);
-    return COMMAND_CONTINUE;
 }
 
 #define MAX_COMMANDS 50
@@ -2813,6 +2866,7 @@ int RegisterApp(const char* name, int minWords, ProcessCommandFunc go, const cha
 static void RegisterAllApplets() __attribute__((constructor));
 static void RegisterAllApplets()
 {
+#if 0
     RegisterApp( "modes", 1, doCommandVideoModes, "",
         "list video modes"
     );
@@ -2858,6 +2912,10 @@ static void RegisterAllApplets()
     RegisterApp( "dumpkbd", 1, doCommandDumpKbdData, "",
         "dump keyboard data"
     );
+    RegisterApp( "read", 2, doCommandReadBlock, "N",
+        "read and dump out SD block N"
+    );
+#endif
     RegisterApp( "flashinfo", 1, doCommandFlashInfoLED, "",
         "flash the info LED"
     );
@@ -2870,18 +2928,7 @@ static void RegisterAllApplets()
     RegisterApp( "debug", 2, doCommandSetDebugLevel, "N",
         "set debugging level to N"
     );
-    RegisterApp( "read", 2, doCommandReadBlock, "N",
-        "read and dump out SD block N"
-    );
     RegisterApp( "halt", 1, doHalt, "", "while(1){}");
-}
-
-static void RegisterCommandTestColor(void) __attribute__((constructor));
-static void RegisterCommandTestColor(void)
-{
-    RegisterApp("testcolor", 1, doCommandTestColor, "",
-        "test color modes"
-        );
 }
 
 void usage()
@@ -3028,13 +3075,20 @@ uint32_t /* SECTION_CCMRAM */ vectorTable[100] __attribute__ ((aligned (512)));
 
 extern int KBDInterrupts;
 extern int UARTInterrupts;
+
+#ifdef USE_FATFS
+FATFS gFATVolume;
+#endif /* USE_FATFS */
+
 int main()
 {
     HAL_Init();
 
+#if 0
     uint32_t* oldVectorTable = (uint32_t*)SCB->VTOR;
     memcpy(vectorTable, oldVectorTable, sizeof(vectorTable));
     SCB->VTOR = (uint32_t)vectorTable; // This didn't help glitching, and can't be in *data* CCM RAM
+#endif
 
     SystemClock_Config(); 
 
@@ -3050,10 +3104,10 @@ int main()
     SERIAL_init(); // transmit and receive but global interrupts disabled
     LED_beat_heart();
 
-
-    printf("\n\nAlice 3 I/O firmware, %s\n", IOBOARD_FIRMWARE_VERSION_STRING);
+    printf("\n\nRocinante firmware, %s\n", IOBOARD_FIRMWARE_VERSION_STRING);
     printf("System core clock: %lu Hz, %lu MHz\n", SystemCoreClock, SystemCoreClock / 1000000);
 
+#ifdef USE_NTSC
     float clock = 14.318180;
     NTSCCalculateParameters(clock);
 
@@ -3063,10 +3117,12 @@ int main()
     printf("calculated NTSCBackPorchClocks = %d\n", NTSCBackPorchClocks);
     printf("calculated NTSCEqPulseClocks = %d\n", NTSCEqPulseClocks);
     printf("calculated NTSCVSyncClocks = %d\n", NTSCVSyncClocks);
+#endif
 
     LED_beat_heart();
     SERIAL_flush();
 
+#ifdef USE_SD
     SPI_config_for_sd();
     LED_beat_heart();
 
@@ -3089,16 +3145,14 @@ int main()
         LED_beat_heart();
         SERIAL_flush();
     }
+#endif
 
+#ifdef USE_PS2KBD
     KBD_init();
     LED_beat_heart();
+#endif
 
-    NTSCGenerateLineBuffers();
-    NTSCFillRowBuffer(0, 0, row0);
-    memset(row0, 0x10, sizeof(row0));
-    memset(row1, 0xF0, sizeof(row1));
-
-
+#ifdef USE_AUDIO
     // AUDIO
     for(int i = 0; i < sizeof(audioBuffer); i++) {
         audioBuffer[i] = 128;
@@ -3115,6 +3169,13 @@ int main()
     }
     DAC->CR |= DAC_CR_EN1;
     DAC->CR |= DAC_CR_BOFF1;
+#endif
+
+#ifdef USE_NTSC
+    NTSCGenerateLineBuffers();
+    NTSCFillRowBuffer(0, 0, row0);
+    memset(row0, 0x10, sizeof(row0));
+    memset(row1, 0xF0, sizeof(row1));
 
     float colorBurstInCoreClocks = SystemCoreClock / 14318180.0;
     // need main clock as close as possible to @ 171.816
@@ -3240,12 +3301,14 @@ int main()
         NTSCMode = NTSC_USE_VIDEO_MODE;
         gOutputDevices = gOutputDevices ^ OUTPUT_TO_TEXTPORT;
     }
+#endif
 
     printf("* ");
     SERIAL_flush();
 
     for(;;) {
 
+#ifdef USE_NTSC
         // Should be in VBlank callback so is continuously updated
         if(showScanoutStats) {
             debugOverlayEnabled = 1;
@@ -3257,6 +3320,7 @@ int main()
             sprintf(debugDisplay[debugDisplayHeight - 2], "FIFO unders %lu", DMAFIFOUnderruns);
             sprintf(debugDisplay[debugDisplayHeight - 1], "DMA errors %lu", DMATransferErrors);
         }
+#endif
         int key;
 
         SERIAL_try_to_transmit_buffers();
@@ -3266,6 +3330,7 @@ int main()
 
         process_monitor_queue();
 
+#ifdef USE_PS2KBD
         key = KBD_process_queue(gDumpKeyboardData);
         if(key >= 0) {
             disable_interrupts();
@@ -3273,6 +3338,7 @@ int main()
             monitor_enqueue_key_unsafe(key);
             enable_interrupts();
         }
+#endif
 
         check_exceptional_conditions();
     }

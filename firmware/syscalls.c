@@ -21,6 +21,8 @@
 #undef errno
 extern int errno;
 
+#undef USE_FATFS
+
 #undef FreeRTOS
 #define MAX_STACK_SIZE 0x200
 
@@ -89,10 +91,14 @@ void _exit (int status)
 	while (1) {}
 }
 
+#ifdef USE_FATFS
+
 #define MAX_FILES 4
 enum { FD_OFFSET = 3};
 static FIL files[MAX_FILES];    /* starting with fd=3, so fd 3 through 3 + MAX_FILES - 1 */
 static int filesOpened[MAX_FILES];
+
+#endif /* USE_FATFS */
 
 int _write(int file, char *ptr, int len)
 {
@@ -107,6 +113,7 @@ int _write(int file, char *ptr, int len)
 		}
 	return len;
     } else {
+#ifdef USE_FATFS
         int myFile = file - FD_OFFSET;
         if(!filesOpened[myFile]) {
             printf("XXX write: file not opened\n");
@@ -121,11 +128,16 @@ int _write(int file, char *ptr, int len)
             return -1;
         }
         return wrote;
+#else /* not USE_FATFS */
+        errno = EIO;
+        return -1;
+#endif /* USE_FATFS */
     }
 }
 
 int _close(int file)
 {
+#ifdef USE_FATFS
     int myFile = file - FD_OFFSET;
     if(!filesOpened[myFile]) {
         errno = EBADF;
@@ -133,6 +145,7 @@ int _close(int file)
     }
     f_close(&files[myFile]);
     filesOpened[myFile] = 0;
+#endif /* USE_FATFS */
     return 0;
 }
 
@@ -154,6 +167,7 @@ int _lseek(int file, int ptr, int dir)
     if((file == 0) || (file == 1) || (file == 2)) {
 	return 0;
     } else {
+#ifdef USE_FATFS
         int myFile = file - FD_OFFSET;
         if(!filesOpened[myFile]) {
             printf("XXX lseek: file not opened %d\n", myFile);
@@ -174,6 +188,10 @@ int _lseek(int file, int ptr, int dir)
             return -1;
         }
         return f_tell(&files[myFile]);
+#else /* not USE_FATFS */
+        errno = EIO;
+        return -1;
+#endif /* USE_FATFS */
     }
 }
 
@@ -190,6 +208,7 @@ int _read(int file, char *ptr, int len)
 	}
         return len;
     } else {
+#ifdef USE_FATFS
         int myFile = file - FD_OFFSET;
         if(!filesOpened[myFile]) {
             printf("XXX read: file not opened %d\n", myFile);
@@ -204,6 +223,10 @@ int _read(int file, char *ptr, int len)
             return -1;
         }
         return wasRead;
+#else /* not USE_FATFS */
+        errno = EIO;
+        return -1;
+#endif /* USE_FATFS */
     }
 }
 
@@ -214,6 +237,7 @@ int _open(char *path, int flags, ...)
         return -1;
     }
 
+#ifdef USE_FATFS
     int which = 0;
     while(which < MAX_FILES && filesOpened[which]) {
         which++;
@@ -252,6 +276,10 @@ int _open(char *path, int flags, ...)
     filesOpened[which] = 1;
 
     return which + FD_OFFSET;
+#else /* not USE_FATFS */
+    errno = EIO;
+    return -1;
+#endif /* USE_FATFS */
 }
 
 int _wait(int *status)

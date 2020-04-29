@@ -1,18 +1,9 @@
-#include <stm32f4xx_hal.h>
+#include <stm32f7xx_hal.h>
 #include "leds.h"
 #include "defs.h"
 
-#if ALICE3_VERSION == ALICE3_V1
-
-#define LED_PIN_MASK GPIO_PIN_13
-#define LED_PORT GPIOC
-
-#else // ALICE3_VERSION == ALICE3_V3
-
-#define LED_PIN_MASK GPIO_PIN_2
+#define LED_PIN_MASK GPIO_PIN_7
 #define LED_PORT GPIOB
-
-#endif
 
 void LED_set_panic(int on)
 {

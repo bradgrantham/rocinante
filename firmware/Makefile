@@ -11,40 +11,44 @@ GCC_LIB         ?=      $(TOOLROOT)/lib/gcc/arm-none-eabi/7.3.1
 
 SOURCE_ROOT             ?=       $(shell pwd)
 
-CORTEX_M4_HWFP_CC_FLAGS = -mthumb -mcpu=cortex-m4 -mfloat-abi=hard -mfpu=fpv4-sp-d16 -mlittle-endian -mslow-flash-data
-TARGET = STM32F415xx
+CORTEX_M4_HWFP_CC_FLAGS = -mthumb -mcpu=cortex-m7 -mfloat-abi=hard -mfpu=fpv4-sp-d16 -mlittle-endian -mslow-flash-data
+TARGET = STM32F746xx
 STM32F4XX_CMSIS_INC_PATH        = $(STM32FCUBEROOT)/Drivers/CMSIS/Include/
 CORTEX_M4_HWFP_LIB_PATH = $(GCC_LIB)/armv7e-m/fpu
 
 COBJECTS = \
-        STM32Cube4/startup_stm32f417xx.o \
-        STM32Cube4/system_stm32f4xx.o \
-        STM32Cube4/stm32f4xx_it.o \
-        STM32Cube4/stm32f4xx_hal_cortex.o \
-        STM32Cube4/stm32f4xx_hal_dma.o \
-        STM32Cube4/stm32f4xx_hal_gpio.o \
-        STM32Cube4/stm32f4xx_hal_rcc.o \
-        STM32Cube4/stm32f4xx_hal_uart.o \
-        STM32Cube4/stm32f4xx_hal_spi.o \
-        STM32Cube4/stm32f4xx_hal_tim.o \
-        STM32Cube4/stm32f4xx_hal_tim_ex.o \
-        STM32Cube4/stm32f4xx_hal.o \
+        STM32Cube4/startup_stm32f746xx.o \
+        STM32Cube4/system_stm32f7xx.o \
+        STM32Cube4/stm32f7xx_it.o \
+        STM32Cube4/stm32f7xx_hal_cortex.o \
+        STM32Cube4/stm32f7xx_hal_dma.o \
+        STM32Cube4/stm32f7xx_hal_gpio.o \
+        STM32Cube4/stm32f7xx_hal_rcc.o \
+        STM32Cube4/stm32f7xx_hal_uart.o \
+        STM32Cube4/stm32f7xx_hal_spi.o \
+        STM32Cube4/stm32f7xx_hal_tim.o \
+        STM32Cube4/stm32f7xx_hal_tim_ex.o \
+        STM32Cube4/stm32f7xx_hal.o \
         main.o \
-        wolftextures.o \
-        graphics.o \
-        syscalls.o \
-        ff.o \
-        diskio.o \
-        delay.o \
         leds.o \
         monitor_queue.o \
         console_queue.o \
-        ps2_keyboard.o \
-        keyboard.o \
         uart.o \
         utility.o \
-        crc7.o \
         logprintf.o \
+        syscalls.o \
+        delay.o \
+        $(NULL)
+        # need ff_unicode if ExFAT and LFN support are compiled in
+
+NOTYET = \
+        wolftextures.o \
+        graphics.o \
+        ff.o \
+        diskio.o \
+        ps2_keyboard.o \
+        keyboard.o \
+        crc7.o \
         sd_spi.o \
         reset_button.o \
         ff_unicode.o \
@@ -54,7 +58,6 @@ COBJECTS = \
         apps/less.o \
         apps/wolf.o \
         $(NULL)
-        # need ff_unicode if ExFAT and LFN support are compiled in
 
 MICRORAY_APP_OBJECT     = # apps/microray.o
 MICRORAY_SOURCE         = # $(HOME)/trees/microray/
@@ -78,13 +81,12 @@ main.hex: main.elf
 -include $(DEPS)
 
 main.elf:  $(OBJECTS)
-	$(TOOLROOT)/bin/arm-none-eabi-g++ $(OPT) $(CORTEX_M4_HWFP_CC_FLAGS) -DSTM32F415xx -L$(CORTEX_M4_HWFP_LIB_PATH) $(MICRORAY_LIB_DIR) -TSTM32F415RG_FLASH.ld  -lm -Wl,--gc-sections $^ -o $@ $(MICRORAY_LIB)
+	$(TOOLROOT)/bin/arm-none-eabi-g++ $(OPT) $(CORTEX_M4_HWFP_CC_FLAGS) -DSTM32F746xx -L$(CORTEX_M4_HWFP_LIB_PATH) $(MICRORAY_LIB_DIR) -TSTM32F746ZG_FLASH.ld  -lm -Wl,--gc-sections $^ -o $@ $(MICRORAY_LIB)
 
-STM32Cube4/startup_stm32f417xx.o: STM32Cube4/startup_stm32f417xx.s
+STM32Cube4/startup_stm32f746xx.o: STM32Cube4/startup_stm32f746xx.s
 	$(TOOLROOT)/bin/arm-none-eabi-gcc -Wall $(OPT) $(CORTEX_M4_HWFP_CC_FLAGS)  $< -c -o $@
 
 %.o: %.c
-	echo source root is $(SOURCE_ROOT)
 	$(TOOLROOT)/bin/arm-none-eabi-gcc -std=c99 -Wall $(OPT) $(MICRORAY_INC_DIR) -I$(SOURCE_ROOT) -I$(SOURCE_ROOT)/STM32Cube4 -DIOBOARD_FIRMWARE_VERSION="$(FIRMWARE_VERSION)" -fno-builtin -I$(STM32F4XX_CMSIS_INC_PATH) -D$(TARGET) $(CORTEX_M4_HWFP_CC_FLAGS)  $< -c -o $@ -MMD
 
 %.o: %.cpp
