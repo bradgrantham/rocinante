@@ -1,14 +1,14 @@
 Upgrade to STM32F746
-    boot button works and dfu-util returns what I expect, I guess
-    replacement for startup_stm32f417xx.s
-    Linker script
-    comment out everything in main
-        remove everything but main, UART, LEDs from build
-    turn on green LED to start - use leds.c
-    flash green LED after that
-    enable UART after that
-    configure clock after that
-    then SD
+    ./ boot button works and dfu-util returns what I expect, I guess
+    ./ replacement for startup_stm32f417xx.s
+    ./ Linker script
+    ./ comment out everything in main
+        ./ remove everything but main, UART, LEDs from build
+    ./ turn on green LED to start - use leds.c
+    ./ flash green LED after that
+    ./ enable UART after that
+    ./ configure clock after that
+    ./ then SD
     then video output
     then audio output
     then PS/2 keyboard

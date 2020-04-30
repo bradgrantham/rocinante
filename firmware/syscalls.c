@@ -21,7 +21,7 @@
 #undef errno
 extern int errno;
 
-#undef USE_FATFS
+#define USE_FATFS
 
 #undef FreeRTOS
 #define MAX_STACK_SIZE 0x200

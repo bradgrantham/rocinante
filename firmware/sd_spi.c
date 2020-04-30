@@ -12,8 +12,8 @@
 /*--------------------------------------------------------------------------*/
 /* SD over SPI -------------------------------------------------------------*/
 
-#define SPI_SS_PIN_MASK      GPIO_PIN_8
-#define SPI_SS_PORT     GPIOA
+#define SPI_SS_PIN_MASK      GPIO_PIN_14
+#define SPI_SS_PORT     GPIOD
 
 SPI_HandleTypeDef gSPIHandle;
 
@@ -24,46 +24,46 @@ void HAL_SPI_MspInit(SPI_HandleTypeDef *hspi)
     /* Enable GPIO CK/TX/RX clocks */
     // __HAL_RCC_GPIOB_CLK_ENABLE();
     /* Enable SPI clock */
-    __HAL_RCC_SPI2_CLK_ENABLE();
+    __HAL_RCC_SPI1_CLK_ENABLE();
 
     /*##-2- Configure peripheral GPIO ##########################################*/
 
-    // Alternate function SPI2, high speed, push-pull
-    GPIO_InitStruct.Alternate = GPIO_AF5_SPI2;
+    // Alternate function SPI1, high speed, push-pull
+    GPIO_InitStruct.Alternate = GPIO_AF5_SPI1;
     GPIO_InitStruct.Speed     = GPIO_SPEED_FREQ_MEDIUM;
     GPIO_InitStruct.Mode      = GPIO_MODE_AF_PP;
 
     /* SPI SCK GPIO pin configuration  */
-    GPIO_InitStruct.Pin       = GPIO_PIN_13;
+    GPIO_InitStruct.Pin       = GPIO_PIN_5;
     GPIO_InitStruct.Pull      = GPIO_NOPULL; // GPIO_PULLUP;
-    HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+    HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
     /* SPI MISO GPIO pin configuration  */
-    GPIO_InitStruct.Pin = GPIO_PIN_14;
+    GPIO_InitStruct.Pin = GPIO_PIN_6;
     GPIO_InitStruct.Mode      = GPIO_MODE_AF_PP;
     GPIO_InitStruct.Pull      = GPIO_NOPULL; // GPIO_PULLUP;
-    HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+    HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
     /* SPI MOSI GPIO pin configuration  */
-    GPIO_InitStruct.Pin = GPIO_PIN_15;
+    GPIO_InitStruct.Pin = GPIO_PIN_7;
     GPIO_InitStruct.Mode      = GPIO_MODE_AF_PP;
     GPIO_InitStruct.Pull      = GPIO_NOPULL; // GPIO_PULLUP;
-    HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+    HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 }
 
 void HAL_SPI_MspDeInit(SPI_HandleTypeDef *hspi)
 {
     /*##-1- Reset peripherals ##################################################*/
-    __HAL_RCC_SPI2_FORCE_RESET();
-    __HAL_RCC_SPI2_RELEASE_RESET();
+    __HAL_RCC_SPI1_FORCE_RESET();
+    __HAL_RCC_SPI1_RELEASE_RESET();
 
     /*##-2- Disable peripherals and GPIO Clocks ################################*/
     /* Configure SPI SCK as alternate function  */
-    HAL_GPIO_DeInit(GPIOB, GPIO_PIN_13);
+    HAL_GPIO_DeInit(GPIOA, GPIO_PIN_5);
     /* Configure SPI MISO as alternate function  */
-    HAL_GPIO_DeInit(GPIOB, GPIO_PIN_14);
+    HAL_GPIO_DeInit(GPIOA, GPIO_PIN_6);
     /* Configure SPI MOSI as alternate function  */
-    HAL_GPIO_DeInit(GPIOB, GPIO_PIN_15);
+    HAL_GPIO_DeInit(GPIOA, GPIO_PIN_7);
 }
 
 void SPI_enable_sd()
@@ -81,12 +81,14 @@ void SPI_disable_sd()
 uint32_t SPI_get_prescaling_for_baud(uint32_t baud)
 {
     uint32_t prescaling = 2;
-    while((prescaling <= 256) && (SystemCoreClock / 4 / prescaling > baud)) {
+    // XXX the "8" below is hardcoded to match value from ClockInit
+    while((prescaling <= 256) && (SystemCoreClock / 8 / prescaling > baud)) {
         prescaling *= 2;
     }
     if(prescaling > 256) {
         printf("failed to find prescaler for SPI that worked!\n");
-        panic();
+        prescaling = 256;
+        // panic();
     }
     return prescaling;
 }
@@ -110,16 +112,16 @@ void SPI_config_for_sd()
 {
     GPIO_InitTypeDef  GPIO_InitStruct;
 
-    gSPIHandle.Instance               = SPI2;
+    gSPIHandle.Instance               = SPI1;
 
-    // SPI2 is APB1, which is 1/4 system clock, or at 168MHz, APB1 is
-    // 42MHz.  Init should be at  100KHz - 400 KHz, 128 will be 328.124Khz,
+    // SPI1 is APB2, which is 1/4 system clock, or at 216MHz, APB2 is
+    // 108MHz.  Init should be at  100KHz - 400 KHz, 128 will be 328.124Khz,
     // 256 will be about 164.062KHz
-    uint32_t prescaling = SPI_get_prescaling_for_baud(220000);
-    if(SystemCoreClock / 4 / prescaling < 100000) {
-        printf("Warning, SPI prescaler %lu means SPI init will be at %lu KHz\n", prescaling, SystemCoreClock / 4 / prescaling / 1000);
+    uint32_t prescaling = SPI_get_prescaling_for_baud(200000);
+    if(SystemCoreClock / 8 / prescaling < 100000) {
+        printf("Warning, SPI prescaler %lu means SPI init will be at %lu KHz\n", prescaling, SystemCoreClock / 8 / prescaling / 1000);
     } else {
-        printf("chose SPI prescaler %lu so SPI init will be at %lu KHz\n", prescaling, SystemCoreClock / 4 / prescaling / 1000);
+        printf("chose SPI prescaler %lu so SPI init will be at %lu KHz\n", prescaling, SystemCoreClock / 8 / prescaling / 1000);
     }
 
     gSPIHandle.Init.BaudRatePrescaler = SPI_get_prescaler(prescaling);
@@ -312,13 +314,13 @@ int SDCARD_init()
     } while(response[0] != gSDCardResponseSUCCESS);
     logprintf(DEBUG_ALL, "returned from ACMD41: %02X\n", response[0]);
 
-    // SPI2 is APB1, which is 1/4 system clock, or at 168MHz, APB1 is
-    // 42MHz.  After init, we should be able to set the clock as
+    // SPI1 is APB2, which is 1/8 system clock; at 200MHz, APB2 is
+    // 25MHz.  After init, we should be able to set the SD clock as
     // high as 25MHz.
     uint32_t prescaling = SPI_get_prescaling_for_baud(25000000);
-    printf("chose SPI prescaler %lu so SPI init will be at %lu KHz\n", prescaling, SystemCoreClock / 4 / prescaling / 1000);
+    printf("chose SPI prescaler %lu so SPI bulk IO will be at %lu KHz\n", prescaling, SystemCoreClock / 8 / prescaling / 1000);
 
-    SPI2->CR1 = (SPI2->CR1 & ~SPI_CR1_BR) | SPI_get_prescaler(prescaling);
+    SPI1->CR1 = (SPI1->CR1 & ~SPI_CR1_BR) | SPI_get_prescaler(prescaling);
 
     return 1;
 }

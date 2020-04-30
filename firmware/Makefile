@@ -38,24 +38,24 @@ COBJECTS = \
         logprintf.o \
         syscalls.o \
         delay.o \
+        sd_spi.o \
+        crc7.o \
+        ff.o \
+        diskio.o \
+        ff_unicode.o \
+        apps/less.o \
         $(NULL)
         # need ff_unicode if ExFAT and LFN support are compiled in
 
 NOTYET = \
+        apps/vile.o \
         wolftextures.o \
         graphics.o \
-        ff.o \
-        diskio.o \
         ps2_keyboard.o \
         keyboard.o \
-        crc7.o \
-        sd_spi.o \
         reset_button.o \
-        ff_unicode.o \
         textport.o \
         apps/showimage.o \
-        apps/vile.o \
-        apps/less.o \
         apps/wolf.o \
         $(NULL)
 

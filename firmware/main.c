@@ -5,7 +5,7 @@
 #include <math.h>
 
 #undef USE_PS2KBD
-#undef USE_SD
+#define USE_SD
 #undef USE_NTSC
 #undef USE_AUDIO
 
@@ -98,7 +98,7 @@ static const ClockConfiguration clockConfigs[] =
 {
     // Base mode we know works
     // {200.47, 16000000, 17, 426, 2, 14, 3.579832, 0.000080},
-    {214.77, 16000000, 13, 349, 2, 15, 3.579487, -0.000016}, // unstable
+    {214.77, 16000000, 13, 349, 2, 15, 3.579487, -0.000016}, // unstable in 415xx
 
     {157.50, 16000000, 16, 315, 2, 11, 3.579545, 0.000000},
     {114.55, 16000000, 22, 315, 2, 8, 3.579545, 0.000000},
@@ -193,7 +193,7 @@ static void SystemClock_Config(void)
   RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
   RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
   RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV4; // APB1 clock
-  RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV2; // APB2 clock
+  RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV4; // APB2 clock
   // grantham - 5 cycles for 168MHz is stated in Table 10 in the STM32F4 reference manual
   if(HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_7) != HAL_OK)
   {
@@ -218,8 +218,8 @@ static void SystemClock_Config(void)
   RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_SYSCLK | RCC_CLOCKTYPE_PCLK1 | RCC_CLOCKTYPE_PCLK2;
   RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
   RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
-  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV4;
-  RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV2;
+  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV8;
+  RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV4;
 
   if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_7) != HAL_OK)
   {
@@ -2621,15 +2621,6 @@ int doCommandStream(int wordCount, char **words)
     return COMMAND_CONTINUE;
 }
 
-int doCommandSDReset(int wordCount, char **words)
-{
-    printf("Resetting SD card...\n");
-
-    if(!SDCARD_init()) {
-        printf("Failed to start access to SD card as SPI\n");
-    }
-    return COMMAND_CONTINUE;
-}
 
 int doCommandVideoTest(int wordCount, char **words)
 {
@@ -2673,34 +2664,6 @@ int doCommandScanoutCycles(int wordCount, char **words)
     }
     printf("%d cyclesPerLine were available\n", cyclesPerLine);
 
-    return COMMAND_CONTINUE;
-}
-
-int doCommandLS(int wordCount, char **words)
-{
-    FRESULT res;
-    DIR dir;
-    static FILINFO fno;
-
-    res = f_opendir(&dir, "/");                       /* Open the directory */
-    if (res == FR_OK) {
-        for (;;) {
-            res = f_readdir(&dir, &fno);                   /* Read a directory item */
-            if(res != FR_OK) {
-                printf("failed to readdir - %d\n", res);
-                break;
-            }
-            if (fno.fname[0] == 0) break;  /* Break on end of dir */
-            if (fno.fattrib & AM_DIR) {                    /* It is a directory */
-                printf("/%s/\n", fno.fname);
-            } else {                                       /* It is a file. */
-                printf("/%s\n", fno.fname);
-            }
-        }
-        f_closedir(&dir);
-    } else {
-        printf("failed to f_opendir - %d\n", res);
-    }
     return COMMAND_CONTINUE;
 }
 
@@ -2750,6 +2713,56 @@ int doCommandTestRect(int wordCount, char **words)
     return COMMAND_CONTINUE;
 }
 
+int doCommandDumpKbdData(int wordCount, char **words)
+{
+    gDumpKeyboardData = !gDumpKeyboardData;
+    if(gDumpKeyboardData)
+        printf("Dumping keyboard data...\n");
+    else
+        printf("Not dumping keyboard data...\n");
+    return COMMAND_CONTINUE;
+}
+
+#endif
+
+int doCommandSDReset(int wordCount, char **words)
+{
+    printf("Resetting SD card...\n");
+
+    if(!SDCARD_init()) {
+        printf("Failed to start access to SD card as SPI\n");
+    }
+    return COMMAND_CONTINUE;
+}
+
+int doCommandLS(int wordCount, char **words)
+{
+    FRESULT res;
+    DIR dir;
+    static FILINFO fno;
+
+    res = f_opendir(&dir, "/");                       /* Open the directory */
+    if (res == FR_OK) {
+        for (;;) {
+            res = f_readdir(&dir, &fno);                   /* Read a directory item */
+            if(res != FR_OK) {
+                printf("failed to readdir - %d\n", res);
+                break;
+            }
+            if (fno.fname[0] == 0) break;  /* Break on end of dir */
+            if (fno.fattrib & AM_DIR) {                    /* It is a directory */
+                printf("/%s/\n", fno.fname);
+            } else {                                       /* It is a file. */
+                printf("/%s\n", fno.fname);
+            }
+        }
+        f_closedir(&dir);
+    } else {
+        printf("failed to f_opendir - %d\n", res);
+    }
+    return COMMAND_CONTINUE;
+}
+
 int doCommandTestSDSpeed(int wordCount, char **words)
 {
     const int megabytes = 2;
@@ -2779,16 +2792,6 @@ int doCommandTestSDSpeed(int wordCount, char **words)
     return COMMAND_CONTINUE;
 }
 
-int doCommandDumpKbdData(int wordCount, char **words)
-{
-    gDumpKeyboardData = !gDumpKeyboardData;
-    if(gDumpKeyboardData)
-        printf("Dumping keyboard data...\n");
-    else
-        printf("Not dumping keyboard data...\n");
-    return COMMAND_CONTINUE;
-}
-
 int doCommandReadBlock(int wordCount, char **words)
 {
     int n = strtol(words[1], NULL, 0);
@@ -2803,9 +2806,6 @@ int doCommandReadBlock(int wordCount, char **words)
     free(sd_buffer);
     return COMMAND_CONTINUE;
 }
-
-
-#endif
 
 int doCommandFlashInfoLED(int wordCount, char **words)
 {
@@ -2889,9 +2889,6 @@ static void RegisterAllApplets()
     RegisterApp( "stream", 4, doCommandStream, "name M N",
         "stream images from templated name (e.g. 'frame%05d') from number M to N"
     );
-    RegisterApp( "sdreset", 1, doCommandSDReset, "",
-        "reset SD card"
-    );
     RegisterApp( "videotest", 1, doCommandVideoTest, "",
         "switch to video test mode"
     );
@@ -2907,22 +2904,25 @@ static void RegisterAllApplets()
     RegisterApp( "rowcycles", 1, doCommandScanoutCycles, "",
         "print time spent in each row operation"
     );
-    RegisterApp( "ls", 1, doCommandLS, "",
-        "list files on SD"
-    );
     RegisterApp( "solid", 2, doCommandSolidFill, "fillword",
         "fill video with specified long int"
-    );
-    RegisterApp( "sdspeed", 1, doCommandTestSDSpeed, "",
-        "test SD read speed"
     );
     RegisterApp( "dumpkbd", 1, doCommandDumpKbdData, "",
         "dump keyboard data"
     );
+#endif
+    RegisterApp( "sdreset", 1, doCommandSDReset, "",
+        "reset SD card"
+    );
+    RegisterApp( "sdspeed", 1, doCommandTestSDSpeed, "",
+        "test SD read speed"
+    );
+    RegisterApp( "ls", 1, doCommandLS, "",
+        "list files on SD"
+    );
     RegisterApp( "read", 2, doCommandReadBlock, "N",
         "read and dump out SD block N"
     );
-#endif
     RegisterApp( "flashinfo", 1, doCommandFlashInfoLED, "",
         "flash the info LED"
     );
@@ -3083,9 +3083,9 @@ uint32_t /* SECTION_CCMRAM */ vectorTable[100] __attribute__ ((aligned (512)));
 extern int KBDInterrupts;
 extern int UARTInterrupts;
 
-#ifdef USE_FATFS
+#ifdef USE_SD
 FATFS gFATVolume;
-#endif /* USE_FATFS */
+#endif /* USE_SD */
 
 int main()
 {
@@ -3129,6 +3129,31 @@ int main()
     LED_beat_heart();
     SERIAL_flush();
 
+    if(0){ 
+        GPIO_InitTypeDef  GPIO_InitStruct;
+
+        GPIO_InitStruct.Pin = GPIO_PIN_5 | GPIO_PIN_6 | GPIO_PIN_7;
+        GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+        GPIO_InitStruct.Speed = GPIO_SPEED_LOW;
+        GPIO_InitStruct.Pull = GPIO_PULLDOWN;
+        GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+        HAL_GPIO_Init(GPIOA, &GPIO_InitStruct); 
+        GPIO_InitStruct.Pin = GPIO_PIN_14;
+        GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+        GPIO_InitStruct.Speed = GPIO_SPEED_LOW;
+        GPIO_InitStruct.Pull = GPIO_PULLDOWN;
+        GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+        HAL_GPIO_Init(GPIOD, &GPIO_InitStruct); 
+        int a;
+        while(1) {
+            HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, (a & 0x01) ? 1 : 0);
+            HAL_GPIO_WritePin(GPIOA, GPIO_PIN_6, (a & 0x02) ? 1 : 0);
+            HAL_GPIO_WritePin(GPIOA, GPIO_PIN_7, (a & 0x04) ? 1 : 0);
+            HAL_GPIO_WritePin(GPIOD, GPIO_PIN_14, (a & 0x08) ? 1 : 0);
+            delay_ms(500);
+            a ++;
+        }
+    }
 #ifdef USE_SD
     SPI_config_for_sd();
     LED_beat_heart();
