@@ -9,14 +9,72 @@ Upgrade to STM32F746
     ./ enable UART after that
     ./ configure clock after that
     ./ then SD
-    then video output
+    ./ then video output (sort of)
     then audio output
     then PS/2 keyboard
+Potential improvements
+    use SDMMC peripheral
+Issues to figure out
+    What *are* the time bases for all TIM?  It seems like I can't get this right.
+    Does DMA fire on one edge or both?  Why do I have to /2 the TIM ARR for the 746?
+    Automatically choose APB1 and APB2 clocks, register them somehow, and use those for everything
+    Allow tighter clocking to 3.579545
+        clocks.py needs to know what actual TIM1 clocks is and that depends on APB1 and APB2 clocking
+        so clocks.py has some restrictions:
+            don't finally clock lower than (say) 180MHz or higher than 250MHz
+            USB OTG has to 48MHz to work and we want it eventually to work
+            SD card has to be initialized at 200KHz and can't operate > 50MHz
+                which means setting baud rate divider so that those are possible
+                    which means setting APB2 so that baud rate divider CAN work
+                        so PLL has to be <= 16x max APB2 rate
+            TIM1 depends on APB2
+                and APB2 can't run any faster than 45 MHz
+            APB2 can't run any faster than 
+    know that TIMx depends on the bus frequency for APBy
+        and on the value in TIMPRE in DCKCFGR
+        e.g. TIM1 depends on APB2
+        e.g. TIM9 depends on APB1
+
+enum Timer {
+    TIM1 = 0, TIM2, TIM3, TIM4, TIM5, TIM6, TIM7, TIM8,
+    TIM9, TIM10, TIM11, TIM12, TIM13, TIM14, TIM15,
+};
+
+int GetTIMxFrequency(Timer timer, int TIMPRE, int PPRE1, int PPRE2, int HCLKFrequency, int APB1Frequency, int APB2Frequency)
+{
+    int APBDomain;
+    switch(timer) {
+        case TIM2: case TIM3: case TIM4: case TIM5: case TIM6: case TIM7: case TIM12: case TIM13: case TIM14:
+            APBDomain = 1; break;
+        case TIM1: case TIM8: case TIM9: case TIM10: case TIM11: 
+            APBDomain = 2; break;
+    }
+
+    int PPRE = (APBDomain == 1) ? PPRE1: PPRE2;
+    int APBFrequency = (APBDomain == 1) ? APBFrequency1: APBFrequency2;
+
+    if(TIMPRE == 0) {
+        if(PPRE == 1) {
+            return APBFrequency;
+        } else {
+            return APBFrequency * 2;
+        }
+    } else /* TIMPRE == 1 */ {
+        if((PPRE == 1) || (PPRE == 2) || (PPRE == 4)) {
+            return HCLKFrequency;
+        } else {
+            return APBFrequency * 4;
+        }
+    }
+}
+
+-------
 
 tab should autocomplete at CLI
     tab in first completes commands
     tab in second et al completes filenames
-How to wrap up with a bow fast?
+Factor out shell
+How to wrap up with a bow?
     board with 415 or 745 and microSD, two DB9s, PS/2 keyboard, NTSC composite out, mono Line-out, USB in for power and programming and stick an FTDI for UART?
     Be able to demo
         Wolfenstein
@@ -26,11 +84,12 @@ How to wrap up with a bow fast?
         3D Spin
         play sound (in background?)
     Leave *potential* to hook Channel F 9-pin to DB9s
+        potentially run Channel F
     Blog post
     Build docs
     API docs
 Video API notes
-    Fundamentally, CCMRAM lacks the memory for more than 1 byte per pixel at ~250x200
+    Fundamentally, CCMRAM lacks the memory for more than 1 byte per pixel at more than 250x200
         VideoMode has internals that convert to the display specifics
         VideoMode is the abstraction hiding the memory limitations from the application.
             Platform libraries do additional useful work, like converting R8G8B8 rows to 256-entry palettized images with Floyd-Steinberg

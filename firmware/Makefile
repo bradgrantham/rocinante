@@ -44,19 +44,19 @@ COBJECTS = \
         diskio.o \
         ff_unicode.o \
         apps/less.o \
+        ps2_keyboard.o \
+        keyboard.o \
+        apps/vile.o \
+        graphics.o \
+        apps/showimage.o \
+        textport.o \
+        apps/wolf.o \
+        wolftextures.o \
         $(NULL)
         # need ff_unicode if ExFAT and LFN support are compiled in
 
 NOTYET = \
-        apps/vile.o \
-        wolftextures.o \
-        graphics.o \
-        ps2_keyboard.o \
-        keyboard.o \
         reset_button.o \
-        textport.o \
-        apps/showimage.o \
-        apps/wolf.o \
         $(NULL)
 
 MICRORAY_APP_OBJECT     = # apps/microray.o
