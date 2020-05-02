@@ -93,6 +93,21 @@ LoopCopyDataInit:
   adds  r2, r0, r1
   cmp  r2, r3
   bcc  CopyDataInit
+
+  movs  r1, #0
+  b LoopCopyDataInit1   /* go to LoopCopyDataInit1 */
+CopyDataInit1:
+  ldr r3, =_siccmram    /* r3 = _siccmram (initialization for ccmram) */
+  ldr r3, [r3, r1]      /* r3 = r3[r1] */
+  str r3, [r0, r1]      /* r0[r1] = r3 */
+  adds r1, r1, #4       /* r1 += 4 */
+LoopCopyDataInit1:
+  ldr r0, =_sccmram     /* r0 = _sccmram */
+  ldr r3, =_eccmram     /* r3 = _eccmram */
+  adds r2, r0, r1       /* r2 = r0 + r1 */
+  cmp r2, r3            /* set flags from r2 - r3 */
+  bcc CopyDataInit1     /* if carry clear (result not negative), go to CopyDataInit1 */
+
   ldr  r2, =_sbss
   b  LoopFillZerobss
 /* Zero fill the bss segment. */  
