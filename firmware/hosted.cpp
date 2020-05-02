@@ -2,7 +2,50 @@
 #include <stdlib.h>
 #include <string.h>
 
-// cc -I. hosted.c graphics.c utility.c apps/showimage.c -o hosted
+/*
+start:
+    glfwSetErrorCallback(error_callback);
+    if(!glfwInit())
+        exit(EXIT_FAILURE);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 2);
+    glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
+    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE); 
+    glfwMakeContextCurrent(my_window);
+    glfwGetWindowSize(my_window, &gWindowWidth, &gWindowHeight);
+    glfwSetKeyCallback(my_window, glfwkey);
+    glfwSetFramebufferSizeCallback(my_window, resize);
+    glfwSetWindowRefreshCallback(my_window, redraw);
+poll: // return 1 if should exit, 0 if should not exit
+    if(glfwWindowShouldClose(my_window)) {
+        return 1;
+    }...
+    glfwPollEvents();
+    return 0;
+stop: // called to close down GLFW
+    glfwTerminate();
+redraw:
+    glfwGetFramebufferSize(window, &fbw, &fbh);
+    glViewport(0, 0, fbw, fbh);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    blast 2D buffer to screen
+    glfwSwapBuffers(my_window);
+update: // Called by app whenever screen contents have changed
+    redraw()
+
+Not a library, more like a skeleton
+
+static void resize(GLFWwindow *window, int x, int y)
+{
+    resize_based_on_window(window);
+    int fbw, fbh;
+    glfwGetFramebufferSize(window, &fbw, &fbh);
+    glViewport(0, 0, fbw, fbh);
+}
+
+*/
+
+// c++ -I. hosted.cpp -x c graphics.c utility.c apps/showimage.c -o hosted
 
 #include "rocinante.h"
 #include "videomode.h"
@@ -56,7 +99,7 @@ void VideoModeGetInfo(int n, void *info)
 {
     ((VideoPixmapInfo*)info)->width = 384;
     ((VideoPixmapInfo*)info)->height = 128;
-    ((VideoPixmapInfo*)info)->pixelFormat = PALETTE_8BIT;
+    ((VideoPixmapInfo*)info)->pixelFormat = VideoPixmapInfo::PALETTE_8BIT;
     ((VideoPixmapInfo*)info)->paletteSize = 256;
     ((VideoPixmapInfo*)info)->color = 1;
     ((VideoPixmapInfo*)info)->overscan = 0;
