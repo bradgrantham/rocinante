@@ -5,7 +5,8 @@ OPT             =       -O2 -g -funroll-loops
 # TOOLROOT        ?=      $(HOME)/trees/gcc-arm-none-eabi-5_3-2016q1
 TOOLROOT        ?=      $(HOME)/packages/gcc-arm-none-eabi-7-2018-q2-update
 # STM32FCUBEROOT  ?=      $(HOME)/trees/STM32Cube_FW_F4_V1.9.0
-STM32FCUBEROOT  ?=      $(HOME)/packages/STM32Cube_FW_F4_V1.21.0/
+# STM32FCUBEROOT  ?=      $(HOME)/packages/STM32Cube_FW_F4_V1.21.0/
+STM32FCUBEROOT  ?=      $(HOME)/STM32Cube/Repository/STM32Cube_FW_F7_V1.15.0/
 # GCC_LIB         ?=      $(TOOLROOT)/lib/gcc/arm-none-eabi/5.3.1
 GCC_LIB         ?=      $(TOOLROOT)/lib/gcc/arm-none-eabi/7.3.1
 
