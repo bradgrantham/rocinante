@@ -11,10 +11,9 @@ GCC_LIB         ?=      $(TOOLROOT)/lib/gcc/arm-none-eabi/7.3.1
 
 SOURCE_ROOT             ?=       $(shell pwd)
 
-CORTEX_M4_HWFP_CC_FLAGS = -mthumb -mcpu=cortex-m7 -mfloat-abi=hard -mfpu=fpv4-sp-d16 -mlittle-endian -mslow-flash-data
+CORTEX_M4_HWFP_CC_FLAGS = -mthumb -mcpu=cortex-m7 -mfloat-abi=hard -mfpu=fpv5-sp-d16 -mlittle-endian -mslow-flash-data
 TARGET = STM32F746xx
 STM32F4XX_CMSIS_INC_PATH        = $(STM32FCUBEROOT)/Drivers/CMSIS/Include/
-CORTEX_M4_HWFP_LIB_PATH = $(GCC_LIB)/armv7e-m/fpu
 
 COBJECTS = \
         STM32Cube4/startup_stm32f746xx.o \
@@ -81,7 +80,7 @@ main.hex: main.elf
 -include $(DEPS)
 
 main.elf:  $(OBJECTS)
-	$(TOOLROOT)/bin/arm-none-eabi-g++ $(OPT) $(CORTEX_M4_HWFP_CC_FLAGS) -DSTM32F746xx -L$(CORTEX_M4_HWFP_LIB_PATH) $(MICRORAY_LIB_DIR) -TSTM32F746ZG_FLASH.ld  -lm -Wl,--gc-sections $^ -o $@ $(MICRORAY_LIB)
+	$(TOOLROOT)/bin/arm-none-eabi-g++ $(OPT) $(CORTEX_M4_HWFP_CC_FLAGS) -DSTM32F746xx $(MICRORAY_LIB_DIR) -TSTM32F746ZG_FLASH.ld  -lm -Wl,--gc-sections $^ -o $@ $(MICRORAY_LIB)
 
 STM32Cube4/startup_stm32f746xx.o: STM32Cube4/startup_stm32f746xx.s
 	$(TOOLROOT)/bin/arm-none-eabi-gcc -Wall $(OPT) $(CORTEX_M4_HWFP_CC_FLAGS)  $< -c -o $@
@@ -107,5 +106,3 @@ main.dfu: main.hex
 
 burn: main.dfu
 	time dfu-util -d 0483:df11 -a 0 -D main.dfu
-
-# DO NOT DELETE

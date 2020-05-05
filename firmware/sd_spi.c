@@ -17,6 +17,10 @@
 
 SPI_HandleTypeDef gSPIHandle;
 
+// XXX Must be changed to match the APB that the SPI is on.
+// SPI1 is on APB2.
+#define GetAPBFreq HAL_RCC_GetPCLK2Freq
+
 void HAL_SPI_MspInit(SPI_HandleTypeDef *hspi)
 {
     GPIO_InitTypeDef  GPIO_InitStruct;
@@ -80,9 +84,11 @@ void SPI_disable_sd()
 
 uint32_t SPI_get_prescaling_for_baud(uint32_t baud)
 {
+    uint32_t apbFreq = GetAPBFreq();
+
     uint32_t prescaling = 2;
     // XXX the "8" below is hardcoded to match value from ClockInit
-    while((prescaling <= 256) && (SystemCoreClock / 8 / prescaling > baud)) {
+    while((prescaling <= 256) && (apbFreq / prescaling > baud)) {
         prescaling *= 2;
     }
     if(prescaling > 256) {
