@@ -2773,10 +2773,12 @@ void Bitmap640x192FillRow(int frameNumber, int lineNumber, unsigned char *rowBuf
 // ----------------------------------------
 // Wolfenstein-style renderer
 
-#define WolfensteinWidthSamples 440
+#define WolfensteinWidthSamples 512
+// 440
 #define WolfensteinLeft (512 - WolfensteinWidthSamples / 2)
 #define WolfensteinTop (27 * 2)
-#define WolfensteinHeight (192 * 2)
+#define WolfensteinHeight (230 * 2)
+// (192 * 2)
 
 // Pixmap video mode structs
 const static VideoWolfensteinInfo WolfensteinInfo = {
@@ -3775,6 +3777,9 @@ FATFS gFATVolume;
 int main()
 {
     HAL_Init();
+
+    SCB_EnableICache();
+    // SCB_EnableDCache();
 
 #if 0
     uint32_t* oldVectorTable = (uint32_t*)SCB->VTOR;
