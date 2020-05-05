@@ -5,8 +5,6 @@
 #include <math.h>
 
 #undef USE_PS2KBD
-#undef USE_AUDIO
-#define DO_WOLF
 
 #include <stm32f7xx_hal.h>
 
@@ -27,8 +25,6 @@
 #include "sd_spi.h"
 #include "keyboard.h"
 #include "reset_button.h"
-
-#define SECTION_CCMRAM __attribute__((section (".ccmram")))
 
 // System APIs
 #include "videomode.h"
@@ -1545,7 +1541,7 @@ void MemoryCopyDMA(unsigned char* dst, unsigned char* src, size_t size)
     DMA2_Stream1->PAR = (uint32_t)src;        // Source buffer address 0 in Memory-to-Memory mode
     DMA2_Stream1->M0AR = (uint32_t)dst;        // Dest buffer address in Memory-to-Memory mode
     DMA2_Stream1->FCR = DMA_FIFOMODE_ENABLE |   // Enable FIFO to improve stutter
-        0; // DMA_FIFO_THRESHOLD_FULL;        
+        DMA_FIFO_THRESHOLD_FULL;        
     DMA2_Stream1->CR =
         DMA_CHANNEL_1 |                         
         DMA_MEMORY_TO_MEMORY |                  // Memory to Memory
@@ -1637,11 +1633,10 @@ void DMA2_Stream2_IRQHandler(void)
         DMATransferErrors++;
     }
 
-#if 0
+
     // XXX audio experiment
     DAC1->DHR8R1 = audioBuffer[audioBufferPosition];
     audioBufferPosition = (audioBufferPosition + 1) % sizeof(audioBuffer);
-#endif
 
     int whichIsScanning = (DMA2_Stream2->CR & DMA_SxCR_CT) ? 1 : 0;
 
@@ -1659,12 +1654,13 @@ void DMA2_Stream2_IRQHandler(void)
     }
 
     TIM9->CR1 = 0;            /* stop the timer */
-    rowCyclesSpent[lineNumber] = TIM9->CNT;     // TIM9 CK_INT is RCC
+    rowCyclesSpent[lineNumber] = TIM9->CNT;     // TIM9 CK_INT is RCC on 415xxx, APB1 on 746xxx
 
     // A little pulse so we know where we are on the line
     if(markHandlerInSamples) {
         for(int i = 0; i < 28; i++) { GPIOC->ODR = 0xFFFFFFE8; }
     }
+    while(DMA2_Stream2->NDTR > 100);
 }
 
 void DMAStartScanout(uint32_t dmaCount)
@@ -2769,7 +2765,6 @@ void Bitmap640x192FillRow(int frameNumber, int lineNumber, unsigned char *rowBuf
     }
 }
 
-#ifdef DO_WOLF
 // ----------------------------------------
 // Wolfenstein-style renderer
 
@@ -2921,8 +2916,6 @@ void WolfensteinFillRow(int frameNumber, int lineNumber, unsigned char *rowBuffe
 }
 
 
-#endif
-
 // ----------------------------------------
 // Video mode table
 
@@ -3028,7 +3021,6 @@ const static VideoModeEntry NTSCModes[] =
         SetRowPalette,
         NULL,
     },
-#ifdef DO_WOLF
     {
         VIDEO_MODE_WOLFENSTEIN,
         &WolfensteinInfo,
@@ -3039,7 +3031,6 @@ const static VideoModeEntry NTSCModes[] =
         SetRowPalette,
         NULL,
     },
-#endif
 };
 
 // Generic videomode functions
@@ -3342,15 +3333,20 @@ int doCommandShowLineEnd(int wordCount, char **words)
 
 int doCommandScanoutCycles(int wordCount, char **words)
 {
-    int cyclesPerLine = SystemCoreClock / 59.94 / 262;
+    int cyclesPerLine = SystemCoreClock / 59.94 / 262.5;
+    // XXX As long as we're using TIM9, we care about APB2.
+    // As long as PPRE2 is >= 2 and TIMPRE == 0, TIM9's clock will be 2 * PCLK2.
+    int TIM9clock = HAL_RCC_GetPCLK2Freq() * 2;
+    int hclkCyclesPerTIM9Count = (SystemCoreClock / 1000000) / (TIM9clock / 1000000);
     // XXX Use a histogram instead
     for(int i = 0; i < 525; i++) {
-        printf("row %3d: %8u cycles, %lu microseconds", i, rowCyclesSpent[i],
-            rowCyclesSpent[i] / (SystemCoreClock / 1000000));
+        int hclkcycles = rowCyclesSpent[i] * hclkCyclesPerTIM9Count;
+        printf("row %3d: %8u cycles, %lu microseconds", i, hclkcycles,
+            hclkcycles / (SystemCoreClock / 1000000));
         if(rowCyclesSpent[i] > cyclesPerLine) {
-            printf(", overrun by %u%%\n", rowCyclesSpent[i] * 100 / cyclesPerLine - 100);
+            printf(", overrun by %u%%\n", hclkcycles * 100 / cyclesPerLine - 100);
         } else { 
-            printf(", %u%% remained\n", (cyclesPerLine - rowCyclesSpent[i]) * 100 / cyclesPerLine);
+            printf(", %u%% remained\n", (cyclesPerLine - hclkcycles) * 100 / cyclesPerLine);
         }
     }
     printf("%d cyclesPerLine were available\n", cyclesPerLine);
@@ -3779,7 +3775,8 @@ int main()
     HAL_Init();
 
     SCB_EnableICache();
-    // SCB_EnableDCache();
+    SCB->CACR |= SCB_CACR_FORCEWT_Msk;
+    SCB_EnableDCache();
 
 #if 0
     uint32_t* oldVectorTable = (uint32_t*)SCB->VTOR;
@@ -3889,7 +3886,6 @@ int main()
     LED_beat_heart();
 #endif
 
-#ifdef USE_AUDIO
     // AUDIO
     for(int i = 0; i < sizeof(audioBuffer); i++) {
         audioBuffer[i] = 128;
@@ -3906,7 +3902,6 @@ int main()
     }
     DAC->CR |= DAC_CR_EN1;
     DAC->CR |= DAC_CR_BOFF1;
-#endif
 
     NTSCGenerateLineBuffers();
     NTSCFillRowBuffer(0, 0, row0);
