@@ -2,53 +2,83 @@
 #include <stdlib.h>
 #include <string.h>
 
-/*
-start:
-    glfwSetErrorCallback(error_callback);
-    if(!glfwInit())
-        exit(EXIT_FAILURE);
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 2);
-    glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
-    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE); 
-    glfwMakeContextCurrent(my_window);
-    glfwGetWindowSize(my_window, &gWindowWidth, &gWindowHeight);
-    glfwSetKeyCallback(my_window, glfwkey);
-    glfwSetFramebufferSizeCallback(my_window, resize);
-    glfwSetWindowRefreshCallback(my_window, redraw);
-poll: // return 1 if should exit, 0 if should not exit
-    if(glfwWindowShouldClose(my_window)) {
-        return 1;
-    }...
-    glfwPollEvents();
-    return 0;
-stop: // called to close down GLFW
-    glfwTerminate();
-redraw:
-    glfwGetFramebufferSize(window, &fbw, &fbh);
-    glViewport(0, 0, fbw, fbh);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-    blast 2D buffer to screen
-    glfwSwapBuffers(my_window);
-update: // Called by app whenever screen contents have changed
-    redraw()
+#include "rocinante.h"
+#include "videomode.h"
 
-Not a library, more like a skeleton
+// c++ -I. hosted.cpp -x c graphics.c utility.c apps/showimage.c -o hosted
+
+#if 0
+
+#define GL_SILENCE_DEPRECATION
+
+#if defined(__linux__)
+#include <GL/glew.h>
+#endif // defined(__linux__)
+
+#define GLFW_INCLUDE_GLCOREARB
+#include <GLFW/glfw3.h>
+
+namespace UserInterface
+{
+
+int screenWidth = 512; 
+int screenHeight = 512; 
+int windowWidth;
+int windowHeight;
+static GLFWwindow* window;
 
 static void resize(GLFWwindow *window, int x, int y)
 {
-    resize_based_on_window(window);
+    glfwGetWindowSize(window, &windowWidth, &windowHeight);
     int fbw, fbh;
     glfwGetFramebufferSize(window, &fbw, &fbh);
     glViewport(0, 0, fbw, fbh);
 }
 
-*/
+static void errorCallback(int error, const char* description)
+{
+    fprintf(stderr, "GLFW: %s\n", description);
+}
 
-// c++ -I. hosted.cpp -x c graphics.c utility.c apps/showimage.c -o hosted
+static void initialize()
+{
+    glfwSetErrorCallback(errorCallback);
 
-#include "rocinante.h"
-#include "videomode.h"
+    if(!glfwInit())
+        exit(EXIT_FAILURE);
+
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 2);
+    glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
+    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE); 
+
+    // glfwWindowHint(GLFW_SAMPLES, 4);
+    window = glfwCreateWindow(screenWidth, screenHeight, "Rocinante", NULL, NULL);
+    if (!window) {
+        glfwTerminate();
+        fprintf(stdout, "Couldn't open main window\n");
+        exit(EXIT_FAILURE);
+    }
+
+    glfwMakeContextCurrent(window);
+    // printf("GL_RENDERER: %s\n", glGetString(GL_RENDERER));
+    // printf("GL_VERSION: %s\n", glGetString(GL_VERSION));
+
+    glfwGetWindowSize(window, &windowWidth, &windowHeight);
+    CheckOpenGL(__FILE__, __LINE__);
+
+    glfwSetKeyCallback(window, key);
+    // glfwSetMouseButtonCallback(window, button);
+    // glfwSetCursorPosCallback(window, motion);
+    // glfwSetScrollCallback(window, scroll);
+    glfwSetFramebufferSizeCallback(window, resize);
+    glfwSetWindowRefreshCallback(window, redraw);
+    CheckOpenGL(__FILE__, __LINE__);
+}
+
+};
+
+#endif
 
 enum { MAX_COMMANDS = 50};
 Command commands[MAX_COMMANDS];
