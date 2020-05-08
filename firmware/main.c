@@ -1087,6 +1087,7 @@ void console_queue_init()
 #define DAC_VALUE_LIMIT 0xFF
 
 #define MAX_DAC_VOLTAGE 1.22f
+#define MAX_DAC_VOLTAGE_F8 312
 
 unsigned char voltageToDACValue(float voltage)
 {
@@ -1100,25 +1101,13 @@ unsigned char voltageToDACValue(float voltage)
     return value;
 }
 
+int voltageToDACValueFixed8NoBounds(int voltage)
+{
+    return (uint32_t)(voltage * 255 / MAX_DAC_VOLTAGE_F8);
+}
+
 //----------------------------------------------------------------------------
 // NTSC Video goop
-
-int SECTION_CCMRAM markHandlerInSamples = 0;
-
-uint16_t SECTION_CCMRAM rowCyclesSpent[525];
-uint32_t SECTION_CCMRAM DMAFIFOUnderruns = 0;
-uint32_t SECTION_CCMRAM DMATransferErrors = 0;
-typedef enum { NTSC_SOLID_FILL, NTSC_COLOR_TEST, NTSC_SCAN_TEST, NTSC_USE_VIDEO_MODE} VideoMode;
-VideoMode SECTION_CCMRAM NTSCMode = NTSC_COLOR_TEST;
-int SECTION_CCMRAM videoScanTestLeft = 200;
-int SECTION_CCMRAM videoScanTestRight = 700;
-int SECTION_CCMRAM videoScanTestTop = 50;
-int SECTION_CCMRAM videoScanTestBottom = 200;
-
-// Number of samples we target, 4x colorburst yields 227.5 cycles, or 910 samples at 14.318180MHz
-// But we cheat and actually scan out 912 cycles to be a multiple
-// of 16, so lines are .22% too long.  We hope the receiver is permissive
-// enough to ignore this.  My cheap Orion is.
 
 #define ROW_SAMPLES        912
 
@@ -1140,6 +1129,26 @@ int SECTION_CCMRAM videoScanTestBottom = 200;
 #define NTSC_SYNC_PORCH_VOLTAGE   .285f
 #define NTSC_SYNC_BLACK_VOLTAGE   .339f
 #define NTSC_SYNC_WHITE_VOLTAGE   1.0f  /* VCR had .912v */
+
+#define NTSC_SYNC_BLACK_VOLTAGE_F8   87
+#define NTSC_SYNC_WHITE_VOLTAGE_F8   255
+
+int SECTION_CCMRAM markHandlerInSamples = 0;
+
+volatile int16_t SECTION_CCMRAM rowDMARemained[NTSC_FRAME_LINES];
+volatile uint32_t SECTION_CCMRAM DMAFIFOUnderruns = 0;
+volatile uint32_t SECTION_CCMRAM DMATransferErrors = 0;
+typedef enum { NTSC_SOLID_FILL, NTSC_COLOR_TEST, NTSC_SCAN_TEST, NTSC_USE_VIDEO_MODE} VideoMode;
+volatile VideoMode SECTION_CCMRAM NTSCMode = NTSC_COLOR_TEST;
+volatile int SECTION_CCMRAM videoScanTestLeft = 200;
+volatile int SECTION_CCMRAM videoScanTestRight = 700;
+volatile int SECTION_CCMRAM videoScanTestTop = 50;
+volatile int SECTION_CCMRAM videoScanTestBottom = 200;
+
+// Number of samples we target, 4x colorburst yields 227.5 cycles, or 910 samples at 14.318180MHz
+// But we cheat and actually scan out 912 cycles to be a multiple
+// of 16, so lines are .22% too long.  We hope the receiver is permissive
+// enough to ignore this.  My cheap Orion is.
 
 // These are in CCM to reduce contention with SRAM1 during DMA 
 unsigned char SECTION_CCMRAM NTSCEqSyncPulseLine[ROW_SAMPLES];
@@ -1172,7 +1181,7 @@ int NTSCBackPorchClocks;
 unsigned char SECTION_CCMRAM imgBuffer[IMGBUFFER_SIZE];
 
 uint32_t SECTION_CCMRAM paletteToWave[2][256];
-unsigned char SECTION_CCMRAM rowPalette[525];
+unsigned char SECTION_CCMRAM rowPalette[NTSC_FRAME_LINES];
 
 // XXX these are in SRAM2 to reduce contention with SRAM1 during DMA
 unsigned char __attribute__((section (".sram2"))) row0[ROW_SAMPLES];
@@ -1192,6 +1201,30 @@ unsigned char NTSCYIQToDAC(float y, float i, float q, float tcycles)
     return voltageToDACValue(NTSC_SYNC_BLACK_VOLTAGE + signal * (NTSC_SYNC_WHITE_VOLTAGE - NTSC_SYNC_BLACK_VOLTAGE));
 }
 
+unsigned char NTSCYIQToDACFixed8(int16_t yFixed8, int16_t iFixed8, int16_t qFixed8, int degrees)
+{
+    int sineFixed8, cosineFixed8;
+    if(degrees == 0) {
+        sineFixed8 = 140;
+        cosineFixed8 = 114;
+    } else if(degrees == 90) {
+        sineFixed8 = 114;
+        cosineFixed8 = -140;
+    } else if(degrees == 180) {
+        sineFixed8 = -140;
+        cosineFixed8 = -114;
+    } else if(degrees == 270) {
+        sineFixed8 = -114;
+        cosineFixed8 = 140;
+    } else {
+        sineFixed8 = 0;
+        cosineFixed8 = 0;
+    }
+    int signalFixed8 = yFixed8 + (qFixed8 * sineFixed8 + iFixed8 * cosineFixed8) / 256;
+
+    return voltageToDACValueFixed8NoBounds(NTSC_SYNC_BLACK_VOLTAGE_F8 + signalFixed8 * (NTSC_SYNC_WHITE_VOLTAGE_F8 - NTSC_SYNC_BLACK_VOLTAGE_F8) / 256);
+}
+
 uint32_t NTSCYIQToWave(float y, float i, float q)
 {
     unsigned char b0 = NTSCYIQToDAC(y, i, q,  .0f);
@@ -1200,6 +1233,13 @@ uint32_t NTSCYIQToWave(float y, float i, float q)
     unsigned char b3 = NTSCYIQToDAC(y, i, q, .75f);
 
     return (b0 << 0) | (b1 << 8) | (b2 << 16) | (b3 << 24);
+}
+
+uint32_t NTSCRGBToWave(float r, float g, float b)
+{
+    float y, i, q;
+    RGBToYIQ(r, g, b, &y, &i, &q);
+    return NTSCYIQToWave(y, i, q);
 }
 
 unsigned char NTSCColorburst0;
@@ -1552,10 +1592,10 @@ void MemoryCopyDMA(unsigned char* dst, unsigned char* src, size_t size)
         DMA_MINC_ENABLE |                       // Increment memory address
         0;
     DMA2_Stream1->CR |= DMA_SxCR_EN;    /* enable DMA */
-}
+} 
 
 // XXX audio experiment
-// In this mode we woud have a sampling rate of 15.6998 KHz
+// In this mode we would have a sampling rate of 15.6998 KHz
 unsigned char SECTION_CCMRAM audioBuffer[256];
 volatile int audioBufferPosition = 0;
 
@@ -1606,8 +1646,6 @@ static void RegisterCommandPlay(void)
 void DMA2_Stream2_IRQHandler(void)
 {
     // Configure timer TIM2 for performance measurement
-    // TIM9->SR = 0;                       /* reset status */
-    // TIM9->ARR = 0xFFFFFFFF;
     TIM9->CNT = 0;
     TIM9->CR1 = TIM_CR1_CEN;            /* enable the timer */
 
@@ -1616,7 +1654,7 @@ void DMA2_Stream2_IRQHandler(void)
     // DMA2->LIFCR |= DMA_LIFCR_CHTIF2;
 
     if(markHandlerInSamples) {
-        for(int i = 0; i < 28; i++) { GPIOC->ODR = 0xFFFFFFF8; }
+        for(int i = 0; i < 28; i++) { GPIOC->ODR = (GPIOC->ODR & 0xFFFFFF00) | 0xFFFFFFF8; }
     } else {
         // Do a little loop here since FIFO may have starved a little on interrupt
         // And hope we're early enough in the line that values aren't changing
@@ -1633,7 +1671,6 @@ void DMA2_Stream2_IRQHandler(void)
         DMATransferErrors++;
     }
 
-
     // XXX audio experiment
     DAC1->DHR8R1 = audioBuffer[audioBufferPosition];
     audioBufferPosition = (audioBufferPosition + 1) % sizeof(audioBuffer);
@@ -1647,20 +1684,34 @@ void DMA2_Stream2_IRQHandler(void)
         fillRowDebugOverlay(frameNumber, lineNumber, nextRowBuffer);
     }
 
+    int thisLineNumber = lineNumber;
     lineNumber = lineNumber + 1;
     if(lineNumber == NTSC_FRAME_LINES) {
         lineNumber = 0;
         frameNumber++;
     }
 
-    TIM9->CR1 = 0;            /* stop the timer */
-    rowCyclesSpent[lineNumber] = TIM9->CNT;     // TIM9 CK_INT is RCC on 415xxx, APB1 on 746xxx
-
-    // A little pulse so we know where we are on the line
+    // A little pulse so we know where we are on the line when we finished
     if(markHandlerInSamples) {
-        for(int i = 0; i < 28; i++) { GPIOC->ODR = 0xFFFFFFE8; }
+        for(int i = 0; i < 28; i++) { GPIOC->ODR = (GPIOC->ODR & 0xFFFFFF00) | 0xFFFFFFE8; }
     }
-    while(DMA2_Stream2->NDTR > 100);
+
+    if(0) {
+        int withinVisiblePartOfEvenFrame = (lineNumber > 27) && (lineNumber < 257);
+        int withinVisiblePartOfOddFrame = (lineNumber > (262 + 27)) && (lineNumber < (262 + 257));
+
+        if(withinVisiblePartOfEvenFrame || withinVisiblePartOfOddFrame) {
+            while(DMA2_Stream1->NDTR > 100);
+        }
+    }
+
+#if 1
+    TIM9->CR1 = 0;            /* stop the timer */
+    // rowCyclesSpent[lineNumber] = TIM9->CNT;     // TIM9 CK_INT is RCC on 415xxx, APB1 on 746xxx
+    rowDMARemained[thisLineNumber] = 912 - TIM9->CNT / 7;
+#else
+    rowDMARemained[thisLineNumber] = *(uint16_t*)&DMA2_Stream1->NDTR;
+#endif
 }
 
 void DMAStartScanout(uint32_t dmaCount)
@@ -1927,9 +1978,7 @@ int SetPaletteEntryAlwaysFails(const VideoModeEntry* modeEntry, int palette, int
 
 void SetPaletteEntry(int palette, int which, float r, float g, float b)
 {
-    float y, i, q;
-    RGBToYIQ(r, g, b, &y, &i, &q);
-    paletteToWave[palette][which] = NTSCYIQToWave(y, i, q);
+    paletteToWave[palette][which] = NTSCRGBToWave(r, g, b);
 }
 
 int SetRowPalette(const struct VideoModeEntry* modeEntry, int row, int palette)
@@ -2765,15 +2814,215 @@ void Bitmap640x192FillRow(int frameNumber, int lineNumber, unsigned char *rowBuf
     }
 }
 
+//--------------------------------------------------------------------------
+// Mode where scanlines are composed of sequential segments
+
+#define SegmentedVideoWidthSamples 512
+#define SegmentedVideoLeft (512 - SegmentedVideoWidthSamples / 2)
+#define SegmentedVideoTop (27 * 2)
+#define SegmentedVideoHeight (230 * 2)
+
+#define SegmentedVideoEvenTop (SegmentedVideoTop / 2)
+#define SegmentedVideoEvenBottom (SegmentedVideoTop / 2 + SegmentedVideoHeight / 2)
+#define SegmentedVideoOddTop (NTSC_FRAME_LINES / 2 + SegmentedVideoTop / 2 + 1)
+#define SegmentedVideoOddBottom (NTSC_FRAME_LINES / 2 + SegmentedVideoTop / 2 + SegmentedVideoHeight / 2 + 1)
+
+// Pixmap video mode structs
+const static VideoSegmentedInfo SegmentedInfo = {
+    SegmentedVideoWidthSamples,
+    SegmentedVideoHeight,
+};
+
+int SegmentedSetScanlines(float backgroundRed, float backgroundGreen, float backgroundBlue, int scanlineCount, VideoSegmentedScanline *scanlines);
+
+void SegmentedGetParameters(const VideoModeEntry *modeEntry, void *params_)
+{
+    VideoSegmentedParameters *params = (VideoSegmentedParameters*)params_;
+    params->setScanlines = SegmentedSetScanlines;
+}
+
+#pragma pack(push, 2)
+typedef struct SegmentedSegmentPrivate {
+    uint16_t pixelSkip;
+    uint16_t pixelCount;
+    int16_t y0, i0, q0;
+    int16_t dy, di, dq;
+} SegmentedSegmentPrivate;
+#pragma pack(pop)
+
+typedef struct SegmentedScanlinePrivate {
+    uint32_t backgroundWave;
+    SegmentedSegmentPrivate *scanlineSegments[SegmentedVideoHeight];
+    uint8_t segmentCounts[SegmentedVideoHeight];
+} SegmentedScanlinePrivate;
+
+#define MAX_SEGMENT_COUNT ((IMGBUFFER_SIZE - sizeof(SegmentedScanlinePrivate)) / sizeof(SegmentedSegmentPrivate))
+
+void SegmentedSetup(const VideoModeEntry *modeEntry)
+{
+    SegmentedScanlinePrivate *private = (SegmentedScanlinePrivate *)imgBuffer;
+    NTSCFillBlankLine(NTSCBlankLine, 1);
+    for(int i = 0; i < SegmentedVideoHeight; i++) {
+        private->segmentCounts[i] = 0;
+    }
+    private->backgroundWave = NTSCRGBToWave(.5, .5, .5);
+}
+
+
+// For the FillRow state machine to work, this function MUST guarantee
+// that there is no SegmentedSegmentPrivate with a zero pixelCount.
+int SegmentedSetScanlines(float backgroundRed, float backgroundGreen, float backgroundBlue, int scanlineCount, VideoSegmentedScanline *scanlines)
+{
+    if(scanlineCount != SegmentedVideoHeight) {
+        return 1; // INVALID - incorrect number of scanlines
+    }
+    int totalSegments = 0;
+    for(int i = 0; i < scanlineCount; i++) {
+        totalSegments += scanlines[i].segmentCount;
+    }
+    if(totalSegments > MAX_SEGMENT_COUNT) {
+        return 2; // INVALID - too many segments
+    }
+
+    SegmentedScanlinePrivate *private = (SegmentedScanlinePrivate *)imgBuffer;
+    SegmentedSegmentPrivate *dstseg = (SegmentedSegmentPrivate *)(imgBuffer + sizeof(SegmentedScanlinePrivate));
+    
+    // Hope that we can update this entire buffer in the non-visible region!
+    // Roughly 390000 cycles or around 850 cycles per row, probably
+    // enough to convert frame as long we don't do per-line divides
+    // or trig.
+    while(
+        (lineNumber > SegmentedVideoEvenTop && lineNumber < SegmentedVideoEvenBottom) ||
+        (lineNumber > SegmentedVideoOddTop && lineNumber < SegmentedVideoOddBottom));
+
+    private->backgroundWave = NTSCRGBToWave(backgroundRed, backgroundGreen, backgroundBlue);
+
+    int skippedInPreviousEmptySegment = 0;
+    for(int i = 0; i < scanlineCount; i++) {
+        private->scanlineSegments[i] = dstseg;
+        private->segmentCounts[i] = scanlines[i].segmentCount;
+        // printf("scanline %d, %d count\n", i, scanlines[i].segmentCount);  SERIAL_flush();
+        for(int j = 0; j < scanlines[i].segmentCount; j++) {
+            VideoSegmentedScanlineSegment *srcseg = scanlines[i].segments + j;
+            if(srcseg->pixelCount == 0) {
+                // help caller by coalescing segments containing only a skip
+                skippedInPreviousEmptySegment += srcseg->pixelSkip;
+            } else {
+                dstseg->pixelSkip = srcseg->pixelSkip + skippedInPreviousEmptySegment;
+                skippedInPreviousEmptySegment = 0;
+                dstseg->pixelCount = srcseg->pixelCount;
+                // printf("    segment %d: skip %d, count %d\n", j, dstseg->pixelSkip, dstseg->pixelCount);  SERIAL_flush();
+                float Y0, I0, Q0;
+                float Y1, I1, Q1;
+                RGBToYIQ(srcseg->r0, srcseg->g0, srcseg->b0, &Y0, &I0, &Q0);
+                RGBToYIQ(srcseg->r1, srcseg->g1, srcseg->b1, &Y1, &I1, &Q1);
+                dstseg->y0 = Y0 * 256; dstseg->i0 = I0 * 256; dstseg->q0 = Q0 * 256;
+                dstseg->dy = (Y1 - Y0) / srcseg->pixelCount * 256;
+                dstseg->di = (I1 - I0) / srcseg->pixelCount * 256;
+                dstseg->dq = (Q1 - Q0) / srcseg->pixelCount * 256;
+                printf("%d %d %d %d %d %d\n", dstseg->y0, dstseg->i0, dstseg->q0, dstseg->dy, dstseg->di, dstseg->dq); SERIAL_flush();
+
+                dstseg ++;
+            }
+        }
+    }
+
+    return 0;
+}
+
+__attribute__((flatten)) void SegmentedFillRow(int frameNumber, int lineNumber, unsigned char *rowBuffer)
+{
+    int rowWithin = (lineNumber % 263) * 2 + lineNumber / 263 - SegmentedVideoTop;
+
+    if((rowWithin >= 0) && (rowWithin < SegmentedVideoHeight)) {
+
+        // Clear pixels outside of area 
+        // XXX These two memsets may be as much as 10% of scanline render time
+        memset(rowBuffer + NTSCHSyncClocks + NTSCBackPorchClocks, NTSCBlack, SegmentedVideoWidthSamples - NTSCHSyncClocks - NTSCBackPorchClocks);
+        int clocksToRightEdge = SegmentedVideoLeft + SegmentedVideoWidthSamples;
+        memset(rowBuffer + clocksToRightEdge, NTSCBlack, ROW_SAMPLES - clocksToRightEdge - NTSCFrontPorchClocks);
+
+        uint32_t *dstWords = (uint32_t*)(rowBuffer + SegmentedVideoLeft);
+        SegmentedScanlinePrivate *private = (SegmentedScanlinePrivate *)imgBuffer;
+
+        int segmentsRemaining = private->segmentCounts[rowWithin];
+        SegmentedSegmentPrivate *segmentp = private->scanlineSegments[rowWithin];
+        int skipping = 0, pixelCount = 0;
+        int16_t Y = 0, I = 0, Q = 0;
+        if(private->segmentCounts[rowWithin] > 0) {
+            segmentp = private->scanlineSegments[rowWithin];
+            skipping = segmentp->pixelSkip;
+            pixelCount = segmentp->pixelCount;
+            Y = segmentp->y0;
+            I = segmentp->i0;
+            Q = segmentp->q0;
+        }
+
+        for(int i = 0; i < SegmentedVideoWidthSamples; i += 4) {
+            uint32_t waveform = private->backgroundWave;
+
+            for(int j = 0; j < 4; j++) { // XXX if necessary unroll 
+                if(segmentsRemaining == 0) {
+
+                    // Pass - no more pixels, keep filling the background until we're done
+
+                } else if(skipping > 0) {
+
+                    // we're skipping to the next range of interpolated pixels
+                    skipping--;
+
+                } else if(pixelCount > 0) {
+
+                    // we're filling a range of interpolated pixels
+
+                    uint32_t mask = 0xff << (j * 8);
+
+                    uint32_t value = NTSCYIQToDACFixed8(Y, I, Q, j * 90);
+                    // if(value < 0x50) {
+                        // value = 0x80;
+                    // } else if(value > 0xF0) {
+                        // value = 0xF0;
+                    // }
+
+                    waveform = (waveform & (~mask)) | (value << (j * 8));
+
+                    Y += segmentp->dy; I += segmentp->di; Q += segmentp->dq;
+                    pixelCount --;
+
+                    if(pixelCount == 0) {
+
+                        // We just finished a segment
+                        segmentsRemaining --;
+
+                        if(segmentsRemaining > 0) {
+
+                            // There are more segments, load the next segment 
+                            segmentp++;
+
+                            skipping = segmentp->pixelSkip;
+                            pixelCount = segmentp->pixelCount;
+
+                            Y = segmentp->y0; I = segmentp->i0; Q = segmentp->q0;
+                        }
+                    }
+                }
+            }
+
+            *dstWords++ = waveform;
+        }
+    } else {
+        memset(rowBuffer + NTSCHSyncClocks + NTSCBackPorchClocks, NTSCBlack, ROW_SAMPLES - NTSCHSyncClocks - NTSCBackPorchClocks - NTSCFrontPorchClocks);
+    }
+}
+
+
 // ----------------------------------------
 // Wolfenstein-style renderer
 
 #define WolfensteinWidthSamples 512
-// 440
 #define WolfensteinLeft (512 - WolfensteinWidthSamples / 2)
 #define WolfensteinTop (27 * 2)
 #define WolfensteinHeight (230 * 2)
-// (192 * 2)
 
 // Pixmap video mode structs
 const static VideoWolfensteinInfo WolfensteinInfo = {
@@ -2826,6 +3075,7 @@ void WolfensteinSetup(const VideoModeEntry *modeEntry)
 void WolfensteinSetElements(VideoWolfensteinElement* row)
 {
     WolfensteinPrivateElement *private = (WolfensteinPrivateElement *)imgBuffer;
+    // XXX race condition - need to swap between buffers atomically
     for(int i = 0; i < WolfensteinWidthSamples; i++) {
         private[i].bright = row[i].bright * 0x10101010;
         float pixelsHalfHeight = row[i].height / 2.0f * WolfensteinHeight;
@@ -3031,6 +3281,16 @@ const static VideoModeEntry NTSCModes[] =
         SetRowPalette,
         NULL,
     },
+    {
+        VIDEO_MODE_SEGMENTS,
+        &SegmentedInfo,
+        SegmentedSetup,
+        SegmentedGetParameters,
+        SegmentedFillRow,
+        SetPaletteEntryAlwaysFails,
+        SetRowPalette,
+        NULL,
+    },
 };
 
 // Generic videomode functions
@@ -3060,6 +3320,8 @@ void VideoModeGetInfo(int n, void *info)
             break;
         }
         case VIDEO_MODE_SEGMENTS: {
+            *(VideoSegmentedInfo*)info = *(VideoSegmentedInfo*)entry->info;
+            break;
             break;
         }
         case VIDEO_MODE_DCT: {
@@ -3112,7 +3374,7 @@ int VideoModeSetRowPalette(int row, int palette)
 void VideoModeWaitFrame()
 {
     // NTSC won't actually go lineNumber >= 525...
-    while(!(lineNumber > 257 && lineNumber < 262) || (lineNumber > 520 && lineNumber < 525)); // Wait for VBLANK; should do something smarter
+    while(!(lineNumber > 257 && lineNumber < 262) || (lineNumber > 520 && lineNumber < NTSC_FRAME_LINES)); // Wait for VBLANK; should do something smarter
 }
 
 //----------------------------------------------------------------------------
@@ -3121,6 +3383,82 @@ void VideoModeWaitFrame()
 int showScanoutStats = 0;
 
 void NTSCGenerateLineBuffers();
+
+int doTestSegmentMode(int wordCount, char **words)
+{
+    int which = -1;
+    for(int i = 0; i < VideoGetModeCount(); i++) {
+        if(VideoModeGetType(i) == VIDEO_MODE_SEGMENTS) {
+            which = i;
+        }
+    }
+
+    if(which == -1) {
+        printf("Couldn't find segments video mode\n");
+        return COMMAND_FAILED;
+    }
+
+    VideoSetMode(which);
+
+    VideoSegmentedInfo info;
+    VideoSegmentedParameters params;
+    VideoModeGetInfo(VideoGetCurrentMode(), &info);
+    VideoModeGetParameters(&params);
+
+    printf("segmented mode is %d by %d\n", info.width, info.height); SERIAL_flush();
+
+    VideoSegmentedScanline *scanlines = malloc(sizeof(VideoSegmentedScanline) * info.height);
+    if(scanlines == NULL) {
+        printf("couldn't allocate %d bytes for scanlines\n", sizeof(VideoSegmentedScanline) * info.height);
+        return COMMAND_FAILED;
+    }
+    VideoSegmentedScanlineSegment *segments = malloc(sizeof(VideoSegmentedScanlineSegment) * 3 * info.height);
+    if(segments == NULL) {
+        printf("couldn't allocate %d bytes for segments\n", sizeof(VideoSegmentedScanlineSegment) * 3 * info.height);
+        return COMMAND_FAILED;
+    }
+    VideoSegmentedScanlineSegment *segmentp = segments;
+
+    for(int y = 0; y < info.height; y++) {
+        if(y < 200) {
+            scanlines[y].segmentCount = 0;
+        } else if(y < 400) {
+            scanlines[y].segmentCount = 1;
+            scanlines[y].segments = segmentp;
+            segmentp->pixelSkip = 100;
+            segmentp->pixelCount = 100;
+            segmentp->r0 = 1;
+            segmentp->g0 = 0;
+            segmentp->b0 = 0;
+            segmentp->r1 = 0;
+            segmentp->g1 = 1;
+            segmentp->b1 = 0;
+            segmentp++;
+        } else {
+            scanlines[y].segmentCount = 0;
+        }
+    }
+
+    int result = SegmentedSetScanlines(.25, .25, 1, info.height, scanlines);
+
+    free(segments);
+    free(scanlines);
+
+    if(result != 0) {
+        printf("Return value %d from SegmentedSetScanlines\n", result);
+        return COMMAND_FAILED;
+    }
+
+    return COMMAND_CONTINUE;
+}
+
+static void RegisterCommandTestSegmentMode(void) __attribute__((constructor));
+static void RegisterCommandTestSegmentMode(void)
+{
+    RegisterApp("segtest", 1, doTestSegmentMode, "",
+        "test segmented mode"
+        );
+}
 
 int doCommandTestColor(int wordCount, char **words)
 {
@@ -3334,22 +3672,20 @@ int doCommandShowLineEnd(int wordCount, char **words)
 int doCommandScanoutCycles(int wordCount, char **words)
 {
     int cyclesPerLine = SystemCoreClock / 59.94 / 262.5;
-    // XXX As long as we're using TIM9, we care about APB2.
-    // As long as PPRE2 is >= 2 and TIMPRE == 0, TIM9's clock will be 2 * PCLK2.
-    int TIM9clock = HAL_RCC_GetPCLK2Freq() * 2;
-    int hclkCyclesPerTIM9Count = (SystemCoreClock / 1000000) / (TIM9clock / 1000000);
     // XXX Use a histogram instead
-    for(int i = 0; i < 525; i++) {
-        int hclkcycles = rowCyclesSpent[i] * hclkCyclesPerTIM9Count;
-        printf("row %3d: %8u cycles, %lu microseconds", i, hclkcycles,
-            hclkcycles / (SystemCoreClock / 1000000));
-        if(rowCyclesSpent[i] > cyclesPerLine) {
-            printf(", overrun by %u%%\n", hclkcycles * 100 / cyclesPerLine - 100);
+    int totalRemained = 0;
+    for(int i = 0; i < NTSC_FRAME_LINES; i++) {
+        printf("row %3d: ", i);
+        if(rowDMARemained[i] < 0) {
+            printf("overrun by %u%%\n", -rowDMARemained[i] * 100 / ROW_SAMPLES);
         } else { 
-            printf(", %u%% remained\n", (cyclesPerLine - hclkcycles) * 100 / cyclesPerLine);
+            printf("%u%% remained\n", rowDMARemained[i] * 100 / ROW_SAMPLES);
         }
+        totalRemained += rowDMARemained[i];
     }
-    printf("%d cyclesPerLine were available\n", cyclesPerLine);
+    int totalAvailable = ROW_SAMPLES * NTSC_FRAME_LINES;
+    printf("approximately %d%% CPU available per frame\n", totalRemained * 100 / totalAvailable);
+    printf("%d cycles were available per line\n", cyclesPerLine);
 
     return COMMAND_CONTINUE;
 }
@@ -3436,9 +3772,9 @@ int doCommandLS(int wordCount, char **words)
             }
             if (fno.fname[0] == 0) break;  /* Break on end of dir */
             if (fno.fattrib & AM_DIR) {                    /* It is a directory */
-                printf("/%s/\n", fno.fname);
+                printf("%s/\n", fno.fname);
             } else {                                       /* It is a file. */
-                printf("/%s\n", fno.fname);
+                printf("%s\n", fno.fname);
             }
         }
         f_closedir(&dir);

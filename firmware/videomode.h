@@ -1,11 +1,51 @@
 #ifndef _VIDEO_MODE_H_
 #define _VIDEO_MODE_H_
 
-#include <stddef.h>
+#include <stdint.h>
+// #include <stddef.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif /* __cplusplus */
+
+//--------------------------------------------------------------------------
+// Mode where scanlines are composed of sequential segments
+
+typedef struct VideoSegmentedInfo
+{
+    int width;
+    int height;
+} VideoSegmentedInfo;
+
+typedef struct VideoSegmentedScanlineSegment
+{
+    /* 
+       Function providing this data is expected to provide sequential,
+       nonoverlapping, pixel-center-sampled segments as an example
+       converted from multiple, subpixel, overlapping segments.  A later
+       extension might include partial coverage and possibly multiple
+       fractional coverage per pixel (e.g. to enable pure analytic
+       antialiasing)
+    */
+    uint16_t pixelSkip;
+    uint16_t pixelCount;
+    float r0, g0, b0;
+    float r1, g1, b1;
+} VideoSegmentedScanlineSegment;
+
+typedef struct VideoSegmentedScanline {
+    int segmentCount;
+    VideoSegmentedScanlineSegment *segments;
+} VideoSegmentedScanline;
+
+// scanlineCount must be equal to mode height
+// Returns non-zero in the case that the scanline information does not fit
+typedef int (*SegmentedSetScanlinesFunc)(float backgroundRed, float backgroundGreen, float backgroundBlue, int scanlineCount, VideoSegmentedScanline *scanlines);
+
+typedef struct VideoSegmentedParameters
+{
+    SegmentedSetScanlinesFunc setScanlines;        // Base of height buffer
+} VideoSegmentedParameters;
 
 //--------------------------------------------------------------------------
 // Wolfenstein raycaster mode
