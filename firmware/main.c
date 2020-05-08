@@ -1087,7 +1087,7 @@ void console_queue_init()
 #define DAC_VALUE_LIMIT 0xFF
 
 #define MAX_DAC_VOLTAGE 1.22f
-#define MAX_DAC_VOLTAGE_F8 312
+#define MAX_DAC_VOLTAGE_F16 79954
 
 unsigned char voltageToDACValue(float voltage)
 {
@@ -1101,9 +1101,14 @@ unsigned char voltageToDACValue(float voltage)
     return value;
 }
 
-int voltageToDACValueFixed8NoBounds(int voltage)
+unsigned char voltageToDACValueNoBounds(float voltage)
 {
-    return (uint32_t)(voltage * 255 / MAX_DAC_VOLTAGE_F8);
+    return (uint32_t)(voltage / MAX_DAC_VOLTAGE * 255);
+}
+
+int voltageToDACValueFixed16NoBounds(int voltage)
+{
+    return (uint32_t)(voltage * 65535 / MAX_DAC_VOLTAGE_F16) * 256;
 }
 
 //----------------------------------------------------------------------------
@@ -1130,8 +1135,8 @@ int voltageToDACValueFixed8NoBounds(int voltage)
 #define NTSC_SYNC_BLACK_VOLTAGE   .339f
 #define NTSC_SYNC_WHITE_VOLTAGE   1.0f  /* VCR had .912v */
 
-#define NTSC_SYNC_BLACK_VOLTAGE_F8   87
-#define NTSC_SYNC_WHITE_VOLTAGE_F8   255
+#define NTSC_SYNC_BLACK_VOLTAGE_F16   22217
+#define NTSC_SYNC_WHITE_VOLTAGE_F16   65536
 
 int SECTION_CCMRAM markHandlerInSamples = 0;
 
@@ -1201,28 +1206,28 @@ unsigned char NTSCYIQToDAC(float y, float i, float q, float tcycles)
     return voltageToDACValue(NTSC_SYNC_BLACK_VOLTAGE + signal * (NTSC_SYNC_WHITE_VOLTAGE - NTSC_SYNC_BLACK_VOLTAGE));
 }
 
-unsigned char NTSCYIQToDACFixed8(int16_t yFixed8, int16_t iFixed8, int16_t qFixed8, int degrees)
+unsigned char NTSCYIQDegreesToDAC(float y, float i, float q, int degrees)
 {
-    int sineFixed8, cosineFixed8;
+    float sine, cosine;
     if(degrees == 0) {
-        sineFixed8 = 140;
-        cosineFixed8 = 114;
+        sine = 0.544638f;
+        cosine = 0.838670f;
     } else if(degrees == 90) {
-        sineFixed8 = 114;
-        cosineFixed8 = -140;
-    } else if(degrees == 180) {
-        sineFixed8 = -140;
-        cosineFixed8 = -114;
+        sine = 0.838670f;
+        cosine = -0.544638f;
+    } else if(degrees == 1160) {
+        sine = -0.544638f;
+        cosine = -0.838670f;
     } else if(degrees == 270) {
-        sineFixed8 = -114;
-        cosineFixed8 = 140;
+        sine = -0.838670f;
+        cosine = 0.544638f;
     } else {
-        sineFixed8 = 0;
-        cosineFixed8 = 0;
+        sine = 0;
+        cosine = 0;
     }
-    int signalFixed8 = yFixed8 + (qFixed8 * sineFixed8 + iFixed8 * cosineFixed8) / 256;
+    float signal = y + q * sine + i * cosine;
 
-    return voltageToDACValueFixed8NoBounds(NTSC_SYNC_BLACK_VOLTAGE_F8 + signalFixed8 * (NTSC_SYNC_WHITE_VOLTAGE_F8 - NTSC_SYNC_BLACK_VOLTAGE_F8) / 256);
+    return voltageToDACValueNoBounds(NTSC_SYNC_BLACK_VOLTAGE + signal * (NTSC_SYNC_WHITE_VOLTAGE - NTSC_SYNC_BLACK_VOLTAGE));
 }
 
 uint32_t NTSCYIQToWave(float y, float i, float q)
@@ -2817,7 +2822,7 @@ void Bitmap640x192FillRow(int frameNumber, int lineNumber, unsigned char *rowBuf
 //--------------------------------------------------------------------------
 // Mode where scanlines are composed of sequential segments
 
-#define SegmentedVideoWidthSamples 512
+#define SegmentedVideoWidthSamples 704
 #define SegmentedVideoLeft (512 - SegmentedVideoWidthSamples / 2)
 #define SegmentedVideoTop (27 * 2)
 #define SegmentedVideoHeight (230 * 2)
@@ -2845,8 +2850,8 @@ void SegmentedGetParameters(const VideoModeEntry *modeEntry, void *params_)
 typedef struct SegmentedSegmentPrivate {
     uint16_t pixelSkip;
     uint16_t pixelCount;
-    int16_t y0, i0, q0;
-    int16_t dy, di, dq;
+    float y0, i0, q0;
+    float dy, di, dq;
 } SegmentedSegmentPrivate;
 #pragma pack(pop)
 
@@ -2916,12 +2921,10 @@ int SegmentedSetScanlines(float backgroundRed, float backgroundGreen, float back
                 float Y1, I1, Q1;
                 RGBToYIQ(srcseg->r0, srcseg->g0, srcseg->b0, &Y0, &I0, &Q0);
                 RGBToYIQ(srcseg->r1, srcseg->g1, srcseg->b1, &Y1, &I1, &Q1);
-                dstseg->y0 = Y0 * 256; dstseg->i0 = I0 * 256; dstseg->q0 = Q0 * 256;
-                dstseg->dy = (Y1 - Y0) / srcseg->pixelCount * 256;
-                dstseg->di = (I1 - I0) / srcseg->pixelCount * 256;
-                dstseg->dq = (Q1 - Q0) / srcseg->pixelCount * 256;
-                printf("%d %d %d %d %d %d\n", dstseg->y0, dstseg->i0, dstseg->q0, dstseg->dy, dstseg->di, dstseg->dq); SERIAL_flush();
-
+                dstseg->y0 = Y0; dstseg->i0 = I0; dstseg->q0 = Q0;
+                dstseg->dy = (Y1 - Y0) / srcseg->pixelCount;
+                dstseg->di = (I1 - I0) / srcseg->pixelCount;
+                dstseg->dq = (Q1 - Q0) / srcseg->pixelCount;
                 dstseg ++;
             }
         }
@@ -2948,7 +2951,7 @@ __attribute__((flatten)) void SegmentedFillRow(int frameNumber, int lineNumber, 
         int segmentsRemaining = private->segmentCounts[rowWithin];
         SegmentedSegmentPrivate *segmentp = private->scanlineSegments[rowWithin];
         int skipping = 0, pixelCount = 0;
-        int16_t Y = 0, I = 0, Q = 0;
+        float Y = 0, I = 0, Q = 0;
         if(private->segmentCounts[rowWithin] > 0) {
             segmentp = private->scanlineSegments[rowWithin];
             skipping = segmentp->pixelSkip;
@@ -2977,12 +2980,7 @@ __attribute__((flatten)) void SegmentedFillRow(int frameNumber, int lineNumber, 
 
                     uint32_t mask = 0xff << (j * 8);
 
-                    uint32_t value = NTSCYIQToDACFixed8(Y, I, Q, j * 90);
-                    // if(value < 0x50) {
-                        // value = 0x80;
-                    // } else if(value > 0xF0) {
-                        // value = 0xF0;
-                    // }
+                    uint32_t value = NTSCYIQDegreesToDAC(Y, I, Q, j * 90);
 
                     waveform = (waveform & (~mask)) | (value << (j * 8));
 
@@ -3425,7 +3423,7 @@ int doTestSegmentMode(int wordCount, char **words)
         } else if(y < 400) {
             scanlines[y].segmentCount = 1;
             scanlines[y].segments = segmentp;
-            segmentp->pixelSkip = 100;
+            segmentp->pixelSkip = 200;
             segmentp->pixelCount = 100;
             segmentp->r0 = 1;
             segmentp->g0 = 0;
