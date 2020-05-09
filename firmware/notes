@@ -1,61 +1,28 @@
-STM32F746 Nucleo
-    speed issues - seems to be like 60%-80% speed of 415.  Should be 160% the speed of 415.
-    audio output
-    PS/2 keyboard
-
-enum Timer {
-    TIM1 = 0, TIM2, TIM3, TIM4, TIM5, TIM6, TIM7, TIM8,
-    TIM9, TIM10, TIM11, TIM12, TIM13, TIM14, TIM15,
-};
-
-int GetTIMxFrequency(Timer timer, int TIMPRE, int PPRE1, int PPRE2, int HCLKFrequency, int APB1Frequency, int APB2Frequency)
-{
-    int APBDomain;
-    switch(timer) {
-        case TIM2: case TIM3: case TIM4: case TIM5: case TIM6: case TIM7: case TIM12: case TIM13: case TIM14:
-            APBDomain = 1; break;
-        case TIM1: case TIM8: case TIM9: case TIM10: case TIM11: 
-            APBDomain = 2; break;
-    }
-
-    int PPRE = (APBDomain == 1) ? PPRE1: PPRE2;
-    int APBFrequency = (APBDomain == 1) ? APBFrequency1: APBFrequency2;
-
-    if(TIMPRE == 0) {
-        if(PPRE == 1) {
-            return APBFrequency;
-        } else {
-            return APBFrequency * 2;
-        }
-    } else /* TIMPRE == 1 */ {
-        if((PPRE == 1) || (PPRE == 2) || (PPRE == 4)) {
-            return HCLKFrequency;
-        } else {
-            return APBFrequency * 4;
-        }
-    }
-}
-
--------
-
+DB-9
+PS/2 keyboard
+imgBuffer should be called VRAM or something
+paletteToWave and rowPalette should be in the imgBuffer space
 Some things to improve living
     tab should autocomplete at CLI
         tab in first completes commands
         tab in second et al completes filenames
-    textport should be virtual
+    textport should be virtual and overlaid on screen in text mode and preserved for returning to text mode
+        so then textport output would ALWAYS work and be recorded, and switching back to text would restore the old viewport.
+        40 vs 80?  - just always 80?  (Could maybe get to 106x60 chars with 5x7 wide at 480p)
+        make a scrollback buffer (what are the keyboard controls to scroll back?)
+        3 pages of 80x24 = 5760 bytes, need to keep in RAM somewhere
     Factor out shell
     system button kicks back to text 0?
         or at least pops textport while button is down
         need a way to interrupt
         need a way to cancel and return from apps - longjmp?
-    make a scrollback buffer (how to scroll back?)
-        2 pages of 80x24 = 3840 bytes, need to keep in RAM somewhere
     frame stats should be a histogram
         get TIM frequency nailed down
     serial and keyboard should interrupt and fill one buffer
     image viewer should add together lines and pixels so data is antialiased
 Potential improvements
     use SDMMC peripheral
+    There really should be a non-interlaced video mode
 Give a shot at decompressing DCT/JPEG in real time
 hosted
     GLEW
@@ -393,3 +360,41 @@ Is the 746 actually running at 1/2 the clock I think it is?
 
 Does DMA fire on one edge or both?  Why do I have to /2 the TIM ARR for the 746?
     Because I had a higher divider for APB2, where TIM1 lives
+
+speed issues - seems to be like 60%-80% speed of 415.  Should be 160% the speed of 415.
+    ICache and DCache are disabled on boot
+    ICache improves speed to more like what I expect.
+    DCache causes video modes to fail.  UART still worked, so system booted and partially worked...  Need to look into the data cache.
+
+enum Timer {
+    TIM1 = 0, TIM2, TIM3, TIM4, TIM5, TIM6, TIM7, TIM8,
+    TIM9, TIM10, TIM11, TIM12, TIM13, TIM14, TIM15,
+};
+
+int GetTIMxFrequency(Timer timer, int TIMPRE, int PPRE1, int PPRE2, int HCLKFrequency, int APB1Frequency, int APB2Frequency)
+{
+    int APBDomain;
+    switch(timer) {
+        case TIM2: case TIM3: case TIM4: case TIM5: case TIM6: case TIM7: case TIM12: case TIM13: case TIM14:
+            APBDomain = 1; break;
+        case TIM1: case TIM8: case TIM9: case TIM10: case TIM11: 
+            APBDomain = 2; break;
+    }
+
+    int PPRE = (APBDomain == 1) ? PPRE1: PPRE2;
+    int APBFrequency = (APBDomain == 1) ? APBFrequency1: APBFrequency2;
+
+    if(TIMPRE == 0) {
+        if(PPRE == 1) {
+            return APBFrequency;
+        } else {
+            return APBFrequency * 2;
+        }
+    } else /* TIMPRE == 1 */ {
+        if((PPRE == 1) || (PPRE == 2) || (PPRE == 4)) {
+            return HCLKFrequency;
+        } else {
+            return APBFrequency * 4;
+        }
+    }
+}
