@@ -1,9 +1,11 @@
+#include <string.h>
 #include <stdint.h>
 #include <math.h>
 #include <stdlib.h>
 #include <stdio.h>
 
-#define debug 0
+int debug = 1;
+int validateEverything = 1;
 
 typedef struct VideoSegmentedScanlineSegment
 {
@@ -108,8 +110,8 @@ int MergeSegment(VideoSegmentedScanlineSegment *newSegment, int start, VideoSegm
         if(debug) printf("    copy old segment overlapping beginning\n");
         ClipSegmentWithNewEnd(src, start - srcSegStart, dst);
         if(debug) {
-            DumpSegment(dst, srcSegStart, 0);
             printf("    new segment = ");
+            DumpSegment(dst, srcSegStart, 0);
         }
         segmentCount++; dst++;
     }
@@ -136,13 +138,19 @@ int MergeSegment(VideoSegmentedScanlineSegment *newSegment, int start, VideoSegm
     }
 
     // Skip until segments not covered by the new segment
-    while(CalculateSegmentEnd(src, srcSegStart) <= CalculateSegmentEnd(newSegment, start)) {
+    while( (srcSegStart <= CalculateSegmentEnd(newSegment, start)) &&
+        (CalculateSegmentEnd(src, srcSegStart) <= CalculateSegmentEnd(newSegment, start))) {
+
         if(debug) printf("    skip old overlapped segment\n");
         srcSegStart += src->pixelCount;
         src++;
         if(debug) {
-            printf("    possible next segment end of skip loop body = ");
-            DumpSegment(src, srcSegStart, 0);
+            if( (srcSegStart <= CalculateSegmentEnd(newSegment, start)) &&
+                (CalculateSegmentEnd(src, srcSegStart) <= CalculateSegmentEnd(newSegment, start))) {
+
+                printf("    possible next segment end of skip loop body = ");
+                DumpSegment(src, srcSegStart, 0);
+            }
         }
     }
 
@@ -186,6 +194,7 @@ int ValidateSegments(VideoSegmentedScanlineSegment *segments, int segmentCount, 
         if(segments[i].pixelCount > pixelCount) {
             return 2; // no segment can be larger than the scanline
         }
+
         totalPixels += segments[i].pixelCount;
     }
 
@@ -202,9 +211,9 @@ int ValidateSegments(VideoSegmentedScanlineSegment *segments, int segmentCount, 
 }
 
 enum {
-    SEGMENT_MAX = 16, 
-    PIXEL_COUNT = 512, 
-    IMAGE_HEIGHT = 512, 
+    SEGMENT_MAX = 12, 
+    PIXEL_COUNT = 704, 
+    IMAGE_HEIGHT = 460, 
 };
 
 float pixelRows[2][PIXEL_COUNT][3];
@@ -319,46 +328,144 @@ int TestMerge(VideoSegmentedScanlineSegment *newseg, int start, VideoSegmentedSc
 int image[IMAGE_HEIGHT][PIXEL_COUNT][3];
 
 VideoSegmentedScanlineSegment imageSegments[IMAGE_HEIGHT][SEGMENT_MAX];
+int imageSegmentsCount[IMAGE_HEIGHT]; // only for validation
 
-int DrawSphere(int cx, int cy, int cr)
+int ClearSegmentedScreen(float r, float g, float b)
 {
-#if 0
-    for(int row = cy - cr; row <= cy + cr); row++) {
+    for(int i = 0; i < IMAGE_HEIGHT; i++) {
+        VideoSegmentedScanlineSegment *seg = imageSegments[i];
+        seg->pixelCount = PIXEL_COUNT;
+        seg->r0 = .2f; seg->g0 = .15f; seg->b0 = .15f;
+        seg->r1 = .2f; seg->g1 = .15f; seg->b1 = .15f;
+        imageSegmentsCount[i] = 1;
+#ifndef ROCINANTE
+        if(validateEverything) {
+            int result = ValidateSegments(imageSegments[i], imageSegmentsCount[i], PIXEL_COUNT);
+            if(result != 0) {
+                printf("result %d validating cleared row %d\n", result, i);
+                return 1;
+            }
+        }
+#endif /* ROCINANTE */
+    }
+    return 0;
+}
 
-        scanlines[row].segments = segmentp;
+int ScanconvertSphere(int cx, int cy, int cr, float r, float g, float b)
+{
+    VideoSegmentedScanlineSegment newseg;
+    static VideoSegmentedScanlineSegment tmpSegments[SEGMENT_MAX];
+
+    int miny = cy - cr + 1;
+    int maxy = cy + cr - 1;
+
+    miny = (miny >= 0) ? miny : 0;
+    maxy = (maxy < IMAGE_HEIGHT) ? maxy : 0;
+
+    for(int row = miny; row <= maxy; row++) {
 
         int y = row - cy;
         int x = sqrtf(cr * cr - y * y);
 
-        segmentp->pixelCount = cx - x;
-        remaining -= segmentp->pixelCount;
-        segmentp->r0 = .25;
-        segmentp->g0 = .25;
-        segmentp->b0 = 1;
-        segmentp->r1 = .25;
-        segmentp->g1 = .25;
-        segmentp->b1 = 1;
-        segmentp++;
-        scanlines[row].segmentCount++;
-    }
+        newseg.r0 = r;
+        newseg.g0 = g;
+        newseg.b0 = b;
+        newseg.r1 = r;
+        newseg.g1 = g;
+        newseg.b1 = b;
+
+        int start = cx - x;
+        int end = cx + x;
+
+        if(start < 0) {
+            newseg.pixelCount += -start;
+            start = 0;
+        }
+        if(end >= PIXEL_COUNT) {
+            end = PIXEL_COUNT - 1;
+        }
+        newseg.pixelCount = end - start + 1;
+
+        int result = MergeSegment(&newseg, start, imageSegments[row], PIXEL_COUNT, tmpSegments, SEGMENT_MAX, &imageSegmentsCount[row]);
+        if(result != 0) {
+            printf("error scanconverting sphere at row %d\n", row);
+            return result;
+        }
+#ifndef ROCINANTE
+        if(validateEverything) {
+            result = ValidateSegments(tmpSegments, imageSegmentsCount[row], PIXEL_COUNT);
+            if(result != 0) {
+                printf("result %d validating sphere row %d\n", result, row);
+                return 1;
+            }
+        }
 #endif
+        memcpy(imageSegments[row], tmpSegments, imageSegmentsCount[row] * sizeof(VideoSegmentedScanlineSegment));
+    }
     return 0;
 }
 
 int SpheresTest()
 {
-    for(int i = 0; i < IMAGE_HEIGHT; i++) {
-        VideoSegmentedScanlineSegment *seg = imageSegments[i];
-        seg->pixelCount = PIXEL_COUNT;
-        seg->r0 = .4f; seg->g0 = .3f; seg->b0 = .3f;
-        seg->r1 = .4f; seg->g1 = .3f; seg->b1 = .3f;
+    int result;
+
+    result = ClearSegmentedScreen(.2f, .15f, .15f);
+    if(result != 0) {
+        return result;
     }
+
+    for(int sphere = 0; sphere < 10; sphere++) {
+        result = ScanconvertSphere(10 + drand48() * (PIXEL_COUNT - 20), 10 + drand48() * (IMAGE_HEIGHT - 20), 50 + drand48() * 50, drand48(), drand48(), drand48());
+        if(result != 0) {
+            printf("result %d drawing sphere %d\n", result, sphere);
+            return 1;
+        }
+        if(validateEverything) {
+            for(int i = 0; i < IMAGE_HEIGHT; i++) {
+                result = ValidateSegments(imageSegments[i], imageSegmentsCount[i], PIXEL_COUNT);
+                if(result != 0) {
+                    printf("result %d validating sphere %d row %d segments\n", result, sphere, i);
+                    return 1;
+                }
+            }
+        }
+    }
+
+    int totalSegments = 0;
+    int maxSegments = 0;
+    for(int i = 0; i < IMAGE_HEIGHT; i++) {
+        result = ValidateSegments(imageSegments[i], imageSegmentsCount[i], PIXEL_COUNT);
+        if(result != 0) {
+            printf("result %d validating drawn sphere row %d segments\n", result, i);
+            return 1;
+        }
+        totalSegments += imageSegmentsCount[i];
+        maxSegments = (imageSegmentsCount[i] > maxSegments) ? imageSegmentsCount[i] : maxSegments;
+    }
+    printf("maxSegments = %d\n", maxSegments);
+    printf("totalSegments = %d\n", totalSegments);
+
+    FILE *fp = fopen("output.ppm", "wb");
+    fprintf(fp, "P6 %d %d 255\n", PIXEL_COUNT, IMAGE_HEIGHT);
+    for(int i = 0; i < IMAGE_HEIGHT; i++) {
+        PaintSegments(imageSegments[i], pixelRows[0], PIXEL_COUNT);
+        for(int j = 0; j < PIXEL_COUNT; j++) {
+            unsigned char rgb[3];
+            rgb[0] = pixelRows[0][j][0] * 255;
+            rgb[1] = pixelRows[0][j][1] * 255;
+            rgb[2] = pixelRows[0][j][2] * 255;
+            fwrite(rgb, sizeof(rgb), 1, fp);
+        }
+    }
+    fclose(fp);
 
     return 0;
 }
 
 int main()
 {
+    printf("sizeof(imageSegments) == %zd\n", sizeof(imageSegments));
+
     int result;
     VideoSegmentedScanlineSegment newseg;
 
