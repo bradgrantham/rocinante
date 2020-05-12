@@ -39,6 +39,17 @@ void DumpSegments(VideoSegmentedScanlineSegment *segment, int pixelCount, int in
     }
 }
 
+void SetSegment(VideoSegmentedScanlineSegment *seg, int pixelCount, float r0, float g0, float b0, float r1, float g1, float b1)
+{
+    seg->pixelCount = pixelCount;
+    seg->r0 = r0;
+    seg->g0 = g0;
+    seg->b0 = b0;
+    seg->r1 = r1;
+    seg->g1 = g1;
+    seg->b1 = b1;
+}
+
 int CalculateSegmentEnd(VideoSegmentedScanlineSegment *seg, int start)
 {
     return start + seg->pixelCount - 1;
@@ -67,15 +78,15 @@ void ClipSegmentWithNewEnd(VideoSegmentedScanlineSegment *src, int newCount, Vid
     dst->b1 = src->b0 + (src->b1 - src->b0) / src->pixelCount * newCount;
 }
 
-int MergeSegment(int start, float r0, float g0, float b0, int end, float r1, float g1, float b1, VideoSegmentedScanlineSegment *oldSegments, int pixelCount, VideoSegmentedScanlineSegment *newSegments, int maxNewSegmentCount, int *newCount)
+int MergeSegment(VideoSegmentedScanlineSegment *newSegment, int start, VideoSegmentedScanlineSegment *oldSegments, int pixelCount, VideoSegmentedScanlineSegment *resultSegments, int maxNewSegmentCount, int *newCount)
 {
     VideoSegmentedScanlineSegment *src = oldSegments;
-    VideoSegmentedScanlineSegment *dst = newSegments;
+    VideoSegmentedScanlineSegment *dst = resultSegments;
     int srcSegStart = 0;
     int segmentCount = 0;
 
     // If new segment is zero length, it wouldn't insert anything, so return success;
-    if(start == end) {
+    if(newSegment->pixelCount == 0) {
         return 0;
     }
 
@@ -109,13 +120,13 @@ int MergeSegment(int start, float r0, float g0, float b0, int end, float r1, flo
     }
     if(debug) printf("    copy in new segment\n");
 
-    dst->r0 = r0;
-    dst->g0 = g0;
-    dst->b0 = b0;
-    dst->r1 = r1;
-    dst->g1 = g1;
-    dst->b1 = b1;
-    dst->pixelCount = end - start + 1;
+    dst->r0 = newSegment->r0;
+    dst->g0 = newSegment->g0;
+    dst->b0 = newSegment->b0;
+    dst->r1 = newSegment->r1;
+    dst->g1 = newSegment->g1;
+    dst->b1 = newSegment->b1;
+    dst->pixelCount = newSegment->pixelCount;
     segmentCount++;
     dst++;
 
@@ -125,7 +136,7 @@ int MergeSegment(int start, float r0, float g0, float b0, int end, float r1, flo
     }
 
     // Skip until segments not covered by the new segment
-    while(CalculateSegmentEnd(src, srcSegStart) <= end) {
+    while(CalculateSegmentEnd(src, srcSegStart) <= CalculateSegmentEnd(newSegment, start)) {
         if(debug) printf("    skip old overlapped segment\n");
         srcSegStart += src->pixelCount;
         src++;
@@ -136,12 +147,12 @@ int MergeSegment(int start, float r0, float g0, float b0, int end, float r1, flo
     }
 
     // Copy the segment that is overlapped by the end of the new segment, if there is one
-    if(srcSegStart <= end) {
+    if(srcSegStart <= CalculateSegmentEnd(newSegment, start)) {
         if(segmentCount >= maxNewSegmentCount) {
             return 4; // out of space clipping segment overlapped at end
         }
         if(debug) printf("    copy segment overlapped at end\n");
-        ClipSegmentWithNewStart(src, srcSegStart, end + 1, dst);
+        ClipSegmentWithNewStart(src, srcSegStart, CalculateSegmentEnd(newSegment, start) + 1, dst);
         if(debug) {
             printf("    new segment = ");
             DumpSegment(dst, srcSegStart, 0);
@@ -193,6 +204,7 @@ int ValidateSegments(VideoSegmentedScanlineSegment *segments, int segmentCount, 
 enum {
     SEGMENT_MAX = 16, 
     PIXEL_COUNT = 512, 
+    IMAGE_HEIGHT = 512, 
 };
 
 float pixelRows[2][PIXEL_COUNT][3];
@@ -250,7 +262,7 @@ int CompareRows(float (*pixelRow0)[3], float (*pixelRow1)[3], int pixelCount)
     return 0;
 }
 
-int TestMerge(int start, float r0, float g0, float b0, int end, float r1, float g1, float b1, VideoSegmentedScanlineSegment *src, int segmentCount, int pixelCount, VideoSegmentedScanlineSegment *dst, int maxNewSegmentCount, int indent)
+int TestMerge(VideoSegmentedScanlineSegment *newseg, int start, VideoSegmentedScanlineSegment *src, int segmentCount, int pixelCount, VideoSegmentedScanlineSegment *dst, int maxNewSegmentCount, int indent)
 {
     int newSegmentCount;
     int result;
@@ -266,12 +278,12 @@ int TestMerge(int start, float r0, float g0, float b0, int end, float r1, float 
         return 1; // new segment starts too late
     }
 
-    if(end >= pixelCount) {
-        printf("%*snew segment ends at %d and that's past end %d\n", indent, "", end, pixelCount);
+    if(start + newseg->pixelCount > pixelCount) {
+        printf("%*snew segment ends at %d and that's past end %d\n", indent, "", start + newseg->pixelCount, pixelCount);
         return 2; // new segment ends too late
     }
 
-    result = MergeSegment(start, r0, g0, b0, end, r1, g1, b1, src, pixelCount, dst, maxNewSegmentCount, &newSegmentCount);
+    result = MergeSegment(newseg, start, src, pixelCount, dst, maxNewSegmentCount, &newSegmentCount);
 
     if(result != 0) {
         return 2000 + result; // error from MergeSegment
@@ -290,11 +302,7 @@ int TestMerge(int start, float r0, float g0, float b0, int end, float r1, float 
 
     for(int i = 0; i < pixelCount; i++) { for(int c = 0; c < 3; c++) { pixelRows[0][i][c] = 666.666; } }
     PaintSegments(src, pixelRows[0], pixelCount);
-    VideoSegmentedScanlineSegment tmpseg;
-    tmpseg.pixelCount = end - start + 1;
-    tmpseg.r0 = r0; tmpseg.g0 = g0; tmpseg.b0 = b0;
-    tmpseg.r1 = r1; tmpseg.g1 = g1; tmpseg.b1 = b1;
-    PaintSegment(&tmpseg, start, pixelRows[0], pixelCount);
+    PaintSegment(newseg, start, pixelRows[0], pixelCount);
 
     for(int i = 0; i < pixelCount; i++) { for(int c = 0; c < 3; c++) { pixelRows[1][i][c] = 777.777; } }
     PaintSegments(dst, pixelRows[1], pixelCount);
@@ -308,14 +316,51 @@ int TestMerge(int start, float r0, float g0, float b0, int end, float r1, float 
     return 0;
 }
 
+int image[IMAGE_HEIGHT][PIXEL_COUNT][3];
+
+VideoSegmentedScanlineSegment imageSegments[IMAGE_HEIGHT][SEGMENT_MAX];
+
+int DrawSphere(int cx, int cy, int cr)
+{
+#if 0
+    for(int row = cy - cr; row <= cy + cr); row++) {
+
+        scanlines[row].segments = segmentp;
+
+        int y = row - cy;
+        int x = sqrtf(cr * cr - y * y);
+
+        segmentp->pixelCount = cx - x;
+        remaining -= segmentp->pixelCount;
+        segmentp->r0 = .25;
+        segmentp->g0 = .25;
+        segmentp->b0 = 1;
+        segmentp->r1 = .25;
+        segmentp->g1 = .25;
+        segmentp->b1 = 1;
+        segmentp++;
+        scanlines[row].segmentCount++;
+    }
+#endif
+    return 0;
+}
+
 int SpheresTest()
 {
+    for(int i = 0; i < IMAGE_HEIGHT; i++) {
+        VideoSegmentedScanlineSegment *seg = imageSegments[i];
+        seg->pixelCount = PIXEL_COUNT;
+        seg->r0 = .4f; seg->g0 = .3f; seg->b0 = .3f;
+        seg->r1 = .4f; seg->g1 = .3f; seg->b1 = .3f;
+    }
+
     return 0;
 }
 
 int main()
 {
     int result;
+    VideoSegmentedScanlineSegment newseg;
 
     {
         for(int i = 0; i < PIXEL_COUNT; i++) { for(int c = 0; c < 3; c++) { pixelRows[0][i][c] = 666.666; } }
@@ -375,7 +420,8 @@ int main()
         };
         VideoSegmentedScanlineSegment segs2[SEGMENT_MAX];
         printf("add middle segment:\n");
-        result = TestMerge(100, 1, 1, 1, 199, 0, 0, 0, segs1, sizeof(segs1) / sizeof(segs1[0]), PIXEL_COUNT, segs2, SEGMENT_MAX, 4);
+        SetSegment(&newseg, 100, 1, 1, 1, 0, 0, 0);
+        result = TestMerge(&newseg, 100, segs1, sizeof(segs1) / sizeof(segs1[0]), PIXEL_COUNT, segs2, SEGMENT_MAX, 4);
         if(result == 0) {
             DumpSegments(segs2, PIXEL_COUNT, 4);
         } else {
@@ -390,7 +436,8 @@ int main()
         };
         VideoSegmentedScanlineSegment segs2[SEGMENT_MAX];
         printf("add segment at start:\n");
-        result = TestMerge(0, 1, 1, 1, 99, 0, 0, 0, segs1, sizeof(segs1) / sizeof(segs1[0]), PIXEL_COUNT, segs2, SEGMENT_MAX, 4);
+        SetSegment(&newseg, 100, 1, 1, 1, 0, 0, 0);
+        result = TestMerge(&newseg, 0, segs1, sizeof(segs1) / sizeof(segs1[0]), PIXEL_COUNT, segs2, SEGMENT_MAX, 4);
         if(result == 0) {
             DumpSegments(segs2, PIXEL_COUNT, 4);
         } else {
@@ -404,7 +451,8 @@ int main()
         };
         VideoSegmentedScanlineSegment segs2[SEGMENT_MAX];
         printf("add segment at end:\n");
-        result = TestMerge(PIXEL_COUNT - 100, 1, 1, 1, PIXEL_COUNT - 1, 0, 0, 0, segs1, sizeof(segs1) / sizeof(segs1[0]), PIXEL_COUNT, segs2, SEGMENT_MAX, 4);
+        SetSegment(&newseg, 100, 1, 1, 1, 0, 0, 0);
+        result = TestMerge(&newseg, PIXEL_COUNT - 100, segs1, sizeof(segs1) / sizeof(segs1[0]), PIXEL_COUNT, segs2, SEGMENT_MAX, 4);
         if(result == 0) {
             DumpSegments(segs2, PIXEL_COUNT, 4);
         } else {
@@ -419,7 +467,8 @@ int main()
         };
         VideoSegmentedScanlineSegment segs2[SEGMENT_MAX];
         printf("overlapping two segments:\n");
-        result = TestMerge(PIXEL_COUNT / 2 - 100, 1, 1, 1, PIXEL_COUNT / 2 + 100 - 1, 0, 0, 0, segs1, sizeof(segs1) / sizeof(segs1[0]), PIXEL_COUNT, segs2, SEGMENT_MAX, 4);
+        SetSegment(&newseg, 200, 1, 1, 1, 0, 0, 0);
+        result = TestMerge(&newseg, PIXEL_COUNT / 2 - 100, segs1, sizeof(segs1) / sizeof(segs1[0]), PIXEL_COUNT, segs2, SEGMENT_MAX, 4);
         if(result == 0) {
             DumpSegments(segs2, PIXEL_COUNT, 4);
         } else {
@@ -435,7 +484,8 @@ int main()
         };
         VideoSegmentedScanlineSegment segs2[SEGMENT_MAX];
         printf("completely overlap a segment\n");
-        result = TestMerge(PIXEL_COUNT / 2 - 100, 1, 1, 1, PIXEL_COUNT / 2 + 100 - 1, 0, 0, 0, segs1, sizeof(segs1) / sizeof(segs1[0]), PIXEL_COUNT, segs2, SEGMENT_MAX, 4);
+        SetSegment(&newseg, 200, 1, 1, 1, 0, 0, 0);
+        result = TestMerge(&newseg, PIXEL_COUNT / 2 - 100, segs1, sizeof(segs1) / sizeof(segs1[0]), PIXEL_COUNT, segs2, SEGMENT_MAX, 4);
         if(result == 0) {
             DumpSegments(segs2, PIXEL_COUNT, 4);
         } else {
@@ -451,7 +501,8 @@ int main()
         };
         VideoSegmentedScanlineSegment segs2[SEGMENT_MAX];
         printf("completely replace a segment\n");
-        result = TestMerge(PIXEL_COUNT / 2 - 100, 1, 1, 1, PIXEL_COUNT / 2 + 100 - 1, 0, 0, 0, segs1, sizeof(segs1) / sizeof(segs1[0]), PIXEL_COUNT, segs2, SEGMENT_MAX, 4);
+        SetSegment(&newseg, 200, 1, 1, 1, 0, 0, 0);
+        result = TestMerge(&newseg, PIXEL_COUNT / 2 - 100, segs1, sizeof(segs1) / sizeof(segs1[0]), PIXEL_COUNT, segs2, SEGMENT_MAX, 4);
         if(result == 0) {
             DumpSegments(segs2, PIXEL_COUNT, 4);
         } else {
@@ -468,7 +519,8 @@ int main()
         };
         VideoSegmentedScanlineSegment segs2[SEGMENT_MAX];
         printf("completely replace two segments\n");
-        result = TestMerge(PIXEL_COUNT / 2 - 100, 1, 1, 1, PIXEL_COUNT / 2 + 100 - 1, 0, 0, 0, segs1, sizeof(segs1) / sizeof(segs1[0]), PIXEL_COUNT, segs2, SEGMENT_MAX, 4);
+        SetSegment(&newseg, 100, 1, 1, 1, 0, 0, 0);
+        result = TestMerge(&newseg, PIXEL_COUNT / 2 - 100, segs1, sizeof(segs1) / sizeof(segs1[0]), PIXEL_COUNT, segs2, SEGMENT_MAX, 4);
         if(result == 0) {
             DumpSegments(segs2, PIXEL_COUNT, 4);
         } else {
@@ -483,7 +535,8 @@ int main()
         };
         VideoSegmentedScanlineSegment segs2[SEGMENT_MAX];
         printf("completely replace first segment:\n");
-        result = TestMerge(0, 1, 1, 1, PIXEL_COUNT / 2 - 1, 0, 0, 0, segs1, sizeof(segs1) / sizeof(segs1[0]), PIXEL_COUNT, segs2, SEGMENT_MAX, 4);
+        SetSegment(&newseg, PIXEL_COUNT / 2, 1, 1, 1, 0, 0, 0);
+        result = TestMerge(&newseg, 0, segs1, sizeof(segs1) / sizeof(segs1[0]), PIXEL_COUNT, segs2, SEGMENT_MAX, 4);
         if(result == 0) {
             DumpSegments(segs2, PIXEL_COUNT, 4);
         } else {
@@ -499,7 +552,8 @@ int main()
         };
         VideoSegmentedScanlineSegment segs2[SEGMENT_MAX];
         printf("completely replace last segment:\n");
-        result = TestMerge(PIXEL_COUNT / 2, 1, 1, 1, PIXEL_COUNT - 1, 0, 0, 0, segs1, sizeof(segs1) / sizeof(segs1[0]), PIXEL_COUNT, segs2, SEGMENT_MAX, 4);
+        SetSegment(&newseg, PIXEL_COUNT / 2, 1, 1, 1, 0, 0, 0);
+        result = TestMerge(&newseg, PIXEL_COUNT/2, segs1, sizeof(segs1) / sizeof(segs1[0]), PIXEL_COUNT, segs2, SEGMENT_MAX, 4);
         if(result == 0) {
             DumpSegments(segs2, PIXEL_COUNT, 4);
         } else {
@@ -516,7 +570,8 @@ int main()
         };
         VideoSegmentedScanlineSegment segs2[SEGMENT_MAX];
         printf("completely replace all segments:\n");
-        result = TestMerge(0, 1, 1, 1, PIXEL_COUNT - 1, 0, 0, 0, segs1, sizeof(segs1) / sizeof(segs1[0]), PIXEL_COUNT, segs2, SEGMENT_MAX, 4);
+        SetSegment(&newseg, PIXEL_COUNT, 1, 1, 1, 0, 0, 0);
+        result = TestMerge(&newseg, 0, segs1, sizeof(segs1) / sizeof(segs1[0]), PIXEL_COUNT, segs2, SEGMENT_MAX, 4);
         if(result == 0) {
             DumpSegments(segs2, PIXEL_COUNT, 4);
         } else {
