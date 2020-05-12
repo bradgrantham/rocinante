@@ -71,6 +71,16 @@ void panic(void)
     }
 }
 
+void FPU_IRQHandler(void)
+{
+    SERIAL_enqueue_one_char('f');
+    SERIAL_enqueue_one_char('p');
+    SERIAL_enqueue_one_char('u');
+    SERIAL_enqueue_one_char('\n');
+    SERIAL_flush();
+    panic();
+}
+
 //----------------------------------------------------------------------------
 // System Initialization Goop
 
@@ -1154,7 +1164,7 @@ int SECTION_CCMRAM markHandlerInSamples = 0;
 volatile int16_t SECTION_CCMRAM rowDMARemained[NTSC_FRAME_LINES];
 volatile uint32_t SECTION_CCMRAM DMAFIFOUnderruns = 0;
 volatile uint32_t SECTION_CCMRAM DMATransferErrors = 0;
-typedef enum { NTSC_SOLID_FILL, NTSC_COLOR_TEST, NTSC_SCAN_TEST, NTSC_USE_VIDEO_MODE} VideoMode;
+typedef enum { NTSC_SOLID_FILL, NTSC_COLOR_TEST, NTSC_SCAN_TEST, NTSC_DISPLAY_BLACK, NTSC_USE_VIDEO_MODE} VideoMode;
 volatile VideoMode SECTION_CCMRAM NTSCMode = NTSC_COLOR_TEST;
 volatile int SECTION_CCMRAM videoScanTestLeft = 200;
 volatile int SECTION_CCMRAM videoScanTestRight = 700;
@@ -1498,6 +1508,10 @@ void NTSCFillRowBuffer(int frameNumber, int lineNumber, unsigned char *rowBuffer
                         rowBuffer[row] = 200;
                     }
                 }
+                break;
+            }
+            case NTSC_DISPLAY_BLACK: {
+                memcpy(rowBuffer, NTSCBlankLine, ROW_SAMPLES);
                 break;
             }
             case NTSC_USE_VIDEO_MODE: {
@@ -2834,7 +2848,7 @@ void Bitmap640x192FillRow(int frameNumber, int lineNumber, unsigned char *rowBuf
 // Mode where scanlines are composed of sequential segments
 
 // WidthSamples *and* Left are Expected to be multiple of 4 by FillRow
-#define SegmentedVideoWidthSamples 704
+#define SegmentedVideoWidthSamples 448
 #define SegmentedVideoLeft (512 - SegmentedVideoWidthSamples / 2)
 #define SegmentedVideoTop (27 * 2)
 #define SegmentedVideoHeight (230 * 2)
@@ -2850,7 +2864,7 @@ const static VideoSegmentedInfo SegmentedInfo = {
     SegmentedVideoHeight,
 };
 
-int SegmentedSetScanlines(float backgroundRed, float backgroundGreen, float backgroundBlue, int scanlineCount, VideoSegmentedScanline *scanlines);
+int SegmentedSetScanlines(int scanlineCount, VideoSegmentedScanline *scanlines);
 
 void SegmentedGetParameters(const VideoModeEntry *modeEntry, void *params_)
 {
@@ -2860,35 +2874,50 @@ void SegmentedGetParameters(const VideoModeEntry *modeEntry, void *params_)
 
 #pragma pack(push, 2)
 typedef struct SegmentedSegmentPrivate {
-    uint16_t pixelSkip;
     uint16_t pixelCount;
     float y0, i0, q0;
     float dy, di, dq;
 } SegmentedSegmentPrivate;
 #pragma pack(pop)
 
-typedef struct SegmentedScanlinePrivate {
-    uint32_t backgroundWave;
+typedef struct SegmentedVideoPrivate {
     SegmentedSegmentPrivate *scanlineSegments[SegmentedVideoHeight];
-    uint8_t segmentCounts[SegmentedVideoHeight];
-} SegmentedScanlinePrivate;
+} SegmentedVideoPrivate;
 
-#define MAX_SEGMENT_COUNT ((IMGBUFFER_SIZE - sizeof(SegmentedScanlinePrivate)) / sizeof(SegmentedSegmentPrivate))
+#define MAX_SEGMENT_COUNT ((IMGBUFFER_SIZE - sizeof(SegmentedVideoPrivate)) / sizeof(SegmentedSegmentPrivate))
 
 void SegmentedSetup(const VideoModeEntry *modeEntry)
 {
-    SegmentedScanlinePrivate *private = (SegmentedScanlinePrivate *)imgBuffer;
     NTSCFillBlankLine(NTSCBlankLine, 1);
+
+    SegmentedVideoPrivate *private = (SegmentedVideoPrivate *)imgBuffer;
+    SegmentedSegmentPrivate *dstseg = (SegmentedSegmentPrivate *)(imgBuffer + sizeof(SegmentedVideoPrivate));
+
+    // If we're in vertical retrace, wait to enter visible area
+    while(
+        !((lineNumber > SegmentedVideoEvenTop && lineNumber < SegmentedVideoEvenBottom) ||
+        (lineNumber > SegmentedVideoOddTop && lineNumber < SegmentedVideoOddBottom)));
+    // Once we're in visible area, wait to come around again to beginning of vertical retrace
+    while(
+        (lineNumber > SegmentedVideoEvenTop && lineNumber < SegmentedVideoEvenBottom) ||
+        (lineNumber > SegmentedVideoOddTop && lineNumber < SegmentedVideoOddBottom));
+
     for(int i = 0; i < SegmentedVideoHeight; i++) {
-        private->segmentCounts[i] = 0;
+        private->scanlineSegments[i] = dstseg;
+        dstseg->pixelCount = SegmentedVideoWidthSamples;
+        // RGBToYIQ(0, .5, 0, &dstseg->y0, &dstseg->i0, &dstseg->q0); // XXX why did this hang?
+        dstseg->y0 = .295;
+        dstseg->i0 = -.13865;
+        dstseg->q0 = -.26255;
+        dstseg->dy = 0;
+        dstseg->di = 0;
+        dstseg->dq = 0;
+        dstseg++;
     }
-    private->backgroundWave = NTSCRGBToWave(.5, .5, .5);
 }
 
-
-// For the FillRow state machine to work, this function MUST guarantee
-// that there is no SegmentedSegmentPrivate with a zero pixelCount.
-int SegmentedSetScanlines(float backgroundRed, float backgroundGreen, float backgroundBlue, int scanlineCount, VideoSegmentedScanline *scanlines)
+// All scanlines must have 1 or more segments and cover only every pixel on scanline
+int SegmentedSetScanlines(int scanlineCount, VideoSegmentedScanline *scanlines)
 {
     if(scanlineCount != SegmentedVideoHeight) {
         return 1; // INVALID - incorrect number of scanlines
@@ -2896,13 +2925,23 @@ int SegmentedSetScanlines(float backgroundRed, float backgroundGreen, float back
     int totalSegments = 0;
     for(int i = 0; i < scanlineCount; i++) {
         totalSegments += scanlines[i].segmentCount;
+        int totalPixels = 0;
+        for(int j = 0; j < scanlines[i].segmentCount; j++) {
+            totalPixels += scanlines[i].segments[j].pixelCount;
+        }
+        if(totalPixels < SegmentedVideoWidthSamples) {
+            return 3; // INVALID - didn't cover line
+        }
+        if(totalPixels > SegmentedVideoWidthSamples) {
+            return 4; // INVALID - exceeded length of line
+        }
     }
     if(totalSegments > MAX_SEGMENT_COUNT) {
         return 2; // INVALID - too many segments
     }
 
-    SegmentedScanlinePrivate *private = (SegmentedScanlinePrivate *)imgBuffer;
-    SegmentedSegmentPrivate *dstseg = (SegmentedSegmentPrivate *)(imgBuffer + sizeof(SegmentedScanlinePrivate));
+    SegmentedVideoPrivate *private = (SegmentedVideoPrivate *)imgBuffer;
+    SegmentedSegmentPrivate *dstseg = (SegmentedSegmentPrivate *)(imgBuffer + sizeof(SegmentedVideoPrivate));
     
     // Hope that we can update this entire buffer in the non-visible region!
     // Roughly 390000 cycles or around 850 cycles per row, probably
@@ -2917,34 +2956,22 @@ int SegmentedSetScanlines(float backgroundRed, float backgroundGreen, float back
         (lineNumber > SegmentedVideoEvenTop && lineNumber < SegmentedVideoEvenBottom) ||
         (lineNumber > SegmentedVideoOddTop && lineNumber < SegmentedVideoOddBottom));
 
-    private->backgroundWave = NTSCRGBToWave(backgroundRed, backgroundGreen, backgroundBlue);
-
     for(int i = 0; i < scanlineCount; i++) {
         private->scanlineSegments[i] = dstseg;
-        private->segmentCounts[i] = 0;
-        int skippedInPreviousEmptySegment = 0;
         // printf("scanline %d, %d count\n", i, scanlines[i].segmentCount);  SERIAL_flush();
         for(int j = 0; j < scanlines[i].segmentCount; j++) {
             VideoSegmentedScanlineSegment *srcseg = scanlines[i].segments + j;
-            if(srcseg->pixelCount == 0) {
-                // help caller by coalescing segments containing only a skip
-                skippedInPreviousEmptySegment += srcseg->pixelSkip;
-            } else {
-                dstseg->pixelSkip = srcseg->pixelSkip + skippedInPreviousEmptySegment;
-                skippedInPreviousEmptySegment = 0;
-                dstseg->pixelCount = srcseg->pixelCount;
-                // printf("    segment %d: skip %d, count %d\n", j, dstseg->pixelSkip, dstseg->pixelCount);  SERIAL_flush();
-                float Y0, I0, Q0;
-                float Y1, I1, Q1;
-                RGBToYIQ(srcseg->r0, srcseg->g0, srcseg->b0, &Y0, &I0, &Q0);
-                RGBToYIQ(srcseg->r1, srcseg->g1, srcseg->b1, &Y1, &I1, &Q1);
-                dstseg->y0 = Y0; dstseg->i0 = I0; dstseg->q0 = Q0;
-                dstseg->dy = (Y1 - Y0) / srcseg->pixelCount;
-                dstseg->di = (I1 - I0) / srcseg->pixelCount;
-                dstseg->dq = (Q1 - Q0) / srcseg->pixelCount;
-                dstseg ++;
-                private->segmentCounts[i]++;
-            }
+            dstseg->pixelCount = srcseg->pixelCount;
+            // printf("    segment %d: count %d\n", j, dstseg->pixelCount);  SERIAL_flush();
+            float Y0, I0, Q0;
+            float Y1, I1, Q1;
+            RGBToYIQ(srcseg->r0, srcseg->g0, srcseg->b0, &Y0, &I0, &Q0);
+            RGBToYIQ(srcseg->r1, srcseg->g1, srcseg->b1, &Y1, &I1, &Q1);
+            dstseg->y0 = Y0; dstseg->i0 = I0; dstseg->q0 = Q0;
+            dstseg->dy = (Y1 - Y0) / srcseg->pixelCount;
+            dstseg->di = (I1 - I0) / srcseg->pixelCount;
+            dstseg->dq = (Q1 - Q0) / srcseg->pixelCount;
+            dstseg ++;
         }
     }
 
@@ -2964,64 +2991,32 @@ __attribute__((hot,flatten)) void SegmentedFillRow(int frameNumber, int lineNumb
         memset(rowBuffer + clocksToRightEdge, NTSCBlack, ROW_SAMPLES - clocksToRightEdge - NTSCFrontPorchClocks);
 
         uint32_t *dstWords = (uint32_t*)(rowBuffer + SegmentedVideoLeft);
-        SegmentedScanlinePrivate *private = (SegmentedScanlinePrivate *)imgBuffer;
+        SegmentedVideoPrivate *private = (SegmentedVideoPrivate *)imgBuffer;
 
-        int segmentsRemaining = private->segmentCounts[rowWithin];
         SegmentedSegmentPrivate *segmentp = private->scanlineSegments[rowWithin];
-        int skipping = 0, pixelCount = 0;
+        int pixelsRemaining = 0;
         float Y = 0, I = 0, Q = 0;
-        if(private->segmentCounts[rowWithin] > 0) {
-            segmentp = private->scanlineSegments[rowWithin];
-            skipping = segmentp->pixelSkip;
-            pixelCount = segmentp->pixelCount;
-            Y = segmentp->y0;
-            I = segmentp->i0;
-            Q = segmentp->q0;
-        }
+        float dy = 0, di = 0, dq = 0;
+        segmentp = private->scanlineSegments[rowWithin];
 
+        // SetScanlines made sure that every pixel is covered once and nothing past line
         for(int i = 0; i < SegmentedVideoWidthSamples; i += 4) {
             uint32_t waveform = 0;
 
             for(int j = 0; j < 4; j++) { // XXX if necessary unroll 
-                if(segmentsRemaining == 0) {
 
-                    // Pass - no more pixels, keep filling the background until we're done
-                    waveform |= private->backgroundWave & (0xff << (j * 8));
-
-                } else if(skipping > 0) {
-
-                    // we're skipping to the next range of interpolated pixels
-                    waveform |= private->backgroundWave & (0xff << (j * 8));
-                    skipping--;
-
-                } else if(pixelCount > 0) {
-
-                    // we're filling a range of interpolated pixels
-
-                    uint32_t value = NTSCYIQDegreesToDAC(Y, I, Q, j * 90);
-
-                    waveform |= value << (j * 8);
-
-                    Y += segmentp->dy; I += segmentp->di; Q += segmentp->dq;
-                    pixelCount --;
-
-                    if(pixelCount == 0) {
-
-                        // We just finished a segment
-                        segmentsRemaining --;
-
-                        if(segmentsRemaining > 0) {
-
-                            // There are more segments, load the next segment 
-                            segmentp++;
-
-                            skipping = segmentp->pixelSkip;
-                            pixelCount = segmentp->pixelCount;
-
-                            Y = segmentp->y0; I = segmentp->i0; Q = segmentp->q0;
-                        }
-                    }
+                if(pixelsRemaining == 0) {
+                    pixelsRemaining = segmentp->pixelCount;
+                    Y = segmentp->y0; I = segmentp->i0; Q = segmentp->q0;
+                    dy = segmentp->dy; di = segmentp->di; dq = segmentp->dq;
+                    segmentp++;
                 }
+
+                uint32_t value = NTSCYIQDegreesToDAC(Y, I, Q, j * 90);
+                waveform |= value << (j * 8);
+
+                Y += dy; I += di; Q += dq;
+                pixelsRemaining --;
             }
 
             *dstWords++ = waveform;
@@ -3358,10 +3353,12 @@ void VideoModeGetInfo(int n, void *info)
 
 void VideoSetMode(int n)
 {
+    NTSCMode = NTSC_DISPLAY_BLACK;
     const VideoModeEntry* entry = NTSCModes + n;
     entry->setup(entry);
     CurrentVideoMode = n;
     VideoCurrentFillRow = entry->fillRow;
+    NTSCMode = NTSC_USE_VIDEO_MODE;
 }
 
 int VideoGetCurrentMode()
@@ -3473,38 +3470,75 @@ int doTestSegmentMode(int wordCount, char **words)
 
     while(!quit) {
         VideoSegmentedScanlineSegment *segmentp = segments;
-        for(int y = 0; y < info.height; y++) {
-            scanlines[y].segmentCount = 0;
-        }
-        for(int row = cy - cr; row <= cy + cr; row++) {
+        for(int row = 0; row < info.height; row++) {
             scanlines[row].segmentCount = 0;
-            scanlines[row].segments = segmentp;
+            if((row >= cy - cr) && (row <= cy + cr)) {
+                int remaining = info.width;
 
-            int y = row - cy;
-            int x = sqrtf(cr * cr - y * y);
-            segmentp->pixelSkip = cx - x;
-            segmentp->pixelCount = x;
-            segmentp->r0 = 1; // .5 + sin((y + frame) / 15.0 * M_PI + 0 * M_PI / 3) / 2;
-            segmentp->g0 = 0; // .5 + sin((y + frame) / 15.0 * M_PI + 2 * M_PI / 3) / 2;
-            segmentp->b0 = 0; // .75 + .25 * sin((y + frame) / 15.0 * M_PI + 4 * M_PI / 3) / 2;
-            segmentp->r1 = 0; // .5 + sin((y + frame) / 15.0 * M_PI + 0 * M_PI / 3) / 2;
-            segmentp->g1 = 1; // .5 + sin((y + frame) / 15.0 * M_PI + 2 * M_PI / 3) / 2;
-            segmentp->b1 = 0; // .75 + .25 * sin((y + frame) / 15.0 * M_PI + 4 * M_PI / 3) / 2;
-            segmentp++;
-            scanlines[row].segmentCount++;
-            segmentp->pixelSkip = 0;
-            segmentp->pixelCount = x;
-            segmentp->r0 = 0; // .5 + sin((y + frame) / 15.0 * M_PI + 0 * M_PI / 3) / 2;
-            segmentp->g0 = 1; // .5 + sin((y + frame) / 15.0 * M_PI + 2 * M_PI / 3) / 2;
-            segmentp->b0 = 0; // .75 + .25 * sin((y + frame) / 15.0 * M_PI + 4 * M_PI / 3) / 2;
-            segmentp->r1 = 0; // .5 + sin((y + frame) / 15.0 * M_PI + 0 * M_PI / 3) / 2;
-            segmentp->g1 = 0; // .5 + sin((y + frame) / 15.0 * M_PI + 2 * M_PI / 3) / 2;
-            segmentp->b1 = 1; // .75 + .25 * sin((y + frame) / 15.0 * M_PI + 4 * M_PI / 3) / 2;
-            segmentp++;
-            scanlines[row].segmentCount++;
+                scanlines[row].segments = segmentp;
+
+                int y = row - cy;
+                int x = sqrtf(cr * cr - y * y);
+
+                segmentp->pixelCount = cx - x;
+                remaining -= segmentp->pixelCount;
+                segmentp->r0 = .25;
+                segmentp->g0 = .25;
+                segmentp->b0 = 1;
+                segmentp->r1 = .25;
+                segmentp->g1 = .25;
+                segmentp->b1 = 1;
+                segmentp++;
+                scanlines[row].segmentCount++;
+
+                segmentp->pixelCount = x;
+                remaining -= segmentp->pixelCount;
+                segmentp->r0 = 1; // .5 + sin((y + frame) / 15.0 * M_PI + 0 * M_PI / 3) / 2;
+                segmentp->g0 = 0; // .5 + sin((y + frame) / 15.0 * M_PI + 2 * M_PI / 3) / 2;
+                segmentp->b0 = 0; // .75 + .25 * sin((y + frame) / 15.0 * M_PI + 4 * M_PI / 3) / 2;
+                segmentp->r1 = 0; // .5 + sin((y + frame) / 15.0 * M_PI + 0 * M_PI / 3) / 2;
+                segmentp->g1 = 1; // .5 + sin((y + frame) / 15.0 * M_PI + 2 * M_PI / 3) / 2;
+                segmentp->b1 = 0; // .75 + .25 * sin((y + frame) / 15.0 * M_PI + 4 * M_PI / 3) / 2;
+                segmentp++;
+                scanlines[row].segmentCount++;
+
+                segmentp->pixelCount = x;
+                remaining -= segmentp->pixelCount;
+                segmentp->r0 = 0; // .5 + sin((y + frame) / 15.0 * M_PI + 0 * M_PI / 3) / 2;
+                segmentp->g0 = 1; // .5 + sin((y + frame) / 15.0 * M_PI + 2 * M_PI / 3) / 2;
+                segmentp->b0 = 0; // .75 + .25 * sin((y + frame) / 15.0 * M_PI + 4 * M_PI / 3) / 2;
+                segmentp->r1 = 0; // .5 + sin((y + frame) / 15.0 * M_PI + 0 * M_PI / 3) / 2;
+                segmentp->g1 = 0; // .5 + sin((y + frame) / 15.0 * M_PI + 2 * M_PI / 3) / 2;
+                segmentp->b1 = 1; // .75 + .25 * sin((y + frame) / 15.0 * M_PI + 4 * M_PI / 3) / 2;
+                segmentp++;
+                scanlines[row].segmentCount++;
+
+                segmentp->pixelCount = remaining;
+                segmentp->r0 = .25;
+                segmentp->g0 = .25;
+                segmentp->b0 = 1;
+                segmentp->r1 = .25;
+                segmentp->g1 = .25;
+                segmentp->b1 = 1;
+                segmentp++;
+                scanlines[row].segmentCount++;
+
+            } else {
+
+                scanlines[row].segments = segmentp;
+                segmentp->pixelCount = info.width;
+                segmentp->r0 = .25;
+                segmentp->g0 = .25;
+                segmentp->b0 = 1;
+                segmentp->r1 = .25;
+                segmentp->g1 = .25;
+                segmentp->b1 = 1;
+                segmentp++;
+                scanlines[row].segmentCount++;
+            }
         }
 
-        int result = SegmentedSetScanlines(.25, .25, 1, info.height, scanlines);
+        int result = params.setScanlines(info.height, scanlines);
         if(result != 0) {
             printf("Return value %d from SegmentedSetScanlines\n", result);
             free(segments);
