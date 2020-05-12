@@ -5,6 +5,8 @@
 extern "C" {
 #endif /* __cplusplus */
 
+#define ROCINANTE 1
+
 enum {
     COMMAND_CONTINUE = 0,
     COMMAND_SUCCESS = COMMAND_CONTINUE,
