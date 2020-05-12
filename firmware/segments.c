@@ -1,4 +1,5 @@
 #include <stdint.h>
+#include <math.h>
 #include <stdlib.h>
 #include <stdio.h>
 
@@ -194,6 +195,61 @@ enum {
     PIXEL_COUNT = 512, 
 };
 
+float pixelRows[2][PIXEL_COUNT][3];
+
+int PaintSegment(VideoSegmentedScanlineSegment *seg, int start, float (*pixelRow)[3], int pixelCount)
+{
+    if(start + seg->pixelCount > pixelCount) {
+        return 1; // too long
+    }
+
+    float dr = (seg->r1 - seg->r0) / seg->pixelCount;
+    float dg = (seg->g1 - seg->g0) / seg->pixelCount;
+    float db = (seg->b1 - seg->b0) / seg->pixelCount;
+    float r = seg->r0;
+    float g = seg->g0;
+    float b = seg->b0;
+
+    for(int i = start; i < start + seg->pixelCount; i++) {
+        pixelRow[i][0] = r;
+        pixelRow[i][1] = g;
+        pixelRow[i][2] = b;
+        r += dr;
+        g += dg;
+        b += db;
+    }
+
+    return 0;
+}
+
+int PaintSegments(VideoSegmentedScanlineSegment *segs, float (*pixelRow)[3], int pixelCount)
+{
+    int currentStart = 0;
+    VideoSegmentedScanlineSegment *seg = segs;
+
+    while(currentStart < pixelCount) {
+        int result = PaintSegment(seg, currentStart, pixelRow, pixelCount);
+        if(result != 0) {
+            return result;
+        }
+        currentStart += seg->pixelCount;
+        seg++;
+    }
+    return 0;
+}
+
+int CompareRows(float (*pixelRow0)[3], float (*pixelRow1)[3], int pixelCount)
+{
+    for(int i = 0; i < pixelCount; i++) {
+        for(int c = 0; c < 3; c++) {
+            if(fabsf(pixelRow0[i][c] - pixelRow1[i][c]) > .00001f) {
+                return i + 1;
+            }
+        }
+    }
+    return 0;
+}
+
 int TestMerge(int start, float r0, float g0, float b0, int end, float r1, float g1, float b1, VideoSegmentedScanlineSegment *src, int segmentCount, int pixelCount, VideoSegmentedScanlineSegment *dst, int maxNewSegmentCount, int indent)
 {
     int newSegmentCount;
@@ -232,12 +288,69 @@ int TestMerge(int start, float r0, float g0, float b0, int end, float r1, float 
         return 3000 + result;
     }
 
+    for(int i = 0; i < pixelCount; i++) { for(int c = 0; c < 3; c++) { pixelRows[0][i][c] = 666.666; } }
+    PaintSegments(src, pixelRows[0], pixelCount);
+    VideoSegmentedScanlineSegment tmpseg;
+    tmpseg.pixelCount = end - start + 1;
+    tmpseg.r0 = r0; tmpseg.g0 = g0; tmpseg.b0 = b0;
+    tmpseg.r1 = r1; tmpseg.g1 = g1; tmpseg.b1 = b1;
+    PaintSegment(&tmpseg, start, pixelRows[0], pixelCount);
+
+    for(int i = 0; i < pixelCount; i++) { for(int c = 0; c < 3; c++) { pixelRows[1][i][c] = 777.777; } }
+    PaintSegments(dst, pixelRows[1], pixelCount);
+
+    result = CompareRows(pixelRows[0], pixelRows[1], pixelCount);
+    if(result != 0) {
+        printf("%*scomparison of test results with paint failed with %d\n", indent, "", result);
+        return 4000 + result;
+    }
+
+    return 0;
+}
+
+int SpheresTest()
+{
     return 0;
 }
 
 int main()
 {
     int result;
+
+    {
+        for(int i = 0; i < PIXEL_COUNT; i++) { for(int c = 0; c < 3; c++) { pixelRows[0][i][c] = 666.666; } }
+        for(int i = 0; i < PIXEL_COUNT; i++) { for(int c = 0; c < 3; c++) { pixelRows[1][i][c] = 777.777; } }
+        result = CompareRows(pixelRows[0], pixelRows[1], PIXEL_COUNT);
+        if(result == 0) {
+            printf("comparison of different rows succeeded unexpectedly\n");
+            exit(EXIT_FAILURE);
+        }
+
+        for(int i = 0; i < PIXEL_COUNT; i++) { for(int c = 0; c < 3; c++) { pixelRows[1][i][c] = 666.666; } }
+        pixelRows[1][0][0] = 5.0f;
+        result = CompareRows(pixelRows[0], pixelRows[1], PIXEL_COUNT);
+        if(result == 0) {
+            printf("comparison of different rows succeeded unexpectedly\n");
+            exit(EXIT_FAILURE);
+        }
+
+        for(int i = 0; i < PIXEL_COUNT; i++) { for(int c = 0; c < 3; c++) { pixelRows[1][i][c] = 666.666; } }
+        pixelRows[1][0][1] = 5.0f;
+        result = CompareRows(pixelRows[0], pixelRows[1], PIXEL_COUNT);
+        if(result == 0) {
+            printf("comparison of different rows succeeded unexpectedly\n");
+            exit(EXIT_FAILURE);
+        }
+
+        for(int i = 0; i < PIXEL_COUNT; i++) { for(int c = 0; c < 3; c++) { pixelRows[1][i][c] = 666.666; } }
+        pixelRows[1][0][2] = 5.0f;
+        result = CompareRows(pixelRows[0], pixelRows[1], PIXEL_COUNT);
+        if(result == 0) {
+            printf("comparison of different rows succeeded unexpectedly\n");
+            exit(EXIT_FAILURE);
+        }
+    }
+
 
     if(0){
         VideoSegmentedScanlineSegment segs1[] = {
@@ -410,5 +523,14 @@ int main()
             printf("    test failed with %d\n", result);
             exit(EXIT_FAILURE);
         }
+    }
+
+    printf("spheres:\n");
+    result = SpheresTest();
+    if(result == 0) {
+        printf("    test passed\n");
+    } else {
+        printf("    test failed with %d\n", result);
+        exit(EXIT_FAILURE);
     }
 }
