@@ -21,13 +21,12 @@ typedef struct VideoSegmentedScanlineSegment
 {
     /* 
        Function providing this data is expected to provide sequential,
-       nonoverlapping, pixel-center-sampled segments as an example
-       converted from multiple, subpixel, overlapping segments.  A later
-       extension might include partial coverage and possibly multiple
-       fractional coverage per pixel (e.g. to enable pure analytic
-       antialiasing)
+       nonoverlapping, pixel-center-sampled segments covering the
+       entire scanline and no more, as an example converted from
+       multiple, subpixel, overlapping segments.  A later extension
+       might include partial coverage and possibly multiple fractional
+       coverage per pixel (e.g. to enable pure analytic antialiasing)
     */
-    uint16_t pixelSkip;
     uint16_t pixelCount;
     float r0, g0, b0;
     float r1, g1, b1;
@@ -40,7 +39,7 @@ typedef struct VideoSegmentedScanline {
 
 // scanlineCount must be equal to mode height
 // Returns non-zero in the case that the scanline information does not fit
-typedef int (*SegmentedSetScanlinesFunc)(float backgroundRed, float backgroundGreen, float backgroundBlue, int scanlineCount, VideoSegmentedScanline *scanlines);
+typedef int (*SegmentedSetScanlinesFunc)(int scanlineCount, VideoSegmentedScanline *scanlines);
 
 typedef struct VideoSegmentedParameters
 {
