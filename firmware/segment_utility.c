@@ -1,4 +1,5 @@
 #include <stdlib.h>
+#include <math.h>
 #include <string.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -178,6 +179,24 @@ typedef struct VideoSegmentBuffer {
     VideoSegmentedScanlineSegment *segmentCeiling;
 } VideoSegmentBuffer;
 
+int VideoBufferReset(VideoSegmentBuffer *buffer, float r, float g, float b)
+{
+    // Set scanlines to a default empty segment
+    for(int i = 0; i < buffer->scanlineCount; i++) {
+        buffer->scanlines[i].segmentCount = 1;
+        buffer->scanlines[i].segments = buffer->segmentPool + i;
+        buffer->scanlines[i].segments[0].pixelCount = buffer->scanlineWidth;
+        buffer->scanlines[i].segments[0].r0 = r;
+        buffer->scanlines[i].segments[0].g0 = g;
+        buffer->scanlines[i].segments[0].b0 = b;
+        buffer->scanlines[i].segments[0].r1 = r;
+        buffer->scanlines[i].segments[0].g1 = g;
+        buffer->scanlines[i].segments[0].b1 = b;
+    }
+
+    return 0;
+}
+
 int VideoBufferAllocateMembers(VideoSegmentBuffer *buffer, int width, int totalSegments, int scanlineCount, float r, float g, float b)
 {
     // segment parameters
@@ -200,18 +219,7 @@ int VideoBufferAllocateMembers(VideoSegmentBuffer *buffer, int width, int totalS
     buffer->rowBeingUpdated = -1;
     buffer->currentSegmentDestination = NULL;
 
-    // Set scanlines to a default empty segment
-    for(int i = 0; i < scanlineCount; i++) {
-        buffer->scanlines[i].segmentCount = 1;
-        buffer->scanlines[i].segments = buffer->segmentPool + i;
-        buffer->scanlines[i].segments[0].pixelCount = width;
-        buffer->scanlines[i].segments[0].r0 = r;
-        buffer->scanlines[i].segments[0].g0 = g;
-        buffer->scanlines[i].segments[0].b0 = b;
-        buffer->scanlines[i].segments[0].r1 = r;
-        buffer->scanlines[i].segments[0].g1 = g;
-        buffer->scanlines[i].segments[0].b1 = b;
-    }
+    VideoBufferReset(buffer, r, g, b);
 
     return 0;
 }
@@ -303,7 +311,7 @@ int CircleToSegments(VideoSegmentBuffer *buffer, int cx, int cy, int cr, float r
     int maxy = cy + cr - 1;
 
     miny = (miny >= 0) ? miny : 0;
-    maxy = (maxy < IMAGE_HEIGHT) ? maxy : 0;
+    maxy = (maxy < buffer->scanlineCount) ? maxy : 0;
 
     result = VideoBufferBeginUpdate(buffer);
     if(result != 0) {
@@ -311,7 +319,7 @@ int CircleToSegments(VideoSegmentBuffer *buffer, int cx, int cy, int cr, float r
         return 1;
     }
 
-    for(int row = 0; row < IMAGE_HEIGHT; row++) {
+    for(int row = 0; row < buffer->scanlineCount; row++) {
 
         VideoSegmentedScanlineSegment *currentRowSegments;
         int currentRowSegmentCount;
@@ -344,27 +352,17 @@ int CircleToSegments(VideoSegmentBuffer *buffer, int cx, int cy, int cr, float r
                 newseg.pixelCount += -start;
                 start = 0;
             }
-            if(end >= PIXEL_COUNT) {
-                end = PIXEL_COUNT - 1;
+            if(end >= buffer->scanlineWidth) {
+                end = buffer->scanlineWidth - 1;
             }
             newseg.pixelCount = end - start + 1;
 
             int newSegmentCount;
-            result = MergeSegment(&newseg, start, currentRowSegments, PIXEL_COUNT, availableSegments, availableCount, &newSegmentCount);
+            result = MergeSegment(&newseg, start, currentRowSegments, buffer->scanlineWidth, availableSegments, availableCount, &newSegmentCount);
             if(result != 0) {
                 printf("CircleToSegments: error scanconverting circle at row %d with error %d\n", row, result);
                 return 3;
             }
-
-#ifndef ROCINANTE
-            if(validateEverything) {
-                result = ValidateSegments(availableSegments, newSegmentCount, PIXEL_COUNT);
-                if(result != 0) {
-                    printf("CircleToSegments: result %d validating circle row %d\n", result, row);
-                    return 4;
-                }
-            }
-#endif
 
             result = VideoBufferFinishCurrentRowUpdate(buffer, newSegmentCount);
             if(result != 0) {

@@ -1,4 +1,5 @@
 #include <string.h>
+#include <math.h>
 #include <stdint.h>
 #include <math.h>
 #include <stdlib.h>
@@ -179,7 +180,7 @@ int CirclesTest(const char *filename)
     }
 #endif /* ROCINANTE */
 
-    for(int circle = 0; circle < 20; circle++) {
+    for(int circle = 0; circle < 15; circle++) {
         result = CircleToSegments(&buffer, 10 + drand48() * (PIXEL_COUNT - 20), 10 + drand48() * (IMAGE_HEIGHT - 20), 50 + drand48() * 50, drand48(), drand48(), drand48());
         if(result != 0) {
             printf("result %d drawing circle %d\n", result, circle);
@@ -236,6 +237,10 @@ int main()
 {
     int result;
     VideoSegmentedScanlineSegment newseg;
+
+    if(getenv("SEED") != NULL) {
+        srand48(atoi(getenv("SEED")));
+    }
 
     {
         for(int i = 0; i < PIXEL_COUNT; i++) { for(int c = 0; c < 3; c++) { pixelRows[0][i][c] = 666.666; } }
