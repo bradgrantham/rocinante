@@ -107,3 +107,5 @@ main.dfu: main.hex
 
 burn: main.dfu
 	time dfu-util -d 0483:df11 -a 0 -D main.dfu
+
+segment_test: segment_test.c segment_utility.c
