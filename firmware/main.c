@@ -31,6 +31,7 @@
 #include "graphics.h"
 #include "textport.h"
 #include "rocinante.h"
+#include "segment_utility.h"
 
 // System driver internal definitions
 #include "videomodeinternal.h"
@@ -3397,36 +3398,6 @@ int showScanoutStats = 0;
 
 void NTSCGenerateLineBuffers();
 
-#if 0
-struct UnsortedSegment {
-    int start, length;
-    float r0, g0, b0;
-    float r1, g1, b1;
-};
-
-int AddUnsortedSegment(int start, int length, float r0, float g0, float b0, float r1, float g1, float b1, UnsortedSegment* segments, int *count, int maxCount)
-{
-    if(*count >= maxCount) {
-        return 1;
-    }
-    UnsortedSegment *cur = segments + (*count)++;
-    cur->start = start;
-    cur->length = length;
-    cur->r0 = r0;
-    cur->g0 = g0;
-    cur->b0 = b0;
-    cur->r1 = r1;
-    cur->g1 = g1;
-    cur->b1 = b1;
-    return 0;
-}
-
-int MakeScanlineFromUnsorted(UnsortedSegment *unsorted, int unsortedCount, VideoSegmentedScanlineSegment* segments, int *count, int maxCount)
-{
-
-}
-#endif
-
 int doTestSegmentMode(int wordCount, char **words)
 {
     int which = -1;
@@ -3450,15 +3421,36 @@ int doTestSegmentMode(int wordCount, char **words)
 
     printf("segmented mode is %d by %d\n", info.width, info.height); SERIAL_flush();
 
-    VideoSegmentedScanline *scanlines = malloc(sizeof(VideoSegmentedScanline) * info.height);
-    if(scanlines == NULL) {
-        printf("couldn't allocate %d bytes for scanlines\n", sizeof(VideoSegmentedScanline) * info.height);
-        return COMMAND_FAILED;
+#if 1
+    void *p;
+    int size;
+    for(size = 128 * 1024; size >= 2; size /= 2) {
+        if((p = malloc(size)) != NULL) {
+            free(p);
+            break;
+        }
     }
-    VideoSegmentedScanlineSegment *segments = malloc(sizeof(VideoSegmentedScanlineSegment) * 3 * info.height);
-    if(segments == NULL) {
-        printf("couldn't allocate %d bytes for segments\n", sizeof(VideoSegmentedScanlineSegment) * 3 * info.height);
-        return COMMAND_FAILED;
+    printf("largest size I could malloc: %d\n", size);
+#endif
+
+    VideoSegmentBuffer buffer;
+
+    int result = VideoBufferAllocateMembers(&buffer, info.width, 4000, info.height, .2f, .15f, .15f);
+    if(result != 0) {
+        printf("failed to allocate video buffer with 4000 segments, result = %d\n", result);
+        result = VideoBufferAllocateMembers(&buffer, info.width, 3500, info.height, .2f, .15f, .15f);
+        if(result != 0) {
+            printf("failed to allocate video buffer with 3500 segments, result = %d\n", result);
+            result = VideoBufferAllocateMembers(&buffer, info.width, 3000, info.height, .2f, .15f, .15f);
+            if(result != 0) {
+                printf("failed to allocate video buffer with 3000 segments, result = %d\n", result);
+                result = VideoBufferAllocateMembers(&buffer, info.width, 2000, info.height, .2f, .15f, .15f);
+                if(result != 0) {
+                    printf("failed to allocate video buffer with 2000 segments, result = %d\n", result);
+                    return COMMAND_FAILED;
+                }
+            }
+        }
     }
 
     int dx = 5;
@@ -3469,80 +3461,19 @@ int doTestSegmentMode(int wordCount, char **words)
     int quit = 0;
 
     while(!quit) {
-        VideoSegmentedScanlineSegment *segmentp = segments;
-        for(int row = 0; row < info.height; row++) {
-            scanlines[row].segmentCount = 0;
-            if((row >= cy - cr) && (row <= cy + cr)) {
-                int remaining = info.width;
+        VideoBufferReset(&buffer, .2f, .15f, .15f);
 
-                scanlines[row].segments = segmentp;
-
-                int y = row - cy;
-                int x = sqrtf(cr * cr - y * y);
-
-                segmentp->pixelCount = cx - x;
-                remaining -= segmentp->pixelCount;
-                segmentp->r0 = .25;
-                segmentp->g0 = .25;
-                segmentp->b0 = 1;
-                segmentp->r1 = .25;
-                segmentp->g1 = .25;
-                segmentp->b1 = 1;
-                segmentp++;
-                scanlines[row].segmentCount++;
-
-                segmentp->pixelCount = x;
-                remaining -= segmentp->pixelCount;
-                segmentp->r0 = 1; // .5 + sin((y + frame) / 15.0 * M_PI + 0 * M_PI / 3) / 2;
-                segmentp->g0 = 0; // .5 + sin((y + frame) / 15.0 * M_PI + 2 * M_PI / 3) / 2;
-                segmentp->b0 = 0; // .75 + .25 * sin((y + frame) / 15.0 * M_PI + 4 * M_PI / 3) / 2;
-                segmentp->r1 = 0; // .5 + sin((y + frame) / 15.0 * M_PI + 0 * M_PI / 3) / 2;
-                segmentp->g1 = 1; // .5 + sin((y + frame) / 15.0 * M_PI + 2 * M_PI / 3) / 2;
-                segmentp->b1 = 0; // .75 + .25 * sin((y + frame) / 15.0 * M_PI + 4 * M_PI / 3) / 2;
-                segmentp++;
-                scanlines[row].segmentCount++;
-
-                segmentp->pixelCount = x;
-                remaining -= segmentp->pixelCount;
-                segmentp->r0 = 0; // .5 + sin((y + frame) / 15.0 * M_PI + 0 * M_PI / 3) / 2;
-                segmentp->g0 = 1; // .5 + sin((y + frame) / 15.0 * M_PI + 2 * M_PI / 3) / 2;
-                segmentp->b0 = 0; // .75 + .25 * sin((y + frame) / 15.0 * M_PI + 4 * M_PI / 3) / 2;
-                segmentp->r1 = 0; // .5 + sin((y + frame) / 15.0 * M_PI + 0 * M_PI / 3) / 2;
-                segmentp->g1 = 0; // .5 + sin((y + frame) / 15.0 * M_PI + 2 * M_PI / 3) / 2;
-                segmentp->b1 = 1; // .75 + .25 * sin((y + frame) / 15.0 * M_PI + 4 * M_PI / 3) / 2;
-                segmentp++;
-                scanlines[row].segmentCount++;
-
-                segmentp->pixelCount = remaining;
-                segmentp->r0 = .25;
-                segmentp->g0 = .25;
-                segmentp->b0 = 1;
-                segmentp->r1 = .25;
-                segmentp->g1 = .25;
-                segmentp->b1 = 1;
-                segmentp++;
-                scanlines[row].segmentCount++;
-
-            } else {
-
-                scanlines[row].segments = segmentp;
-                segmentp->pixelCount = info.width;
-                segmentp->r0 = .25;
-                segmentp->g0 = .25;
-                segmentp->b0 = 1;
-                segmentp->r1 = .25;
-                segmentp->g1 = .25;
-                segmentp->b1 = 1;
-                segmentp++;
-                scanlines[row].segmentCount++;
-            }
+        int result = CircleToSegments(&buffer, cx, cy, cr, .25, .25, 1);
+        if(result != 0) {
+            printf("Return value %d from CircleToSegments\n", result);
+            VideoBufferFreeMembers(&buffer);
+            return COMMAND_FAILED;
         }
 
-        int result = params.setScanlines(info.height, scanlines);
+        result = params.setScanlines(info.height, buffer.scanlines);
         if(result != 0) {
             printf("Return value %d from SegmentedSetScanlines\n", result);
-            free(segments);
-            free(scanlines);
+            VideoBufferFreeMembers(&buffer);
             return COMMAND_FAILED;
         }
 
@@ -3557,8 +3488,7 @@ int doTestSegmentMode(int wordCount, char **words)
         quit = (InputGetChar() != -1);
     }
 
-    free(segments);
-    free(scanlines);
+    VideoBufferFreeMembers(&buffer);
 
     return COMMAND_CONTINUE;
 }

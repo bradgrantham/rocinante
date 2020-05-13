@@ -30,6 +30,7 @@ COBJECTS = \
         STM32Cube4/stm32f7xx_hal_tim_ex.o \
         STM32Cube4/stm32f7xx_hal.o \
         main.o \
+        segment_utility.o \
         leds.o \
         monitor_queue.o \
         console_queue.o \

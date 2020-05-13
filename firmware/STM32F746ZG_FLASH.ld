@@ -37,8 +37,9 @@ ENTRY(Reset_Handler)
 _estack = 0x2000FFFC;    /* end of DTCMRAM */
 
 /* Generate a link error if heap and stack don't fit into RAM */
-_Min_Heap_Size = 0x19000;      /* required amount of heap - actually not required amount - required amount more like 0x9000, but take up all remaining heap as of 4/25 to force being stingy */
+_Min_Heap_Size = 0x29000;      /* required amount of heap - actually not required amount - required amount more like 0x9000, but take up all remaining heap as of 4/25 to force being stingy */
 _Min_Stack_Size = 0x400; /* required amount of stack */
+
 
 /* Specify the memory areas */
 MEMORY

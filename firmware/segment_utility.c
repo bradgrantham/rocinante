@@ -240,7 +240,7 @@ int VideoBufferBeginUpdate(VideoSegmentBuffer *buffer)
     VideoSegmentedScanlineSegment *segp = buffer->segmentPool + buffer->segmentsInPool;
 
     // Move all rows to top of buffer
-    for(int i = buffer->scanlineCount; i >= 0; i--) {
+    for(int i = buffer->scanlineCount - 1; i >= 0; i--) {
         segp -= buffer->scanlines[i].segmentCount;
         memcpy(segp, buffer->scanlines[i].segments, sizeof(VideoSegmentedScanlineSegment) * buffer->scanlines[i].segmentCount);
         buffer->scanlines[i].segments = segp;
@@ -318,6 +318,7 @@ int CircleToSegments(VideoSegmentBuffer *buffer, int cx, int cy, int cr, float r
         printf("CircleToSegments: failed to begin update with result %d\n", result);
         return 1;
     }
+
 
     for(int row = 0; row < buffer->scanlineCount; row++) {
 
