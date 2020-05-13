@@ -28,9 +28,10 @@ void VideoBufferFreeMembers(VideoSegmentBuffer *buffer);
 
 int VideoBufferBeginUpdate(VideoSegmentBuffer *buffer);
 
-int VideoBufferGetCurrentRowForUpdate(VideoSegmentBuffer *buffer, VideoSegmentedScanlineSegment** curSegments, int *segmentCount);
+int VideoBufferGetCurrentRowForUpdate(VideoSegmentBuffer *buffer, VideoSegmentedScanlineSegment** curSegments, int *segmentCount, VideoSegmentedScanlineSegment** availableSegments, int *availableCount);
 
-// Updates current row, increments current row
-int VideoBufferUpdateRow(VideoSegmentBuffer *buffer, VideoSegmentedScanlineSegment* newSegments, int newSegmentCount);
+int VideoBufferFinishCurrentRowUpdate(VideoSegmentBuffer *buffer, int newSegmentCount);
+
+int CircleToSegments(VideoSegmentBuffer *buffer, int cx, int cy, int cr, float r, float g, float b);
 
 #endif /* _SEGMENT_UTILITY_H_ */

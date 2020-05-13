@@ -156,97 +156,7 @@ int TestMerge(VideoSegmentedScanlineSegment *newseg, int start, VideoSegmentedSc
 
 int image[IMAGE_HEIGHT][PIXEL_COUNT][3];
 
-static VideoSegmentedScanlineSegment tmpSegments[MAX_SEGMENTS];
-
-int ScanconvertSphere(VideoSegmentBuffer *buffer, int cx, int cy, int cr, float r, float g, float b)
-{
-    int result;
-    VideoSegmentedScanlineSegment newseg;
-
-    int miny = cy - cr + 1;
-    int maxy = cy + cr - 1;
-
-    miny = (miny >= 0) ? miny : 0;
-    maxy = (maxy < IMAGE_HEIGHT) ? maxy : 0;
-
-    result = VideoBufferBeginUpdate(buffer);
-    if(result != 0) {
-        printf("ScanconvertSphere: failed to begin update with result %d\n", result);
-        return 1;
-    }
-
-    for(int row = 0; row < IMAGE_HEIGHT; row++) {
-
-        VideoSegmentedScanlineSegment *currentRowSegments;
-        int currentRowSegmentCount;
-        int result = VideoBufferGetCurrentRowForUpdate(buffer, &currentRowSegments, &currentRowSegmentCount);
-        if(result != 0) {
-            printf("ScanconvertSphere: getting current row for update returned %d\n", result);
-            printf("error getting current row %d for update with error %d\n", row, result);
-            return 2;
-        }
-
-        if((row >= cy - cr) && (row <= cy + cr)) {
-
-            int y = row - cy;
-            int x = sqrtf(cr * cr - y * y);
-
-            newseg.r0 = r;
-            newseg.g0 = g;
-            newseg.b0 = b;
-            newseg.r1 = r;
-            newseg.g1 = g;
-            newseg.b1 = b;
-
-            int start = cx - x;
-            int end = cx + x;
-
-            if(start < 0) {
-                newseg.pixelCount += -start;
-                start = 0;
-            }
-            if(end >= PIXEL_COUNT) {
-                end = PIXEL_COUNT - 1;
-            }
-            newseg.pixelCount = end - start + 1;
-
-            int newSegmentCount;
-            result = MergeSegment(&newseg, start, currentRowSegments, PIXEL_COUNT, tmpSegments, MAX_SEGMENTS, &newSegmentCount);
-            if(result != 0) {
-                printf("ScanconvertSphere: error scanconverting sphere at row %d with error %d\n", row, result);
-                return 3;
-            }
-
-#ifndef ROCINANTE
-            if(validateEverything) {
-                result = ValidateSegments(tmpSegments, newSegmentCount, PIXEL_COUNT);
-                if(result != 0) {
-                    printf("ScanconvertSphere: result %d validating sphere row %d\n", result, row);
-                    return 4;
-                }
-            }
-#endif
-
-            result = VideoBufferUpdateRow(buffer, tmpSegments, newSegmentCount);
-            if(result != 0) {
-                printf("ScanconvertSphere: result %d updating buffer row %d\n", result, row);
-                return 5;
-            }
-
-        } else {
-
-            result = VideoBufferUpdateRow(buffer, currentRowSegments, currentRowSegmentCount);
-            if(result != 0) {
-                printf("ScanconvertSphere: result %d copying buffer row %d\n", result, row);
-                return 6;
-            }
-
-        }
-    }
-    return 0;
-}
-
-int SpheresTest(const char *filename)
+int CirclesTest(const char *filename)
 {
     int result;
 
@@ -269,20 +179,20 @@ int SpheresTest(const char *filename)
     }
 #endif /* ROCINANTE */
 
-    for(int sphere = 0; sphere < 20; sphere++) {
-        result = ScanconvertSphere(&buffer, 10 + drand48() * (PIXEL_COUNT - 20), 10 + drand48() * (IMAGE_HEIGHT - 20), 50 + drand48() * 50, drand48(), drand48(), drand48());
+    for(int circle = 0; circle < 20; circle++) {
+        result = CircleToSegments(&buffer, 10 + drand48() * (PIXEL_COUNT - 20), 10 + drand48() * (IMAGE_HEIGHT - 20), 50 + drand48() * 50, drand48(), drand48(), drand48());
         if(result != 0) {
-            printf("result %d drawing sphere %d\n", result, sphere);
+            printf("result %d drawing circle %d\n", result, circle);
             VideoBufferFreeMembers(&buffer);
-            return 3;   // Sphere scan conversion failed (probably out of segments)
+            return 3;   // Circle scan conversion failed (probably out of segments)
         }
         if(validateEverything) {
             for(int i = 0; i < IMAGE_HEIGHT; i++) {
                 result = ValidateSegments(buffer.scanlines[i].segments, buffer.scanlines[i].segmentCount, PIXEL_COUNT);
                 if(result != 0) {
-                    printf("result %d validating sphere %d row %d segments\n", result, sphere, i);
+                    printf("result %d validating circle %d row %d segments\n", result, circle, i);
                     VideoBufferFreeMembers(&buffer);
-                    return 4;   // Validation of scan converted sphere failed
+                    return 4;   // Validation of scan converted circle failed
                 }
             }
         }
@@ -293,9 +203,9 @@ int SpheresTest(const char *filename)
     for(int i = 0; i < IMAGE_HEIGHT; i++) {
         result = ValidateSegments(buffer.scanlines[i].segments, buffer.scanlines[i].segmentCount, PIXEL_COUNT);
         if(result != 0) {
-            printf("result %d validating drawn sphere row %d segments\n", result, i);
+            printf("result %d validating drawn circle row %d segments\n", result, i);
             VideoBufferFreeMembers(&buffer);
-            return 5;   // Validation of final buffer of spheres failed
+            return 5;   // Validation of final buffer of circles failed
         }
         totalSegments += buffer.scanlines[i].segmentCount;
         maxSegments = (buffer.scanlines[i].segmentCount > maxSegments) ? buffer.scanlines[i].segmentCount : maxSegments;
@@ -545,9 +455,9 @@ int main()
         }
     }
 
-    printf("spheres:\n");
+    printf("circles:\n");
     printf("    will allocate %zd to segment pool\n", sizeof(VideoSegmentedScanlineSegment) * MAX_SCREEN_SEGMENTS);
-    result = SpheresTest("output.ppm");
+    result = CirclesTest("output.ppm");
     if(result == 0) {
         printf("    test passed, output in output.ppm\n");
     } else {

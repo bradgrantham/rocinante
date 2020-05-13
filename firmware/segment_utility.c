@@ -247,7 +247,7 @@ int VideoBufferBeginUpdate(VideoSegmentBuffer *buffer)
     return 0;
 }
 
-int VideoBufferGetCurrentRowForUpdate(VideoSegmentBuffer *buffer, VideoSegmentedScanlineSegment** curSegments, int *segmentCount)
+int VideoBufferGetCurrentRowForUpdate(VideoSegmentBuffer *buffer, VideoSegmentedScanlineSegment** curSegments, int *segmentCount, VideoSegmentedScanlineSegment** availableSegments, int *availableCount)
 {
     if(buffer->rowBeingUpdated == -1) {
         return 1; // Not updating
@@ -256,11 +256,16 @@ int VideoBufferGetCurrentRowForUpdate(VideoSegmentBuffer *buffer, VideoSegmented
     *curSegments = buffer->scanlines[buffer->rowBeingUpdated].segments;
     *segmentCount = buffer->scanlines[buffer->rowBeingUpdated].segmentCount;
 
+    *availableSegments = buffer->currentSegmentDestination;
+    *availableCount = buffer->segmentCeiling - buffer->currentSegmentDestination;
+
     return 0;
 }
 
-// Updates current row, increments current row
-int VideoBufferUpdateRow(VideoSegmentBuffer *buffer, VideoSegmentedScanlineSegment* newSegments, int newSegmentCount)
+// Updates current row assuming segments written to availableSegments
+// returned by VideoBufferGetCurrentRowForUpdate, increments current
+// row.
+int VideoBufferFinishCurrentRowUpdate(VideoSegmentBuffer *buffer, int newSegmentCount)
 {
     int row = buffer->rowBeingUpdated;
 
@@ -275,12 +280,6 @@ int VideoBufferUpdateRow(VideoSegmentBuffer *buffer, VideoSegmentedScanlineSegme
     // Delete old scanline's segments
     buffer->segmentCeiling += buffer->scanlines[row].segmentCount;
 
-    if(buffer->segmentCeiling - buffer->currentSegmentDestination < newSegmentCount) {
-        return 3; // Not enough room for new scanline
-    }
-
-    // copy segments in, set scanline location
-    memcpy(buffer->currentSegmentDestination, newSegments, sizeof(VideoSegmentedScanlineSegment) * newSegmentCount);
     buffer->scanlines[row].segmentCount = newSegmentCount;
     buffer->scanlines[row].segments = buffer->currentSegmentDestination;
     buffer->currentSegmentDestination += newSegmentCount;
@@ -292,6 +291,98 @@ int VideoBufferUpdateRow(VideoSegmentBuffer *buffer, VideoSegmentedScanlineSegme
         buffer->rowBeingUpdated = -1;
     }
 
+    return 0;
+}
+
+int CircleToSegments(VideoSegmentBuffer *buffer, int cx, int cy, int cr, float r, float g, float b)
+{
+    int result;
+    VideoSegmentedScanlineSegment newseg;
+
+    int miny = cy - cr + 1;
+    int maxy = cy + cr - 1;
+
+    miny = (miny >= 0) ? miny : 0;
+    maxy = (maxy < IMAGE_HEIGHT) ? maxy : 0;
+
+    result = VideoBufferBeginUpdate(buffer);
+    if(result != 0) {
+        printf("CircleToSegments: failed to begin update with result %d\n", result);
+        return 1;
+    }
+
+    for(int row = 0; row < IMAGE_HEIGHT; row++) {
+
+        VideoSegmentedScanlineSegment *currentRowSegments;
+        int currentRowSegmentCount;
+        VideoSegmentedScanlineSegment *availableSegments;
+        int availableCount;
+        int result = VideoBufferGetCurrentRowForUpdate(buffer, &currentRowSegments, &currentRowSegmentCount, &availableSegments, &availableCount);
+
+        if(result != 0) {
+            printf("CircleToSegments: getting current row for update returned %d\n", result);
+            printf("error getting current row %d for update with error %d\n", row, result);
+            return 2;
+        }
+
+        if((row >= cy - cr) && (row <= cy + cr)) {
+
+            int y = row - cy;
+            int x = sqrtf(cr * cr - y * y);
+
+            newseg.r0 = r;
+            newseg.g0 = g;
+            newseg.b0 = b;
+            newseg.r1 = r;
+            newseg.g1 = g;
+            newseg.b1 = b;
+
+            int start = cx - x;
+            int end = cx + x;
+
+            if(start < 0) {
+                newseg.pixelCount += -start;
+                start = 0;
+            }
+            if(end >= PIXEL_COUNT) {
+                end = PIXEL_COUNT - 1;
+            }
+            newseg.pixelCount = end - start + 1;
+
+            int newSegmentCount;
+            result = MergeSegment(&newseg, start, currentRowSegments, PIXEL_COUNT, availableSegments, availableCount, &newSegmentCount);
+            if(result != 0) {
+                printf("CircleToSegments: error scanconverting circle at row %d with error %d\n", row, result);
+                return 3;
+            }
+
+#ifndef ROCINANTE
+            if(validateEverything) {
+                result = ValidateSegments(availableSegments, newSegmentCount, PIXEL_COUNT);
+                if(result != 0) {
+                    printf("CircleToSegments: result %d validating circle row %d\n", result, row);
+                    return 4;
+                }
+            }
+#endif
+
+            result = VideoBufferFinishCurrentRowUpdate(buffer, newSegmentCount);
+            if(result != 0) {
+                printf("CircleToSegments: result %d finishing buffer row %d\n", result, row);
+                return 5;
+            }
+
+        } else {
+
+            memcpy(availableSegments, currentRowSegments, sizeof(VideoSegmentedScanlineSegment) * currentRowSegmentCount);
+            result = VideoBufferFinishCurrentRowUpdate(buffer, currentRowSegmentCount);
+            if(result != 0) {
+                printf("CircleToSegments: result %d copying buffer row %d\n", result, row);
+                return 6;
+            }
+
+        }
+    }
     return 0;
 }
 
