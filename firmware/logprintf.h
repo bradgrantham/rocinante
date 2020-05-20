@@ -3,6 +3,10 @@
 
 #include <stdarg.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif /* __cplusplus */
+
 enum DebugLevels {
     DEBUG_SILENT = 0,
     DEBUG_ERRORS,
@@ -14,6 +18,10 @@ enum DebugLevels {
 };
 extern int gDebugLevel;
 
-void logprintf(int level, char *fmt, ...);
+void logprintf(int level, const char *fmt, ...);
+
+#ifdef __cplusplus
+};
+#endif /* __cplusplus */
 
 #endif /* __LOGPRINTF_H__ */

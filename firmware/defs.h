@@ -1,19 +1,9 @@
 #ifndef __MAIN_H__
 #define __MAIN_H__
 
-// 1 for v1 and v2, 3 for v3
-#define ALICE3_V1 1
-#define ALICE3_V3 3
-#define ALICE3_VERSION  ALICE3_V3
-
-// if 1, then ARM reads and writes only A0-A15 and reads MREQ
-// if 0, then ARM uses A0-A17 and bus mastering to access external RAM,
-//   only writes MREQ
-#define ALICE3_V3_ARM_IS_RAM 1
-
-// if 1, print some information on missed bus RD and WR, and toggle a pin
-// at interesting times in the ISRs
-#define DEBUG_BUS_ISR 0 
+#ifdef __cplusplus
+extern "C" {
+#endif /* __cplusplus */
 
 #define XSTR(x) STR(x)
 #define STR(x) # x
@@ -24,5 +14,9 @@
 extern void panic(void);
 
 #define SECTION_CCMRAM __attribute__((section (".ccmram")))
+
+#ifdef __cplusplus
+};
+#endif /* __cplusplus */
 
 #endif /* __MAIN_H__ */

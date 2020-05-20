@@ -11,13 +11,9 @@
 
 volatile int gKeyboardRawData = 0;
 
-#define KBD_QUEUE_CAPACITY 16
+typedef struct queue kbd_queue_struct;
 
-struct kbd_queue_struct {
-    struct queue q;
-    unsigned char queue[KBD_QUEUE_CAPACITY];
-};
-volatile struct kbd_queue_struct kbd_queue;
+volatile kbd_queue_struct kbd_queue;
 
 #define KEYBOARD_CLOCK_PIN_MASK GPIO_PIN_11
 #define KEYBOARD_CLOCK_PORT GPIOB
@@ -72,7 +68,7 @@ void KBD_set_receive()
 
 void KBD_init()
 {
-    queue_init(&kbd_queue.q, KBD_QUEUE_CAPACITY);
+    queue_init(&kbd_queue, QUEUE_CAPACITY);
     KBD_set_receive();
 }
 
@@ -216,10 +212,10 @@ void EXTI15_10_IRQHandler(void)
 
                 if(byte == PS2_KBD_BAT) {
                     KBD_send_byte(HOST_TO_KBD_command_success);
-                } else if(queue_isfull(&kbd_queue.q)) {
+                } else if(queue_isfull(&kbd_queue)) {
                     gKeyboardOverflowed = 1;
                 } else {
-                    queue_enq(&kbd_queue.q, byte);
+                    queue_enq(&kbd_queue, byte);
                 }
             }
         }
@@ -232,9 +228,9 @@ int KBD_process_queue(int dump_data)
 {
     int key = -1;
 
-    int isEmpty = queue_isempty(&kbd_queue.q);
+    int isEmpty = queue_isempty(&kbd_queue);
     if(!isEmpty) {
-        unsigned char kb = queue_deq(&kbd_queue.q);
+        unsigned char kb = queue_deq(&kbd_queue);
         if(dump_data) {
             logprintf(DEBUG_DATA, "keyboard scan code: %02X\n", kb);
         }

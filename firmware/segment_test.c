@@ -1,4 +1,5 @@
 #include <string.h>
+#include <assert.h>
 #include <math.h>
 #include <stdint.h>
 #include <math.h>
@@ -54,12 +55,12 @@ int PaintSegment(VideoSegmentedScanlineSegment *seg, int start, float (*pixelRow
         return 1; // too long
     }
 
-    float dr = (seg->r1 - seg->r0) / seg->pixelCount;
-    float dg = (seg->g1 - seg->g0) / seg->pixelCount;
-    float db = (seg->b1 - seg->b0) / seg->pixelCount;
-    float r = seg->r0;
-    float g = seg->g0;
-    float b = seg->b0;
+    float dr = (seg->g.r1 - seg->g.r0) / seg->pixelCount;
+    float dg = (seg->g.g1 - seg->g.g0) / seg->pixelCount;
+    float db = (seg->g.b1 - seg->g.b0) / seg->pixelCount;
+    float r = seg->g.r0;
+    float g = seg->g.g0;
+    float b = seg->g.b0;
 
     for(int i = start; i < start + seg->pixelCount; i++) {
         pixelRow[i][0] = r;
@@ -181,7 +182,27 @@ int CirclesTest(const char *filename)
 #endif /* ROCINANTE */
 
     for(int circle = 0; circle < 15; circle++) {
-        result = CircleToSegments(&buffer, 10 + drand48() * (PIXEL_COUNT - 20), 10 + drand48() * (IMAGE_HEIGHT - 20), 50 + drand48() * 50, drand48(), drand48(), drand48());
+
+        float cx = 10 + drand48() * (PIXEL_COUNT - 20);
+        float cy = 10 + drand48() * (IMAGE_HEIGHT - 20);
+        float cr = 50 + drand48() * 50;
+
+        float degrees = rand() % 360;
+        float x0 = - cosf(degrees / 180.0f * M_PI) * cr;
+        float y0 = - sinf(degrees / 180.0f * M_PI) * cr;
+        float x1 = + cosf(degrees / 180.0f * M_PI) * cr;
+        float y1 = + sinf(degrees / 180.0f * M_PI) * cr;
+        int which = rand() % 3;
+        GradientDescriptor gradient;
+        if(which == 0) {
+            GradientSet(&gradient, x0, y0, 1, 0, 0, x1, y1, 0, 1, 0);
+        } else if(which == 1) {
+            GradientSet(&gradient, x0, y0, 0, 1, 0, x1, y1, 0, 0, 1);
+        } else {
+            GradientSet(&gradient, x0, y0, 0, 0, 1, x1, y1, 1, 0, 0);
+        }
+
+        result = CircleToSegmentsGradient(&buffer, cx, cy, cr, &gradient);
         if(result != 0) {
             printf("result %d drawing circle %d\n", result, circle);
             VideoBufferFreeMembers(&buffer);
@@ -278,29 +299,26 @@ int main()
 
 
     if(0){
-        VideoSegmentedScanlineSegment segs1[] = {
-            {PIXEL_COUNT, 0, 0, 0, 1, 1, 1},
-        };
+        VideoSegmentedScanlineSegment segs1[1];
+        SegmentSetGradient(&segs1[0], PIXEL_COUNT, 0, 0, 0, 1, 1, 1);
         printf("test dumping one segment:\n");
         DumpSegments(segs1, PIXEL_COUNT, 4);
     }
 
     if(0){
-        VideoSegmentedScanlineSegment segs1[] = {
-            {PIXEL_COUNT - 10, 0, 0, 0, 1, 1, 1},
-            {10, 1, 1, 1, 0, 0, 0},
-        };
+        VideoSegmentedScanlineSegment segs1[2];
+        SegmentSetGradient(&segs1[0], PIXEL_COUNT - 10, 0, 0, 0, 1, 1, 1);
+        SegmentSetGradient(&segs1[1], 10, 1, 1, 1, 0, 0, 0);
         printf("test dumping more than one segment:\n");
         DumpSegments(segs1, PIXEL_COUNT, 4);
     }
     
     {
-        VideoSegmentedScanlineSegment segs1[] = {
-            {PIXEL_COUNT, 0, 0, 0, 1, 1, 1},
-        };
+        VideoSegmentedScanlineSegment segs1[1];
+        SegmentSetGradient(&segs1[0], PIXEL_COUNT, 0, 0, 0, 1, 1, 1);
         VideoSegmentedScanlineSegment segs2[MAX_SEGMENTS];
         printf("add middle segment:\n");
-        SetSegment(&newseg, 100, 1, 1, 1, 0, 0, 0);
+        SegmentSetGradient(&newseg, 100, 1, 1, 1, 0, 0, 0);
         result = TestMerge(&newseg, 100, segs1, sizeof(segs1) / sizeof(segs1[0]), PIXEL_COUNT, segs2, MAX_SEGMENTS, 4);
         if(result == 0) {
             DumpSegments(segs2, PIXEL_COUNT, 4);
@@ -311,12 +329,11 @@ int main()
     }
     
     if(1){
-        VideoSegmentedScanlineSegment segs1[] = {
-            {PIXEL_COUNT, 0, 0, 0, 1, 1, 1},
-        };
+        VideoSegmentedScanlineSegment segs1[1];
+        SegmentSetGradient(&segs1[0], PIXEL_COUNT, 0, 0, 0, 1, 1, 1);
         VideoSegmentedScanlineSegment segs2[MAX_SEGMENTS];
         printf("add segment at start:\n");
-        SetSegment(&newseg, 100, 1, 1, 1, 0, 0, 0);
+        SegmentSetGradient(&newseg, 100, 1, 1, 1, 0, 0, 0);
         result = TestMerge(&newseg, 0, segs1, sizeof(segs1) / sizeof(segs1[0]), PIXEL_COUNT, segs2, MAX_SEGMENTS, 4);
         if(result == 0) {
             DumpSegments(segs2, PIXEL_COUNT, 4);
@@ -326,12 +343,11 @@ int main()
         }
     }
     if(1){
-        VideoSegmentedScanlineSegment segs1[] = {
-            {PIXEL_COUNT, 0, 0, 0, 1, 1, 1},
-        };
+        VideoSegmentedScanlineSegment segs1[1];
+        SegmentSetGradient(&segs1[0], PIXEL_COUNT, 0, 0, 0, 1, 1, 1);
         VideoSegmentedScanlineSegment segs2[MAX_SEGMENTS];
         printf("add segment at end:\n");
-        SetSegment(&newseg, 100, 1, 1, 1, 0, 0, 0);
+        SegmentSetGradient(&newseg, 100, 1, 1, 1, 0, 0, 0);
         result = TestMerge(&newseg, PIXEL_COUNT - 100, segs1, sizeof(segs1) / sizeof(segs1[0]), PIXEL_COUNT, segs2, MAX_SEGMENTS, 4);
         if(result == 0) {
             DumpSegments(segs2, PIXEL_COUNT, 4);
@@ -341,13 +357,12 @@ int main()
         }
     }
     if(1){
-        VideoSegmentedScanlineSegment segs1[] = {
-            {PIXEL_COUNT / 2, 0, 0, 0, 1, 0, 0},
-            {PIXEL_COUNT / 2, 0, 0, 0, 0, 1, 0},
-        };
+        VideoSegmentedScanlineSegment segs1[2];
+        SegmentSetGradient(&segs1[0], PIXEL_COUNT / 2, 0, 0, 0, 1, 0, 0);
+        SegmentSetGradient(&segs1[1], PIXEL_COUNT / 2, 0, 0, 0, 0, 1, 0);
         VideoSegmentedScanlineSegment segs2[MAX_SEGMENTS];
         printf("overlapping two segments:\n");
-        SetSegment(&newseg, 200, 1, 1, 1, 0, 0, 0);
+        SegmentSetGradient(&newseg, 200, 1, 1, 1, 0, 0, 0);
         result = TestMerge(&newseg, PIXEL_COUNT / 2 - 100, segs1, sizeof(segs1) / sizeof(segs1[0]), PIXEL_COUNT, segs2, MAX_SEGMENTS, 4);
         if(result == 0) {
             DumpSegments(segs2, PIXEL_COUNT, 4);
@@ -357,14 +372,13 @@ int main()
         }
     }
     if(1){
-        VideoSegmentedScanlineSegment segs1[] = {
-            {PIXEL_COUNT / 2 - 50, 0, 0, 0, 1, 0, 0},
-            {100, 0, 0, 0, 0, 0, 1},
-            {PIXEL_COUNT / 2 - 50, 0, 0, 0, 0, 1, 0},
-        };
+        VideoSegmentedScanlineSegment segs1[3];
+        SegmentSetGradient(&segs1[0], PIXEL_COUNT / 2 - 50, 0, 0, 0, 1, 0, 0);
+        SegmentSetGradient(&segs1[1], 100, 0, 0, 0, 0, 0, 1);
+        SegmentSetGradient(&segs1[2], PIXEL_COUNT / 2 - 50, 0, 0, 0, 0, 1, 0);
         VideoSegmentedScanlineSegment segs2[MAX_SEGMENTS];
         printf("completely overlap a segment\n");
-        SetSegment(&newseg, 200, 1, 1, 1, 0, 0, 0);
+        SegmentSetGradient(&newseg, 200, 1, 1, 1, 0, 0, 0);
         result = TestMerge(&newseg, PIXEL_COUNT / 2 - 100, segs1, sizeof(segs1) / sizeof(segs1[0]), PIXEL_COUNT, segs2, MAX_SEGMENTS, 4);
         if(result == 0) {
             DumpSegments(segs2, PIXEL_COUNT, 4);
@@ -374,14 +388,13 @@ int main()
         }
     }
     if(1){
-        VideoSegmentedScanlineSegment segs1[] = {
-            {PIXEL_COUNT / 2 - 100, 0, 0, 0, 1, 0, 0},
-            {200, 0, 0, 0, 0, 0, 1},
-            {PIXEL_COUNT / 2 - 100, 0, 0, 0, 0, 1, 0},
-        };
+        VideoSegmentedScanlineSegment segs1[3];
+        SegmentSetGradient(&segs1[0], PIXEL_COUNT / 2 - 100, 0, 0, 0, 1, 0, 0);
+        SegmentSetGradient(&segs1[1], 200, 0, 0, 0, 0, 0, 1);
+        SegmentSetGradient(&segs1[2], PIXEL_COUNT / 2 - 100, 0, 0, 0, 0, 1, 0);
         VideoSegmentedScanlineSegment segs2[MAX_SEGMENTS];
         printf("completely replace a segment\n");
-        SetSegment(&newseg, 200, 1, 1, 1, 0, 0, 0);
+        SegmentSetGradient(&newseg, 200, 1, 1, 1, 0, 0, 0);
         result = TestMerge(&newseg, PIXEL_COUNT / 2 - 100, segs1, sizeof(segs1) / sizeof(segs1[0]), PIXEL_COUNT, segs2, MAX_SEGMENTS, 4);
         if(result == 0) {
             DumpSegments(segs2, PIXEL_COUNT, 4);
@@ -391,15 +404,14 @@ int main()
         }
     }
     if(1){
-        VideoSegmentedScanlineSegment segs1[] = {
-            {PIXEL_COUNT / 2 - 100, 0, 0, 0, 1, 0, 0},
-            {100, 0, 0, 0, 0, 0, 1},
-            {100, 0, 0, 0, 0, 0, 1},
-            {PIXEL_COUNT / 2 - 100, 0, 0, 0, 0, 1, 0},
-        };
+        VideoSegmentedScanlineSegment segs1[4];
+        SegmentSetGradient(&segs1[0], PIXEL_COUNT / 2 - 100, 0, 0, 0, 1, 0, 0);
+        SegmentSetGradient(&segs1[1], 100, 0, 0, 0, 0, 0, 1);
+        SegmentSetGradient(&segs1[2], 100, 0, 0, 0, 0, 0, 1);
+        SegmentSetGradient(&segs1[3], PIXEL_COUNT / 2 - 100, 0, 0, 0, 0, 1, 0);
         VideoSegmentedScanlineSegment segs2[MAX_SEGMENTS];
         printf("completely replace two segments\n");
-        SetSegment(&newseg, 100, 1, 1, 1, 0, 0, 0);
+        SegmentSetGradient(&newseg, 100, 1, 1, 1, 0, 0, 0);
         result = TestMerge(&newseg, PIXEL_COUNT / 2 - 100, segs1, sizeof(segs1) / sizeof(segs1[0]), PIXEL_COUNT, segs2, MAX_SEGMENTS, 4);
         if(result == 0) {
             DumpSegments(segs2, PIXEL_COUNT, 4);
@@ -409,13 +421,12 @@ int main()
         }
     }
     if(1){
-        VideoSegmentedScanlineSegment segs1[] = {
-            {PIXEL_COUNT / 2, 0, 0, 0, 1, 0, 0},
-            {PIXEL_COUNT / 2, 0, 0, 0, 0, 1, 0},
-        };
+        VideoSegmentedScanlineSegment segs1[2];
+        SegmentSetGradient(&segs1[0], PIXEL_COUNT / 2, 0, 0, 0, 1, 0, 0);
+        SegmentSetGradient(&segs1[1], PIXEL_COUNT / 2, 0, 0, 0, 0, 1, 0);
         VideoSegmentedScanlineSegment segs2[MAX_SEGMENTS];
         printf("completely replace first segment:\n");
-        SetSegment(&newseg, PIXEL_COUNT / 2, 1, 1, 1, 0, 0, 0);
+        SegmentSetGradient(&newseg, PIXEL_COUNT / 2, 1, 1, 1, 0, 0, 0);
         result = TestMerge(&newseg, 0, segs1, sizeof(segs1) / sizeof(segs1[0]), PIXEL_COUNT, segs2, MAX_SEGMENTS, 4);
         if(result == 0) {
             DumpSegments(segs2, PIXEL_COUNT, 4);
@@ -426,13 +437,12 @@ int main()
     }
 
     if(1){
-        VideoSegmentedScanlineSegment segs1[] = {
-            {PIXEL_COUNT / 2, 0, 0, 0, 1, 0, 0},
-            {PIXEL_COUNT / 2, 0, 0, 0, 0, 1, 0},
-        };
+        VideoSegmentedScanlineSegment segs1[2];
+        SegmentSetGradient(&segs1[0], PIXEL_COUNT / 2, 0, 0, 0, 1, 0, 0);
+        SegmentSetGradient(&segs1[1], PIXEL_COUNT / 2, 0, 0, 0, 0, 1, 0);
         VideoSegmentedScanlineSegment segs2[MAX_SEGMENTS];
         printf("completely replace last segment:\n");
-        SetSegment(&newseg, PIXEL_COUNT / 2, 1, 1, 1, 0, 0, 0);
+        SegmentSetGradient(&newseg, PIXEL_COUNT / 2, 1, 1, 1, 0, 0, 0);
         result = TestMerge(&newseg, PIXEL_COUNT/2, segs1, sizeof(segs1) / sizeof(segs1[0]), PIXEL_COUNT, segs2, MAX_SEGMENTS, 4);
         if(result == 0) {
             DumpSegments(segs2, PIXEL_COUNT, 4);
@@ -443,14 +453,13 @@ int main()
     }
 
     if(1){
-        VideoSegmentedScanlineSegment segs1[] = {
-            {PIXEL_COUNT / 2 - 100, 0, 0, 0, 1, 0, 0},
-            {200, 0, 0, 0, 0, 0, 1},
-            {PIXEL_COUNT / 2 - 100, 0, 0, 0, 0, 1, 0},
-        };
+        VideoSegmentedScanlineSegment segs1[3];
+        SegmentSetGradient(&segs1[0], PIXEL_COUNT / 2 - 100, 0, 0, 0, 1, 0, 0);
+        SegmentSetGradient(&segs1[1], 200, 0, 0, 0, 0, 0, 1);
+        SegmentSetGradient(&segs1[2], PIXEL_COUNT / 2 - 100, 0, 0, 0, 0, 1, 0);
         VideoSegmentedScanlineSegment segs2[MAX_SEGMENTS];
         printf("completely replace all segments:\n");
-        SetSegment(&newseg, PIXEL_COUNT, 1, 1, 1, 0, 0, 0);
+        SegmentSetGradient(&newseg, PIXEL_COUNT, 1, 1, 1, 0, 0, 0);
         result = TestMerge(&newseg, 0, segs1, sizeof(segs1) / sizeof(segs1[0]), PIXEL_COUNT, segs2, MAX_SEGMENTS, 4);
         if(result == 0) {
             DumpSegments(segs2, PIXEL_COUNT, 4);
@@ -469,4 +478,6 @@ int main()
         printf("    test failed with %d\n", result);
         exit(EXIT_FAILURE);
     }
+
+    printf("    passed:\n");
 }

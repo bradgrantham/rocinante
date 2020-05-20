@@ -28,6 +28,8 @@ typedef struct Command {
 
 int RegisterApp(const char* name, int minWords, ProcessCommandFunc go, const char *form, const char *help);
 
+int InputGetChar(void);
+
 #ifdef __cplusplus
 };
 #endif /* __cplusplus */

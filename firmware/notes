@@ -1,7 +1,30 @@
-DB-9
+Move Wolf to palette-RGB-style textures (reduce bandwidth to make up lookup & process cost?)
+Close on segmented framebuffer
+    trapezoid to segments - gradient, textured, solid
+        assume already in the middle of Update
+    triangle to trapezoids - gradient, textured, solid
+    ClipSegment.*
+    SetSegmentTextured
+    SetSegmentSolid
+    MergeSegment
+    PaintSegments
+    test triangle with each segment type
+    test multiple triangles with different segment types
+    handle gradient, textured, solid in SetScanlines
+    set aspect ratio in Segmented mode and honor in segtest
+honor aspect ratio in "show"
+Some things to improve in "show"
+    [--gray] - use a grayscale palette
+    [N] - use mode N
+Move to C++
+Move to part with less ROM and more RAM, run by loading program into RAM
+Need some confidence I can run at 250MHz or higher, then choose a crystal and PLL configuration to nail 14.31818MHz at ~250MHz that can also nail it somewhere more in the acceptable clock range 200-216MHz
+    But 250MHz would give 20% more CPU availability to video modes or processing
+Make circle renderer find pixel center coordinates to see if the weird jumpiness is being caused by integer snapping - can't expect decent lit or textured rendering if the coordinates are going to jump around for some reason
+DB-9 Coleco game controller
 PS/2 keyboard
 imgBuffer should be called VRAM or something
-paletteToWave and rowPalette should be in the imgBuffer space
+paletteToWave and rowPalette should be carved from imgBuffer so imgBuffer for non-palette modes has more space
 Some things to improve living
     tab should autocomplete at CLI
         tab in first completes commands
@@ -23,7 +46,8 @@ Some things to improve living
 Potential improvements
     use SDMMC peripheral
     There really should be a non-interlaced video mode
-Give a shot at decompressing DCT/JPEG in real time
+DCT video mode - make it so JPG blocks can be the source of the video scanout
+MP3 player - target something simple and straightforward, like 128, 160, and 256 constant bitrate joint-stereo.
 hosted
     GLEW
     move to InputGetChar, InputWaitChar, OutputPutChar
@@ -398,3 +422,10 @@ int GetTIMxFrequency(Timer timer, int TIMPRE, int PPRE1, int PPRE2, int HCLKFreq
         }
     }
 }
+
+May 14: Strange bands of color May 14 is caused by DAC; verified
+by running segtest monochrome with gradient 0 to 1
+
+May 14: Weird aliasing that looks like I'm rendering at 1/4 res may
+be caused by TV; verified by running segtest monochrome with gradient
+0 to 1; grayscale images do not show bad aliasing.

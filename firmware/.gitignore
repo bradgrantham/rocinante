@@ -1,3 +1,9 @@
+cubemx.746/
+cubemx.tim-dma/
+images/
+matrix_test
+segment_test
+*.ppm
 *.bin
 *.dfu
 *.hex

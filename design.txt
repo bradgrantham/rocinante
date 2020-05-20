@@ -1,0 +1,23 @@
+OSC_IN clock
+OSC_OUT clock
+NRST reset button
+PC0-PC7 DAC
+PA8     OTG_FS_SOF
+PA10    OTG_FS_ID
+PA11    OTG_FS_DM
+PA12    OTG_FS_DP
+PB13    SPI2_SCK
+PB14    SPI2_MISO
+PB15    SPI2_MOSI
+PA8     to SP CS (no alt func)
+BOOT0 to boot button
+PB6     USART1_TX
+PB7     USART1_RX
+
+proposed
+PA4     DAC_OUT1
+PA5     DAC_OUT2 (alternate or left channel)
+
+Resistor ladder from notebook
+
+Audio DAC audio filter formed by 1K in series then 10 nF to ground at signal out

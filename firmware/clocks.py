@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-WEIRD_TIM1_MULT = 1
+WEIRD_TIM1_MULT = 2
 
 clocksByConfig = []
 
@@ -21,9 +21,9 @@ else: # "STM32F7"
     APB1MaxFreq = 53000000
     APB2MaxFreq = 106000000
     minAcceptableFreq = 180000000
-    maxAcceptableFreq = 300000000
+    maxAcceptableFreq = 225000000
 
-StayInSpec = False
+StayInSpec = True
 
 for PLLM in range(2, 64):
     # VCO input frequency = PLL input clock frequency / PLLM with 2 <= PLLM <= 63

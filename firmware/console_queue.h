@@ -9,22 +9,19 @@
 
 extern unsigned char gConsoleOverflowed;
 
-#define CON_QUEUE_CAPACITY 64
-struct con_queue_struct {
-    struct queue q;
-    unsigned char queue[CON_QUEUE_CAPACITY];
-};
-extern volatile struct con_queue_struct con_queue;
+typedef struct queue con_queue_struct;
+
+extern volatile con_queue_struct con_queue;
 
 inline static void console_enqueue_key_unsafe(unsigned char d)
 {
     unsigned char full;
-    full = queue_isfull(&con_queue.q);
+    full = queue_isfull(&con_queue);
     if(full) {
         gConsoleOverflowed = 1;
     } else {
-        // queue_enq(&con_queue.q, d);
-        queue_enq(&con_queue.q, d);
+        // queue_enq(&con_queue, d);
+        queue_enq(&con_queue, d);
     }
 }
 

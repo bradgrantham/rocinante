@@ -49,19 +49,80 @@ int FindClosestColor(unsigned char palette[][3], int paletteSize, int r, int g, 
 }
 
 enum {
-    MAX_ROW_SIZE = 2048,
+    MAX_ROW_SIZE = 4096,
 };
+
+static void SetPixelDirect(int x, int y, int c, enum PixelFormat pixelFormat, unsigned char *base, size_t rowSize)
+{
+    switch(pixelFormat) {
+        case BITMAP: {
+            unsigned char value = c << (x % 8);
+            unsigned char mask = ~(1 << (x % 8));
+            unsigned char *byte = base + y * rowSize + x / 8;
+            *byte = (*byte & mask) | value;
+            break;
+        }
+        case GRAY_2BIT:
+        {
+            int whichByte = x / 4;
+            int whichTwoBits = x % 4;
+            unsigned char value = c << (whichTwoBits * 2);
+            unsigned char mask = ~(0x3 << (whichTwoBits * 2));
+            unsigned char *byte = base + y * rowSize + whichByte;
+            *byte = (*byte & mask) | value;
+            break;
+        }
+        case GRAY_4BIT:
+        case PALETTE_4BIT:
+        {
+            int whichByte = x / 2;
+            int whichNybble = x % 2;
+            unsigned char value = c << (whichNybble * 4);
+            unsigned char mask = ~(0xF << (whichNybble * 4));
+            unsigned char *byte = base + y * rowSize + whichByte;
+            *byte = (*byte & mask) | value;
+            break;
+        }
+        case GRAY_8BIT:
+        case PALETTE_8BIT:
+        {
+            base[y * rowSize + x] = c;
+            break;
+        }
+    }
+}
 
 static int AppShowImage(int argc, char **argv)
 {
-    const char *filename = argv[1];
+    const char *filename;
 
-    enum VideoModeType type = VideoModeGetType(VideoGetCurrentMode());
-    
-    if(type != VIDEO_MODE_PIXMAP) {
-        printf("current mode is not a pixmap; use \"modes\"\n");
-        printf("and \"mode\" to choose and set a pixmap mode\n");
-        return COMMAND_FAILED;
+    if(argc > 2) {
+        // form "show N filename"
+
+        int mode = atoi(argv[1]);
+        if((mode < 0) || (mode >= VideoGetModeCount())) {
+            printf("mode %d is out of range; only %d modes (list modes with \"modes\")\n", mode, VideoGetModeCount());
+            return COMMAND_FAILED;
+        }
+        if(VideoModeGetType(mode) != VIDEO_MODE_PIXMAP) {
+            printf("mode %d is not a pixmap mode (list modes with \"modes\")\n", mode);
+            return COMMAND_FAILED;
+        }
+        VideoSetMode(mode);
+
+        filename = argv[2];
+    } else {
+        // form "show filename"
+
+        enum VideoModeType type = VideoModeGetType(VideoGetCurrentMode());
+        
+        if(type != VIDEO_MODE_PIXMAP) {
+            printf("current mode is not a pixmap; use \"modes\"\n");
+            printf("and \"mode\" to choose and set a pixmap mode\n");
+            return COMMAND_FAILED;
+        }
+
+        filename = argv[1];
     }
 
     VideoPixmapInfo info;
@@ -231,6 +292,10 @@ static int AppShowImage(int argc, char **argv)
 
         if(y != prevY) {
 
+            if(y >= info.height) {
+                printf("hm, y was >= height, skipped\n");
+            }
+
             VideoModeSetRowPalette(y, whichPalette);
 
             short (*errorThisRowFixed8)[3] = rowError[currentErrorRow] + 1; // So we can access -1 without bounds check
@@ -251,7 +316,7 @@ static int AppShowImage(int argc, char **argv)
                 // Find the closest color in our palette
                 int c = FindClosestColor(palette, paletteSize, correctedRGB[0], correctedRGB[1], correctedRGB[2]);
 
-                SetPixel(x, y, c);
+                SetPixelDirect(x, y, c, info.pixelFormat, params.base, params.rowSize);
 
                 // Calculate our error between what we wanted and what we got
                 // and distribute it a la Floyd-Steinberg

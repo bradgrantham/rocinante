@@ -17,6 +17,39 @@ typedef struct VideoSegmentedInfo
     int height;
 } VideoSegmentedInfo;
 
+enum VideoSegmentType {
+    VIDEO_SEGMENT_TYPE_SOLID = 1U,
+    VIDEO_SEGMENT_TYPE_GRADIENT = 2U,
+    VIDEO_SEGMENT_TYPE_TEXTURED = 3U,
+    VIDEO_SEGMENT_TYPE_MAX = 31U, // Must be 2^n - 1, and match SHIFT in private struct...
+};
+enum VideoPrivateSegmentType {
+    VIDEO_SEGMENT_TYPE_SHIFT = 11U,     /* 31 */
+    VIDEO_SEGMENT_TYPE_MASK = (VIDEO_SEGMENT_TYPE_MAX << VIDEO_SEGMENT_TYPE_SHIFT),
+};
+
+typedef struct VideoTextureDefinition {
+    unsigned char *base;    // 256-element
+    int width;
+    int height;
+    int videoPaletteId;     // Create this from RGB palette
+} VideoTextureDefinition;
+
+typedef struct VideoSegmentedSolidData {
+    float r, g, b;
+} VideoSegmentedSolidData;
+
+typedef struct VideoSegmentedGradientData {
+    float r0, g0, b0;
+    float r1, g1, b1;
+} VideoSegmentedGradientData;
+
+typedef struct VideoSegmentedTextureData {
+    VideoTextureDefinition *texture;
+    float s0, t0;
+    float s1, t1;
+} VideoSegmentedTextureData;
+
 typedef struct VideoSegmentedScanlineSegment
 {
     /* 
@@ -27,9 +60,13 @@ typedef struct VideoSegmentedScanlineSegment
        might include partial coverage and possibly multiple fractional
        coverage per pixel (e.g. to enable pure analytic antialiasing)
     */
-    uint16_t pixelCount;
-    float r0, g0, b0;
-    float r1, g1, b1;
+    uint16_t pixelCount; // 11 bits for up to 2048 pixels wide
+    enum VideoSegmentType type;
+    union {
+        VideoSegmentedSolidData c;
+        VideoSegmentedGradientData g;
+        VideoSegmentedTextureData t;
+    };
 } VideoSegmentedScanlineSegment;
 
 typedef struct VideoSegmentedScanline {
@@ -43,7 +80,7 @@ typedef int (*SegmentedSetScanlinesFunc)(int scanlineCount, VideoSegmentedScanli
 
 typedef struct VideoSegmentedParameters
 {
-    SegmentedSetScanlinesFunc setScanlines;        // Base of height buffer
+    SegmentedSetScanlinesFunc setScanlines;
 } VideoSegmentedParameters;
 
 //--------------------------------------------------------------------------
@@ -150,6 +187,10 @@ void VideoModeWaitFrame();      // Wait for VBlank/VSync, whatever
 // int setTextportCharacter(int x, int y, int c); /* might offset */
 // int setTextportCursor(int x, int y);
 // int setTextportCursorType(enum { SOLID, FLASH, UNDERLINE } );
+
+// All palettes reset on mode change
+int VideoAllocatePaletteFunc();
+int VideoConvertPaletteFunc(float RGBPalette[256][3], int palette);
 
 #ifdef __cplusplus
 };

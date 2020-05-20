@@ -3,11 +3,15 @@
 
 #include "videomode.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif /* __cplusplus */
+
 void DumpSegment(VideoSegmentedScanlineSegment *segment, int currentStart, int indent);
 
 void DumpSegments(VideoSegmentedScanlineSegment *segment, int pixelCount, int indent);
 
-void SetSegment(VideoSegmentedScanlineSegment *seg, int pixelCount, float r0, float g0, float b0, float r1, float g1, float b1);
+void SegmentSetGradient(VideoSegmentedScanlineSegment *seg, int pixelCount, float r0, float g0, float b0, float r1, float g1, float b2);
 
 int MergeSegment(VideoSegmentedScanlineSegment *newSegment, int start, VideoSegmentedScanlineSegment *oldSegments, int pixelCount, VideoSegmentedScanlineSegment *resultSegments, int maxNewSegmentCount, int *newCount);
 
@@ -46,6 +50,23 @@ int VideoBufferGetCurrentRowForUpdate(VideoSegmentBuffer *buffer, VideoSegmented
 // availableSegments pointer and provided count.
 int VideoBufferFinishCurrentRowUpdate(VideoSegmentBuffer *buffer, int newSegmentCount);
 
-int CircleToSegments(VideoSegmentBuffer *buffer, int cx, int cy, int cr, float r, float g, float b);
+int CircleToSegmentsSolid(VideoSegmentBuffer *buffer, int cx, int cy, int cr, float r, float g, float b);
+
+typedef struct GradientDescriptor
+{
+    float r0, g0, b0;
+    float dr, dg, db;
+    float m[3][3];
+} GradientDescriptor;
+
+void GradientSet(GradientDescriptor *grad, float x0, float y0, float r0, float g0, float b0, float x1, float y1, float r1, float g1, float b1);
+
+int CircleToSegmentsGradient(VideoSegmentBuffer *buffer, int cx, int cy, int cr, GradientDescriptor *grad);
+
+int IntersectSegmentAtY(float x0, float y0, float x1, float y1, float y, float *x);
+
+#ifdef __cplusplus
+};
+#endif /* __cplusplus */
 
 #endif /* _SEGMENT_UTILITY_H_ */

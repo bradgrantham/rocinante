@@ -1,5 +1,7 @@
 FIRMWARE_VERSION    := $(shell date)
 
+CXXFLAGS        =       --std=c++17
+
 OPT             =       -O2 -g -funroll-loops -ffast-math
 
 # TOOLROOT        ?=      $(HOME)/trees/gcc-arm-none-eabi-5_3-2016q1
@@ -29,7 +31,6 @@ COBJECTS = \
         STM32Cube4/stm32f7xx_hal_tim.o \
         STM32Cube4/stm32f7xx_hal_tim_ex.o \
         STM32Cube4/stm32f7xx_hal.o \
-        main.o \
         segment_utility.o \
         leds.o \
         monitor_queue.o \
@@ -68,6 +69,7 @@ MICRORAY_LIB            = # -lmray
 
 CXXOBJECTS = \
         $(MICRORAY_APP_OBJECT) \
+        main.o \
         apps/basic.o \
         $(NULL)
 

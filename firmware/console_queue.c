@@ -2,4 +2,4 @@
 
 unsigned char gConsoleOverflowed = 0;
 
-volatile struct con_queue_struct con_queue;
+volatile con_queue_struct con_queue;

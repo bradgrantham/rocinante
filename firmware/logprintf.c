@@ -3,7 +3,7 @@
 
 int gDebugLevel = DEBUG_WARNINGS;
 
-void logprintf(int level, char *fmt, ...)
+void logprintf(int level, const char *fmt, ...)
 {
     va_list args;
 
