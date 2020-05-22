@@ -4,8 +4,7 @@
 
 **  File        : LinkerScript.ld
 **
-**  Abstract    : Linker script for STM32F746ZG Device with
-**                1024KByte FLASH, 128KByte RAM
+**  Abstract    : Linker script for STM32F746ZG Device
 **
 **                Set heap size, stack size and stack location according
 **                to application requirements.
