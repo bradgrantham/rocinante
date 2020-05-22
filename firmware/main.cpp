@@ -484,7 +484,8 @@ int voltageToDACValueFixed16NoBounds(int voltage)
 //----------------------------------------------------------------------------
 // NTSC Video goop
 
-#define ROW_SAMPLES        912
+// Number of samples we target, 4x colorburst yields 227.5 cycles, or 910 samples at 14.318180MHz
+#define ROW_SAMPLES        910
 
 #define NTSC_COLORBURST_FREQUENCY       3579545
 #define NTSC_EQPULSE_LINES	3
@@ -519,11 +520,6 @@ volatile int SECTION_CCMRAM videoScanTestLeft = 200;
 volatile int SECTION_CCMRAM videoScanTestRight = 700;
 volatile int SECTION_CCMRAM videoScanTestTop = 50;
 volatile int SECTION_CCMRAM videoScanTestBottom = 200;
-
-// Number of samples we target, 4x colorburst yields 227.5 cycles, or 910 samples at 14.318180MHz
-// But we cheat and actually scan out 912 cycles to be a multiple
-// of 16, so lines are .22% too long.  We hope the receiver is permissive
-// enough to ignore this.  My cheap Orion is.
 
 // These are in CCM to reduce contention with SRAM1 during DMA 
 unsigned char SECTION_CCMRAM NTSCEqSyncPulseLine[ROW_SAMPLES];
@@ -1161,7 +1157,7 @@ void DMAStartScanout(uint32_t dmaCount)
         DMA_CHANNEL_6 |                         // which channel is driven by which timer to which peripheral is limited
         DMA_MEMORY_TO_PERIPH |                  // Memory to Peripheral
         DMA_PDATAALIGN_BYTE |                   // BYTES to peripheral
-        DMA_MDATAALIGN_WORD | DMA_MBURST_INC4 |
+        DMA_MDATAALIGN_HALFWORD |
         DMA_SxCR_DBM |                          // double buffer
         DMA_PRIORITY_VERY_HIGH |                // Video data must be highest priority, can't stutter
         DMA_MINC_ENABLE |                       // Increment memory address
@@ -2798,6 +2794,9 @@ void VideoModeGetInfo(int n, void *info)
             break;
         }
         case VIDEO_MODE_TMS9918A: {
+            break;
+        }
+        case VIDEO_MODE_VES: {
             break;
         }
         case VIDEO_MODE_WOLFENSTEIN: {

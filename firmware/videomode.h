@@ -161,9 +161,10 @@ enum VideoModeType
 {
     VIDEO_MODE_PIXMAP,       // Pixel map
     VIDEO_MODE_TEXTPORT,     // Textport (no processing)
-    VIDEO_MODE_WOZ,          // Apple //e graphics
+    VIDEO_MODE_WOZ,          // Apple //e graphics soft switches and framebuffer
+    VIDEO_MODE_VES,          // Fairchild Channel F framebuffer
     VIDEO_MODE_TMS9918A,     // TMS9918A
-    VIDEO_MODE_SEGMENTS,     // per-line segments, TBD
+    VIDEO_MODE_SEGMENTS,     // per-line segments
     VIDEO_MODE_DCT,          // DCT buffer, TBD
     VIDEO_MODE_WOLFENSTEIN,  // Wolfenstein-style wall raycaster
 };
