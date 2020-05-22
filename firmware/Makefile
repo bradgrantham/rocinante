@@ -1,7 +1,7 @@
 FIRMWARE_VERSION    := $(shell date)
 
-CXXFLAGS        =       --std=c++17
-
+CXXFLAGS        +=       --std=c++17 -Wall -Werror
+CFLAGS          +=      -std=c99 -Wall -Werror
 OPT             =       -O2 -g -funroll-loops -ffast-math
 
 # TOOLROOT        ?=      $(HOME)/trees/gcc-arm-none-eabi-5_3-2016q1
@@ -87,16 +87,16 @@ main.elf:  $(OBJECTS)
 	$(TOOLROOT)/bin/arm-none-eabi-g++ $(OPT) $(CORTEX_M4_HWFP_CC_FLAGS) -DSTM32F746xx $(MICRORAY_LIB_DIR) -TSTM32F746ZG_FLASH.ld  -lm -Wl,--gc-sections $^ -o $@ $(MICRORAY_LIB)
 
 STM32Cube4/startup_stm32f746xx.o: STM32Cube4/startup_stm32f746xx.s
-	$(TOOLROOT)/bin/arm-none-eabi-gcc -Wall $(OPT) $(CORTEX_M4_HWFP_CC_FLAGS)  $< -c -o $@
+	$(TOOLROOT)/bin/arm-none-eabi-gcc -Werror -Wall $(OPT) $(CORTEX_M4_HWFP_CC_FLAGS)  $< -c -o $@
 
 %.o: %.c
-	$(TOOLROOT)/bin/arm-none-eabi-gcc -std=c99 -Wall $(OPT) $(MICRORAY_INC_DIR) -I$(SOURCE_ROOT) -I$(SOURCE_ROOT)/STM32Cube4 -DIOBOARD_FIRMWARE_VERSION="$(FIRMWARE_VERSION)" -fno-builtin -I$(STM32F4XX_CMSIS_INC_PATH) -D$(TARGET) $(CORTEX_M4_HWFP_CC_FLAGS)  $< -c -o $@ -MMD
+	$(TOOLROOT)/bin/arm-none-eabi-gcc $(CFLAGS) $(OPT) $(MICRORAY_INC_DIR) -I$(SOURCE_ROOT) -I$(SOURCE_ROOT)/STM32Cube4 -DIOBOARD_FIRMWARE_VERSION="$(FIRMWARE_VERSION)" -fno-builtin -I$(STM32F4XX_CMSIS_INC_PATH) -D$(TARGET) $(CORTEX_M4_HWFP_CC_FLAGS)  $< -c -o $@ -MMD
 
 %.o: %.cpp
-	$(TOOLROOT)/bin/arm-none-eabi-g++ -std=c++14 -Wall $(OPT) $(MICRORAY_INC_DIR) -I$(SOURCE_ROOT) -I$(SOURCE_ROOT)/STM32Cube4 -DIOBOARD_FIRMWARE_VERSION="$(FIRMWARE_VERSION)" -fno-builtin -I$(STM32F4XX_CMSIS_INC_PATH) -D$(TARGET) $(CORTEX_M4_HWFP_CC_FLAGS)  $< -c -o $@ -MMD
+	$(TOOLROOT)/bin/arm-none-eabi-g++ $(CXXFLAGS) $(OPT) $(MICRORAY_INC_DIR) -I$(SOURCE_ROOT) -I$(SOURCE_ROOT)/STM32Cube4 -DIOBOARD_FIRMWARE_VERSION="$(FIRMWARE_VERSION)" -fno-builtin -I$(STM32F4XX_CMSIS_INC_PATH) -D$(TARGET) $(CORTEX_M4_HWFP_CC_FLAGS)  $< -c -o $@ -MMD
 
 %.annotated: %.c
-	$(TOOLROOT)/bin/arm-none-eabi-gcc -Wa,-adhln -std=c99 -Wall $(OPT) -I$(SOURCE_ROOT) -I$(SOURCE_ROOT)/STM32Cube4 -DIOBOARD_FIRMWARE_VERSION="$(FIRMWARE_VERSION)" -fno-builtin -I$(STM32F4XX_CMSIS_INC_PATH) -D$(TARGET) $(CORTEX_M4_HWFP_CC_FLAGS)  $< -c > $@
+	$(TOOLROOT)/bin/arm-none-eabi-gcc -Wa,-adhln $(CFLAGS) $(OPT) -I$(SOURCE_ROOT) -I$(SOURCE_ROOT)/STM32Cube4 -DIOBOARD_FIRMWARE_VERSION="$(FIRMWARE_VERSION)" -fno-builtin -I$(STM32F4XX_CMSIS_INC_PATH) -D$(TARGET) $(CORTEX_M4_HWFP_CC_FLAGS)  $< -c > $@
 
 clean:
 	rm -f *.hex *.elf *.o $(OBJECTS) $(DEPS)
