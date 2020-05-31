@@ -3,6 +3,7 @@ cubemx.tim-dma/
 images/
 matrix_test
 segment_test
+hosted
 *.ppm
 *.bin
 *.dfu

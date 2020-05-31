@@ -4,6 +4,7 @@
 #include "utility.h"
 #include "graphics.h"
 #include "rocinante.h"
+#include "commandline.h"
 
 static int AppLess(int argc, char **argv)
 {
@@ -22,7 +23,7 @@ static int AppLess(int argc, char **argv)
     while(fgets(line, sizeof(line), fp)) {
         if(lineNumber++ > 22) { // XXX probe textport height
             printf("... PRESS ANY KEY TO CONTINUE\n");
-	    getchar();
+	    InputWaitChar();
             lineNumber = 0;
         }
         for(char *p = line; *p; p++)

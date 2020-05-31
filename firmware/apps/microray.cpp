@@ -25,7 +25,7 @@ extern "C" {
 #include "utility.h"
 #include "graphics.h"
 #include "rocinante.h"
-#include "ff.h"
+#include "commandline.h"
 
 static int whichPalette = 1;
 

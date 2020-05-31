@@ -1,13 +1,14 @@
-#include <stdio.h>
-#include <string.h>
-#include <stdlib.h>
-#include <math.h>
+#include <new>
+#include <cstdio>
+#include <cstring>
+#include <cstdlib>
+#include <cmath>
 
 #include "videomode.h"
 #include "utility.h"
 #include "graphics.h"
 #include "rocinante.h"
-#include "ff.h"
+#include "commandline.h"
 
 #define mapWidth 24
 #define mapHeight 24
@@ -178,7 +179,8 @@ static int AppWolf(int argc, char **argv)
     VideoModeGetParameters(&params);
 
     VideoWolfensteinElement *elements;
-    if((elements = malloc(sizeof(VideoWolfensteinElement) * info.width)) == NULL) {
+    elements = new(std::nothrow) VideoWolfensteinElement[info.width];
+    if(elements == NULL) {
         printf("ERROR: couldn't allocate raycasting elements\n");
         return COMMAND_FAILED;
     }
@@ -191,7 +193,7 @@ static int AppWolf(int argc, char **argv)
 
     int quit = 0;
     do {
-        int key = getchar();
+        int key = InputWaitChar();
         float newEyeX;
         float newEyeZ;
         switch(key) {
@@ -231,7 +233,7 @@ static int AppWolf(int argc, char **argv)
         params.setElements(elements);
     } while(!quit);
 
-    free(elements);
+    delete[] elements;
 
     return COMMAND_CONTINUE;
 }

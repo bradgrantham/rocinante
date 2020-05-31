@@ -1,3 +1,5 @@
+Rocinante is Don Quixote's horse in the novel by Miguel de Cervantes. In many ways, Rocinante is not only Don Quixote's horse, but also his double: like Don Quixote, he is awkward, past his prime, and engaged in a task beyond his capacities.:w
+
 # README WORK IN PROGRESS
 
 Ever since I was very young, I've wanted to output video from a circuit I've built myself.  When I was a teenager, I bought a "TV modulator" module from Radio Shack.  With a minimum set of other components (mostly just power, if I remember correctly), it would turn composite NTSC video into broadcast VHF channel 3 or 4.

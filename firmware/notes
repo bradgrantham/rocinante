@@ -1,4 +1,3 @@
-Move Wolf to palette-RGB-style textures (reduce bandwidth to make up lookup & process cost?)
 Close on segmented framebuffer
     trapezoid to segments - gradient, textured, solid
         assume already in the middle of Update
@@ -12,6 +11,8 @@ Close on segmented framebuffer
     test multiple triangles with different segment types
     handle gradient, textured, solid in SetScanlines
     set aspect ratio in Segmented mode and honor in segtest
+Special nasty FB mode, 16 bits per pixel, Y8I4Q4? 100K RAM plus 50K VRAM: 320 x 240?
+Move Wolf to palette-RGB-style textures (reduce bandwidth to make up lookup & process cost?)
 honor aspect ratio in "show"
 Some things to improve in "show"
     [--gray] - use a grayscale palette
@@ -49,14 +50,12 @@ Potential improvements
 DCT video mode - make it so JPG blocks can be the source of the video scanout
 MP3 player - target something simple and straightforward, like 128, 160, and 256 constant bitrate joint-stereo.
 hosted
-    GLEW
-    move to InputGetChar, InputWaitChar, OutputPutChar
+    move to OutputPutChar
     No separate console access, e.g. serial port; operate like standalone machine
     CLI/apps in other thread
-        queues for input chars, output chars
+        queues for output chars...?
         video and audio calls take a lock
         video scanout happens 30 Hz and also takes the lock
-        will FILE* operations operate properly in 
 How to wrap up with a bow?
     board with 415 or 745 and microSD, two DB9s, PS/2 keyboard, NTSC composite out, mono Line-out, USB in for power and programming and stick an FTDI for UART?
     Be able to demo
@@ -72,8 +71,6 @@ How to wrap up with a bow?
     Build docs
     API docs
 Regularize I/O, get keyboard and serial combined into one queue
-    int InputGetChar(c);    // -1 if no key waiting, maybe support raw modes for PS/2
-    int InputWaitChar(c);
     OutputPutChar(int c);
 Video API notes
     Fundamentally, CCMRAM lacks the memory for more than 1 byte per pixel at more than 250x200
@@ -429,3 +426,12 @@ by running segtest monochrome with gradient 0 to 1
 May 14: Weird aliasing that looks like I'm rendering at 1/4 res may
 be caused by TV; verified by running segtest monochrome with gradient
 0 to 1; grayscale images do not show bad aliasing.
+
+May 22: C++
+    * make_unique and unique_ptr work - verified within local block
+    * #include <iostream> adds 200K to the executable - works, but avoid
+    * exceptions work...!?
+    * new and delete work, including try-catch bad_alloc
+    * static constructed objects work
+    * std::nothrow works - new returns 0
+    * https://gist.github.com/bradgrantham/371f77dc2060fa4ad2fbe67940e4f7f6

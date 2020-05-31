@@ -5,7 +5,7 @@
 #include "utility.h"
 #include "graphics.h"
 #include "rocinante.h"
-#include "ff.h"
+#include "commandline.h"
 
 enum Error {
     SYNTAX_ERROR,

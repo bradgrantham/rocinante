@@ -1,8 +1,8 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <ctype.h>
-#include <math.h>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <cctype>
+#include <cmath>
 
 #undef USE_PS2KBD
 
@@ -31,6 +31,7 @@
 #include "graphics.h"
 #include "textport.h"
 #include "rocinante.h"
+#include "commandline.h"
 #include "segment_utility.h"
 
 // System driver internal definitions
@@ -38,14 +39,7 @@
 
 static int gDumpKeyboardData = 0;
 
-constexpr size_t MAX_RAM = 300 * 1024;  // XXX unless I upgrade to static RAM or other part
-
-char gMonitorCommandBuffer[80];
-unsigned char gMonitorCommandBufferLength = 0;
-
 #define IOBOARD_FIRMWARE_VERSION_STRING XSTR(IOBOARD_FIRMWARE_VERSION)
-
-volatile unsigned char gSerialInputToMonitor = 1;
 
 void panic_worse()
 {
@@ -343,6 +337,15 @@ int InputGetChar(void)
     return -1;
 }
 
+int InputWaitChar(void)
+{
+    int c;
+    do { 
+        c = InputGetChar();
+    } while(c < 0);
+    return c;
+}
+
 #ifdef __cplusplus
 extern "C" {
 #endif /* __cplusplus */
@@ -413,31 +416,13 @@ void check_exceptional_conditions()
 #endif
 }
 
-void process_local_key(unsigned char c);
-
-void process_monitor_queue()
+void ProcessAnyInput()
 {
     unsigned char isEmpty = queue_isempty(&mon_queue);
-    static unsigned char escapeBackToMonitor = 0;
 
     if(!isEmpty) {
         unsigned char c = queue_deq(&mon_queue);
-        if(gSerialInputToMonitor)
-            process_local_key(c);
-        else {
-            if(escapeBackToMonitor == 0 && c == 1)
-                escapeBackToMonitor = 1;
-            else if(escapeBackToMonitor != 0 && c == 2) {
-                escapeBackToMonitor = 0;
-                gSerialInputToMonitor = 1;
-                printf("Serial input returned to monitor\n");
-            } else {
-                escapeBackToMonitor = 0;
-                disable_interrupts();
-                console_enqueue_key_unsafe(c);
-                enable_interrupts();
-            }
-        }
+        ProcessKey(c);
     }
 }
 
@@ -1607,7 +1592,7 @@ void TextportPlain80x24FillRow(int frameNumber, int lineNumber, unsigned char *r
 // Pixmap video mode structs
 const static VideoPixmapInfo ColorMaxResInfo = {
     MAX_RES_MODE_WIDTH, MAX_RES_MODE_HEIGHT,
-    VideoPixmapInfo::PALETTE_8BIT,
+    VideoPixmapFormat::PALETTE_8BIT,
     256,
     1,
     1,
@@ -1695,7 +1680,7 @@ void ColorMaxResFillRow(int frameNumber, int lineNumber, unsigned char *rowBuffe
 // Pixmap video mode structs
 const static VideoPixmapInfo Color175x230Info = {
     Color175x230WidthSamples / 4, Color175x230Height,
-    VideoPixmapInfo::PALETTE_8BIT,
+    VideoPixmapFormat::PALETTE_8BIT,
     256,
     1,
     1,
@@ -1773,7 +1758,7 @@ void Color175x230FillRow(int frameNumber, int lineNumber, unsigned char *rowBuff
 // Pixmap video mode structs
 const static VideoPixmapInfo Color160x192Info = {
     Color160x192WidthSamples / 4, Color160x192Height,
-    VideoPixmapInfo::PALETTE_8BIT,
+    VideoPixmapFormat::PALETTE_8BIT,
     256,
     1,
     0,
@@ -1851,7 +1836,7 @@ void Color160x192FillRow(int frameNumber, int lineNumber, unsigned char *rowBuff
 // Pixmap video mode structs
 const static VideoPixmapInfo Color350x230Info = {
     Color350x230WidthSamples / 2, Color350x230Height,
-    VideoPixmapInfo::PALETTE_4BIT,
+    VideoPixmapFormat::PALETTE_4BIT,
     16,
     1,
     1,
@@ -1937,7 +1922,7 @@ void Color350x230FillRow(int frameNumber, int lineNumber, unsigned char *rowBuff
 // Pixmap video mode structs
 const static VideoPixmapInfo Color320x192Info = {
     Color320x192WidthSamples / 2, Color320x192Height,
-    VideoPixmapInfo::PALETTE_4BIT,
+    VideoPixmapFormat::PALETTE_4BIT,
     16,
     1,
     0,
@@ -2023,7 +2008,7 @@ void Color320x192FillRow(int frameNumber, int lineNumber, unsigned char *rowBuff
 // Pixmap video mode structs
 const static VideoPixmapInfo Grayscale704x230Info = {
     Grayscale704x230WidthSamples, Grayscale704x230Height,
-    VideoPixmapInfo::GRAY_2BIT,
+    VideoPixmapFormat::GRAY_2BIT,
     -1,
     0,
     1,
@@ -2092,7 +2077,7 @@ void Grayscale704x230FillRow(int frameNumber, int lineNumber, unsigned char *row
 // Pixmap video mode structs
 const static VideoPixmapInfo Bitmap704x230Info = {
     Bitmap704x230WidthSamples, Bitmap704x230Height,
-    VideoPixmapInfo::BITMAP,
+    VideoPixmapFormat::BITMAP,
     -1,
     0,
     1,
@@ -2180,7 +2165,7 @@ void Bitmap704x230FillRow(int frameNumber, int lineNumber, unsigned char *rowBuf
 // Pixmap video mode structs
 const static VideoPixmapInfo Bitmap640x192Info = {
     Bitmap640x192WidthSamples, Bitmap640x192Height,
-    VideoPixmapInfo::BITMAP,
+    VideoPixmapFormat::BITMAP,
     -1,
     0,
     0,
@@ -3009,7 +2994,7 @@ int doCommandTestColor(int wordCount, char **words)
             int cr = 5 + rand() % 30;
             int c;
             if(info.paletteSize == -1) {
-                if(info.pixelFormat == VideoPixmapInfo::GRAY_2BIT) {
+                if(info.pixelFormat == VideoPixmapFormat::GRAY_2BIT) {
                     c = rand() % 4; 
                 } else {
                     c = rand() % 2; 
@@ -3381,36 +3366,28 @@ int doHalt(int wordCount, char **words)
     while(1) {};
 }
 
-#define MAX_COMMANDS 50
-
-Command commands[MAX_COMMANDS];
-int commandsCount = 0;
-
-extern caddr_t _sbrk(int incr);
-extern void* sbrk(int incr);
-
-int RegisterApp(const char* name, int minWords, ProcessCommandFunc go, const char *form, const char *help)
+int doTestFloat(int argc, char **argv)
 {
-    if(commandsCount >= MAX_COMMANDS) {
-        printf("maximum command count reached!\n");
-        return COMMAND_ADD_FAILED;
+    float foo;
+
+    if(sscanf(argv[1], "%f", &foo) != 1) {
+        printf("couldn't sscanf a float from the argument\n");
+        return COMMAND_FAILED;
     }
-    Command *newcmd = commands + commandsCount;
-    commandsCount++;
 
-    newcmd->name = name;
-    newcmd->minWords = minWords;
-    newcmd->go = go;
-    // Need to close all open files,
-    newcmd->form = form;
-    newcmd->help = help;
+    printf("integer round of float: %d\n", (int)foo);
 
-    return 0;
+    printf("float: %f\n", foo);
+
+    return COMMAND_CONTINUE;
 }
 
 static void RegisterAllApplets() __attribute__((constructor));
 static void RegisterAllApplets()
 {
+    RegisterApp( "float", 2, doTestFloat, "float",
+        "scanf and test and print a float"
+    );
     RegisterApp( "modes", 1, doCommandVideoModes, "",
         "list video modes"
     );
@@ -3474,110 +3451,6 @@ static void RegisterAllApplets()
         "set debugging level to N"
     );
     RegisterApp( "halt", 1, doHalt, "", "while(1){}");
-}
-
-void usage()
-{
-    int maxNeeded = 0;
-    for(int which = 0; which < commandsCount; which++) {
-        Command *cmd = commands + which;
-        int needed = strlen(cmd->name) + 1 + strlen(cmd->form);
-        maxNeeded = (needed > maxNeeded) ? needed : maxNeeded;
-    }
-    for(int which = 0; which < commandsCount; which++) {
-        Command *cmd = commands + which;
-        printf("%s %s", cmd->name, cmd->form);
-        // XXX some day be smarter about word wrap etc
-        printf("%*s - %s\n", maxNeeded - strlen(cmd->name) - 1 - strlen(cmd->form), "", cmd->help);
-    }
-}
-
-#define CommandWordsMax 10
-
-int processCommandLine(char *line)
-{
-    static char *words[CommandWordsMax];
-
-    int wordsCount = SplitString(line, words, CommandWordsMax);
-
-    if(wordsCount == 0) {
-        return COMMAND_CONTINUE;
-    }
-
-    if(wordsCount == CommandWordsMax) {
-        printf("(warning, parsing command filled word storage)\n");
-        printf("(arguments %d and after were combined)\n", CommandWordsMax);
-    }
-
-    int found = 0;
-    for(int which = 0; which < commandsCount; which++) {
-        Command *cmd = commands + which;
-        if(strcmp(words[0], cmd->name) == 0) {
-            found = 1;
-            if(wordsCount < cmd->minWords) {
-
-                printf("expected at least %d words for command \"%s\", parsed only %d\n", cmd->minWords, cmd->name, wordsCount);
-                usage();
-
-            } else {
-
-                // Need to initialize app BSS somehow - need mini-loader
-                int result = cmd->go(wordsCount, words);
-
-                size_t largest = MAX_RAM;
-                while(largest > 0) {
-                    void *p = malloc(largest);
-                    if(p) {
-                        free(p);
-                        break;
-                    }
-                    largest -= 1024;
-                }
-                printf("%zdKB\n", largest / 1024);
-
-                return result;
-            }
-        }
-    }
-
-    if(!found) {
-        printf("Unknown command \"%s\"\n", words[0]);
-        usage();
-    }
-
-    return COMMAND_CONTINUE; // XXX COMMAND_UNKNOWN?
-}
-
-void process_local_key(unsigned char c)
-{
-    if(c == '\r' || c == '\n') {
-        putchar('\n');
-        gMonitorCommandBuffer[gMonitorCommandBufferLength] = 0;
-
-        processCommandLine(gMonitorCommandBuffer);
-        printf("* ");
-        gMonitorCommandBufferLength = 0;
-
-    } else {
-
-        if(c == 127 || c == '\b') {
-            if(gMonitorCommandBufferLength > 0) {
-                putchar('\b');
-                putchar(' ');
-                putchar('\b');
-                gMonitorCommandBufferLength--;
-            } else {
-                bell();
-            }
-        } else {
-            if(gMonitorCommandBufferLength < sizeof(gMonitorCommandBuffer) - 1) {
-                putchar(c);
-                gMonitorCommandBuffer[gMonitorCommandBufferLength++] = c;
-            } else {
-                bell();
-            }
-        }
-    }
 }
 
 extern int KBDInterrupts;
@@ -3854,8 +3727,6 @@ int main()
 
         SERIAL_poll_continue();
 
-        process_monitor_queue();
-
 #ifdef USE_PS2KBD
         int key = KBD_process_queue(gDumpKeyboardData);
         if(key >= 0) {
@@ -3865,6 +3736,8 @@ int main()
             enable_interrupts();
         }
 #endif
+
+        ProcessAnyInput();
 
         check_exceptional_conditions();
     }

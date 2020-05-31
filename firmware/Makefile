@@ -1,3 +1,6 @@
+default:        main.dfu        hosted
+
+
 FIRMWARE_VERSION    := $(shell date)
 
 CXXFLAGS        +=       --std=c++17 -Wall -Werror
@@ -18,6 +21,12 @@ CORTEX_M4_HWFP_CC_FLAGS = -mthumb -mcpu=cortex-m7 -mfloat-abi=hard -mfpu=fpv5-sp
 TARGET = STM32F746xx
 STM32F4XX_CMSIS_INC_PATH        = $(STM32FCUBEROOT)/Drivers/CMSIS/Include/
 
+MICRORAY_APP_OBJECT     = # apps/microray.o
+MICRORAY_SOURCE         = # $(HOME)/trees/microray/
+MICRORAY_LIB_DIR        = # -L$(MICRORAY_SOURCE)/build/arm
+MICRORAY_INC_DIR        = # -I$(MICRORAY_SOURCE)/lib/ray
+MICRORAY_LIB            = # -lmray
+
 COBJECTS = \
         STM32Cube4/startup_stm32f746xx.o \
         STM32Cube4/system_stm32f7xx.o \
@@ -31,12 +40,10 @@ COBJECTS = \
         STM32Cube4/stm32f7xx_hal_tim.o \
         STM32Cube4/stm32f7xx_hal_tim_ex.o \
         STM32Cube4/stm32f7xx_hal.o \
-        segment_utility.o \
         leds.o \
         monitor_queue.o \
         console_queue.o \
         uart.o \
-        utility.o \
         logprintf.o \
         syscalls.o \
         delay.o \
@@ -49,8 +56,6 @@ COBJECTS = \
         ps2_keyboard.o \
         keyboard.o \
         apps/vile.o \
-        graphics.o \
-        apps/showimage.o \
         textport.o \
         apps/wolf.o \
         wolftextures.o \
@@ -61,16 +66,17 @@ NOTYET = \
         reset_button.o \
         $(NULL)
 
-MICRORAY_APP_OBJECT     = # apps/microray.o
-MICRORAY_SOURCE         = # $(HOME)/trees/microray/
-MICRORAY_LIB_DIR        = # -L$(MICRORAY_SOURCE)/build/arm
-MICRORAY_INC_DIR        = # -I$(MICRORAY_SOURCE)/lib/ray
-MICRORAY_LIB            = # -lmray
-
 CXXOBJECTS = \
         $(MICRORAY_APP_OBJECT) \
         main.o \
+        commandline.o \
+        graphics.o \
+        apps/showimage.o \
         apps/basic.o \
+        apps/spin.o \
+        apps/pocketgl.o \
+        utility.o \
+        segment_utility.o \
         $(NULL)
 
 OBJECTS = $(CXXOBJECTS) $(COBJECTS)
@@ -99,7 +105,7 @@ STM32Cube4/startup_stm32f746xx.o: STM32Cube4/startup_stm32f746xx.s
 	$(TOOLROOT)/bin/arm-none-eabi-gcc -Wa,-adhln $(CFLAGS) $(OPT) -I$(SOURCE_ROOT) -I$(SOURCE_ROOT)/STM32Cube4 -DIOBOARD_FIRMWARE_VERSION="$(FIRMWARE_VERSION)" -fno-builtin -I$(STM32F4XX_CMSIS_INC_PATH) -D$(TARGET) $(CORTEX_M4_HWFP_CC_FLAGS)  $< -c > $@
 
 clean:
-	rm -f *.hex *.elf *.o $(OBJECTS) $(DEPS)
+	rm -f *.hex *.elf *.o $(OBJECTS) $(DEPS) hosted segment_test
 
 bootrom.bin: ../../rom/rom.bin
 	(cd ../../rom ; make rom.bin)
@@ -111,4 +117,9 @@ main.dfu: main.hex
 burn: main.dfu
 	time dfu-util -d 0483:df11 -a 0 -D main.dfu
 
-segment_test: segment_test.c segment_utility.c
+segment_test: segment_test.cpp segment_utility.cpp
+
+hosted: apps/showimage.cpp utility.cpp graphics.cpp hosted.cpp apps/spin.cpp apps/pocketgl.cpp segment_utility.cpp gl_utility.cpp commandline.cpp
+	c++ $(CXXFLAGS) $(OPT) -I. -I/opt/local/include/ -L/opt/local/lib -std=c++17 -lglfw -framework OpenGL -framework Cocoa -framework IOkit $^ -o $@ 
+
+#apps/showimage.cpp utility.cpp graphics.cpp hosted.cpp apps/spin.cpp apps/pocketgl.cpp segment_utility.cpp -o hosted

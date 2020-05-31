@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include "utility.h"
 #include "videomode.h"
+#include "graphics.h"
 
 const static unsigned char RGBFor4BitPalette[][3] = {
     // From Arne's 16-color general purpose palette
@@ -82,14 +83,14 @@ int SetPixel(int x, int y, int c)
         if(x >= 0 && y >= 0 && x < info.width && y < info.height) {
 
             switch(info.pixelFormat) {
-                case BITMAP: {
+                case VideoPixmapFormat::BITMAP: {
                     unsigned char value = c << (x % 8);
                     unsigned char mask = ~(1 << (x % 8));
                     unsigned char *byte = params.base + y * params.rowSize + x / 8;
                     *byte = (*byte & mask) | value;
                     break;
                 }
-                case GRAY_2BIT:
+                case VideoPixmapFormat::GRAY_2BIT:
                 {
                     int whichByte = x / 4;
                     int whichTwoBits = x % 4;
@@ -99,8 +100,8 @@ int SetPixel(int x, int y, int c)
                     *byte = (*byte & mask) | value;
                     break;
                 }
-                case GRAY_4BIT:
-                case PALETTE_4BIT:
+                case VideoPixmapFormat::GRAY_4BIT:
+                case VideoPixmapFormat::PALETTE_4BIT:
                 {
                     int whichByte = x / 2;
                     int whichNybble = x % 2;
@@ -110,8 +111,8 @@ int SetPixel(int x, int y, int c)
                     *byte = (*byte & mask) | value;
                     break;
                 }
-                case GRAY_8BIT:
-                case PALETTE_8BIT:
+                case VideoPixmapFormat::GRAY_8BIT:
+                case VideoPixmapFormat::PALETTE_8BIT:
                 {
                     params.base[y * params.rowSize + x] = c;
                     break;

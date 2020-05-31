@@ -7,6 +7,8 @@ extern "C" {
 
 #define ROCINANTE 1
 
+constexpr size_t MAX_RAM = 300 * 1024;  // XXX unless I upgrade to static RAM or other part
+
 enum {
     COMMAND_CONTINUE = 0,
     COMMAND_SUCCESS = COMMAND_CONTINUE,
@@ -14,21 +16,8 @@ enum {
     COMMAND_ADD_FAILED,
 };
 
-// Return COMMAND_CONTINUE to continue execution, return other to report an error and
-// terminate operation of a script.
-typedef int (*ProcessCommandFunc)(int wordcount, char **words);
-
-typedef struct Command {
-    const char *name;   /* the command itself */
-    int minWords;      /* including command, like argc */
-    ProcessCommandFunc go;
-    const char *form;   /* command form for usage message */
-    const char *help;   /* human-readable guidance for command */
-} Command;
-
-int RegisterApp(const char* name, int minWords, ProcessCommandFunc go, const char *form, const char *help);
-
 int InputGetChar(void);
+int InputWaitChar(void);
 
 #ifdef __cplusplus
 };

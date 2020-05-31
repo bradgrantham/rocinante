@@ -17,11 +17,12 @@ typedef struct VideoSegmentedInfo
     int height;
 } VideoSegmentedInfo;
 
+#define VIDEO_SEGMENT_TYPE_MAX 31U /* Must be 2^n - 1, and match SHIFT in private struct... */
+
 enum VideoSegmentType {
     VIDEO_SEGMENT_TYPE_SOLID = 1U,
     VIDEO_SEGMENT_TYPE_GRADIENT = 2U,
     VIDEO_SEGMENT_TYPE_TEXTURED = 3U,
-    VIDEO_SEGMENT_TYPE_MAX = 31U, // Must be 2^n - 1, and match SHIFT in private struct...
 };
 enum VideoPrivateSegmentType {
     VIDEO_SEGMENT_TYPE_SHIFT = 11U,     /* 31 */
@@ -110,11 +111,13 @@ typedef struct VideoWolfensteinParameters
 //--------------------------------------------------------------------------
 // Pixmap mode enums and structs
 
+enum VideoPixmapFormat { BITMAP, GRAY_2BIT, GRAY_4BIT, GRAY_8BIT, PALETTE_4BIT, PALETTE_8BIT};
+
 typedef struct VideoPixmapInfo
 {
     // This part can be static
     int width, height;  /* pixels or text */
-    enum PixelFormat { BITMAP, GRAY_2BIT, GRAY_4BIT, GRAY_8BIT, PALETTE_4BIT, PALETTE_8BIT} pixelFormat;
+    enum VideoPixmapFormat pixelFormat;
     /* pixels are LSB, so 4BIT pixel N is in byte N/2 bits 0-3, and pixel N+1 is in byte N/2 bits 4-7 */
     int paletteSize; /* for convenience, matches pixelFormat, -1 if a bitmap */
     int color;          /* for convenience, matches pixelFormat */

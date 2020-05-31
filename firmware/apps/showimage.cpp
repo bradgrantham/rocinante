@@ -7,7 +7,7 @@
 #include "utility.h"
 #include "graphics.h"
 #include "rocinante.h"
-#include "ff.h"
+#include "commandline.h"
 
 /*
 
@@ -52,17 +52,17 @@ enum {
     MAX_ROW_SIZE = 4096,
 };
 
-static void SetPixelDirect(int x, int y, int c, enum PixelFormat pixelFormat, unsigned char *base, size_t rowSize)
+static void SetPixelDirect(int x, int y, int c, VideoPixmapFormat pixelFormat, unsigned char *base, size_t rowSize)
 {
     switch(pixelFormat) {
-        case BITMAP: {
+        case VideoPixmapFormat::BITMAP: {
             unsigned char value = c << (x % 8);
             unsigned char mask = ~(1 << (x % 8));
             unsigned char *byte = base + y * rowSize + x / 8;
             *byte = (*byte & mask) | value;
             break;
         }
-        case GRAY_2BIT:
+        case VideoPixmapFormat::GRAY_2BIT:
         {
             int whichByte = x / 4;
             int whichTwoBits = x % 4;
@@ -72,8 +72,8 @@ static void SetPixelDirect(int x, int y, int c, enum PixelFormat pixelFormat, un
             *byte = (*byte & mask) | value;
             break;
         }
-        case GRAY_4BIT:
-        case PALETTE_4BIT:
+        case VideoPixmapFormat::GRAY_4BIT:
+        case VideoPixmapFormat::PALETTE_4BIT:
         {
             int whichByte = x / 2;
             int whichNybble = x % 2;
@@ -83,8 +83,8 @@ static void SetPixelDirect(int x, int y, int c, enum PixelFormat pixelFormat, un
             *byte = (*byte & mask) | value;
             break;
         }
-        case GRAY_8BIT:
-        case PALETTE_8BIT:
+        case VideoPixmapFormat::GRAY_8BIT:
+        case VideoPixmapFormat::PALETTE_8BIT:
         {
             base[y * rowSize + x] = c;
             break;
@@ -137,9 +137,9 @@ static int AppShowImage(int argc, char **argv)
         return COMMAND_FAILED;
     }
 
-    int ppmtype, width, height, max;
+    int ppmtype, max, width, height;
 
-    unsigned char (*palette)[3] = malloc(sizeof(palette[0]) * 256);
+    unsigned char (*palette)[3] = (unsigned char (*)[3])malloc(sizeof(palette[0]) * 256);
     if(palette == NULL) {
         printf("failed to allocate palette\n");
         fclose(fp);
@@ -170,7 +170,7 @@ static int AppShowImage(int argc, char **argv)
 
         paletteSize = width;
 
-        if(fread(palette, 3, paletteSize, fp) != paletteSize) {
+        if(fread(palette, 3, paletteSize, fp) != (size_t)paletteSize) {
             printf("failed to read palette image\n");
             free(palette);
             fclose(fp);
@@ -201,10 +201,10 @@ static int AppShowImage(int argc, char **argv)
         return COMMAND_FAILED;
     }
 
-    printf("image is %d by %d\n", width, height);
+    printf("image is %u by %u\n", width, height);
 
     static unsigned char (*rowRGB)[3];
-    rowRGB = malloc(sizeof(rowRGB[0]) * MAX_ROW_SIZE);
+    rowRGB = (unsigned char (*)[3]) malloc(sizeof(rowRGB[0]) * MAX_ROW_SIZE);
     if(rowRGB == NULL) {
         printf("failed to allocate row for pixel data\n");
         free(palette);
@@ -214,7 +214,7 @@ static int AppShowImage(int argc, char **argv)
 
     signed short (*rowError)[MAX_ROW_SIZE][3]; // + 1 in either direction
     int currentErrorRow = 0;
-    rowError = malloc(sizeof(rowError[0]) * 2);
+    rowError = (signed short (*)[MAX_ROW_SIZE][3])malloc(sizeof(rowError[0]) * 2);
     memset(rowError, 0, sizeof(rowError[0]) * 2);
     if(rowError == NULL) {
         printf("failed to allocate row for error data\n");
@@ -233,7 +233,7 @@ static int AppShowImage(int argc, char **argv)
             MakePalette(whichPalette, info.paletteSize, palette);
             paletteSize = info.paletteSize;
         } else {
-            if(info.pixelFormat == BITMAP) {
+            if(info.pixelFormat == VideoPixmapFormat::BITMAP) {
                 paletteSize = 2;
                 palette[0][0] = 0;
                 palette[0][1] = 0;
@@ -241,7 +241,7 @@ static int AppShowImage(int argc, char **argv)
                 palette[1][0] = 255;
                 palette[1][1] = 255;
                 palette[1][2] = 255;
-            } else if(info.pixelFormat == GRAY_2BIT) {
+            } else if(info.pixelFormat == VideoPixmapFormat::GRAY_2BIT) {
                 paletteSize = 4;
                 palette[0][0] = 0;
                 palette[0][1] = 0;
@@ -263,7 +263,7 @@ static int AppShowImage(int argc, char **argv)
     for(int srcRow = 0; srcRow < height; srcRow++) {
 
         if(ppmtype == 6) {
-            if(fread(rowRGB, 3, width, fp) != width) {
+            if(fread(rowRGB, 3, width, fp) != (size_t)width) {
                 printf("ERROR: couldn't read row %d from \"%s\"\n", srcRow, filename);
                 free(palette);
                 free(rowError);
@@ -271,7 +271,7 @@ static int AppShowImage(int argc, char **argv)
                 return COMMAND_FAILED;
             }
         } else if(ppmtype == 5) {
-            if(fread(rowRGB, 1, width, fp) != width) {
+            if(fread(rowRGB, 1, width, fp) != (size_t)width) {
                 printf("ERROR: couldn't read row %d from \"%s\"\n", srcRow, filename);
                 free(palette);
                 free(rowError);

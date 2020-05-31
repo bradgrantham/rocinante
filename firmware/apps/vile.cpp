@@ -52,7 +52,7 @@
 #include "rocinante.h"
 #include "videomode.h"
 #include "textport.h"
-#include "ff.h"
+#include "commandline.h"
 
 #define main AppVILE
 
@@ -67,14 +67,16 @@
 uint_fast8_t screenx, screeny, screen_height, screen_width;
 
 // static char *t_go, char *t_clreol, *t_clreos;
-static char *t_clreol = "\33[K";
-static char *t_clreos = "\33[J";
+static const char *t_clreol = "\33[K";
+static const char *t_clreos = "\33[J";
 // static uint8_t conbuf[64];
 // static uint8_t *conp = conbuf;
 
 extern void con_puts(const char *s);
 
+extern "C" {
 extern void SERIAL_flush();
+};
 
 /* Make sure the output buffer is written */
 void con_flush(void)
@@ -123,7 +125,7 @@ void con_putc(uint8_t c)
 }
 
 /* Write a termcap string out */
-static void con_twrite(char *p, int n)
+static void con_twrite(const char *p, int n)
 {
 	while (*p)
 		putchar(*p++);
@@ -242,7 +244,7 @@ int con_scroll(int n)
 int con_getch(void)
 {
 	con_flush();
-	return getchar();
+	return InputWaitChar();
 }
 
 int con_size(uint8_t c)
@@ -288,7 +290,7 @@ typedef struct keytable_t {
 } keytable_t;
 
 int done;
-int row, col;
+unsigned int row, col;
 int indexp, page, epage;	/* Limits us to 32K buffer.. look at uint16? */
 int input;
 int repeat;
@@ -296,7 +298,7 @@ char *buf;
 char *ebuf;
 char *gap;
 char *egap;
-char *filename;
+const char *filename;
 int modified;
 int status_up;
 
@@ -407,7 +409,7 @@ int fright(char);
 
 int backsp(void);
 int bottom(void);
-int delete(void);
+int delet(void);
 int delete_line(void);
 int down(void);
 int insert(void);
@@ -467,7 +469,7 @@ int colon_mode(void);
  *	/ and ?		search forward/back
  *	n/N		next search forward/back
  *	u		undo
- *	dw,de		delete word variants
+ *	dw,de		delet word variants
  *	.		repeat last text changing command
  *
  *	Almost all : functionality
@@ -509,7 +511,7 @@ const static keytable_t table[] = {
 	{'i', NORPT, insert_mode},
 	{'I', NORPT, insert_before},
 	{'J', 0, join},
-	{'x', 0, delete},
+	{'x', 0, delet},
 	{'X', 0, delete_left},
 	{'o', 0, open_after},
 	{'O', 0, open_before},
@@ -761,7 +763,7 @@ int pagemiddle(void)
 
 int pagebottom(void)
 {
-	int y = row;
+	unsigned int y = row;
 	while (y++ < screen_height - 1)
 		down();
 	return 0;
@@ -954,7 +956,7 @@ int insert_mode(void)
 		if (ch == '\f' || ch == -1)
 			break;
 		if (ch == '\b' || ch == 127) {
-			/* There is a hard case here where we delete
+			/* There is a hard case here where we delet
 			   a newline */
 			if (*gap == '\n') {
 				dirty[row] = 0;
@@ -996,7 +998,7 @@ int replace(void)
 	/* FIXME: saner filter ? */
 	if (c < 0 || c > 255)
 		return 1;
-	if (!delete())
+	if (!delet())
 		return insertch(c);
 	return 0;
 }
@@ -1006,7 +1008,7 @@ static int do_delete_line(void)
 	movegap();
 	while (egap < ebuf && *egap != '\n')
 		indexp = pos(++egap);
-	return delete();
+	return delet();
 }
 
 int delete_line(void)
@@ -1031,7 +1033,7 @@ int backsp(void)
 	return 1;
 }
 
-int delete(void)
+int delet(void)
 {
 	movegap();
 	if (egap < ebuf) {
@@ -1049,7 +1051,7 @@ int delete(void)
 int delete_left(void)
 {
 	if (!left())
-		return delete();
+		return delet();
 	return 1;
 }
 
@@ -1088,7 +1090,7 @@ int join(void)
 {
 	lnend();
 	if (egap != ebuf)
-		return delete();
+		return delet();
 	return 1;
 }
 
@@ -1108,16 +1110,16 @@ int open_after(void)
 	return 0;
 }
 
-int save(char *fn)
+int save(const char *fn)
 {
 	int i, err = 1;
 	size_t length;
 	char *gptr;
 
-        FIL file;
-        FRESULT result = f_open (&file, fn, FA_WRITE | FA_CREATE_ALWAYS);
-        if(result) {
-            printf("ERROR: couldn't open \"%s\" for writing, FatFS result %d\n", fn, result);
+        FILE *file;
+        file = fopen(fn, "w");
+        if(file == NULL) {
+            printf("ERROR: couldn't open \"%s\" for writing, errno %d\n", fn, errno);
             SERIAL_flush();
             return 0;
         }
@@ -1128,14 +1130,14 @@ int save(char *fn)
         length = (size_t) (ebuf - egap);
         err = 0;
 
-        UINT waswritten;
-        result = f_write(&file, gptr, length, &waswritten);
-        if(result) {
-            printf("ERROR: couldn't write \"%s\", FatFS result %d\n", fn, result);
+        unsigned int waswritten;
+        waswritten = fwrite(gptr, 1, length, file);
+        if(waswritten != length) {
+            printf("ERROR: couldn't write \"%s\", errno %d\n", fn, errno);
             SERIAL_flush();
             return 0;
         }
-        f_close(&file);
+        fclose(file);
 
         indexp = i;
         modified = 0;
@@ -1143,7 +1145,7 @@ int save(char *fn)
 	return !err;
 }
 
-int save_done(char *path, uint8_t n)
+int save_done(const char *path, uint8_t n)
 {
 	/* Check if changed ? */
 	if (!save(path))
@@ -1432,8 +1434,6 @@ void display_line(void)
 
 int ALLOC = 32768;
 
-#define USE_MALLOC 1
-
 int main(int argc, char *argv[])
 {
 	// int fd;
@@ -1441,16 +1441,11 @@ int main(int argc, char *argv[])
 
     dobss(); // XXX really need a special mode for apps with their own private BSS...
 
-#if USE_MALLOC
-        buf = malloc(ALLOC);
+        buf = (char *)malloc(ALLOC);
         if (buf == NULL) {
                 printf("out of memory.\n");
                 return COMMAND_FAILED;
         }
-#else
-        char buffer[ALLOC];
-        buf = buffer;
-#endif
         ebuf = buf + ALLOC;
 	gap = buf;
 	egap = ebuf;
@@ -1459,13 +1454,11 @@ int main(int argc, char *argv[])
 	else {
 
                 filename = argv[1];
-                FIL file;
-                FRESULT result = f_open (&file, argv[1], FA_READ | FA_OPEN_EXISTING);
-                if(result) {
-                    printf("ERROR: couldn't open \"%s\" for reading, FatFS result %d\n", argv[1], result);
-#if USE_MALLOC
+                FILE *file;
+                file = fopen (filename, "r");
+                if(file == NULL) {
+                    printf("ERROR: couldn't open \"%s\" for reading, errno %d\n", filename, errno);
                     free(buf);
-#endif /* USE_MALLOC */
                     return COMMAND_FAILED;
                 } else {
 			size_t size;
@@ -1474,22 +1467,21 @@ int main(int argc, char *argv[])
 			size = ebuf - buf;
 			/* We can have 32bit ptr, 16bit int even in theory */
 			if (size > INT_MAX) {
-                                while(!f_read(&file, buf + o, INT_MAX, &n)) {
+                                while((n = fread(buf + o, 1, INT_MAX, file)) > 0) {
 					gap += n;
 					size -= n;
 					o += n;
 				}
-			} else
-                                f_read(&file, buf + o, size, &n);
+			} else {
+                                n = fread(buf + o, 1, INT_MAX, file);
+                        }
 			gap += n;
-			f_close(&file);
+			fclose(file);
 		}
 	}
 
 	if (con_init()) {
-#if USE_MALLOC
                 free(buf);
-#endif /* USE_MALLOC */
 		return COMMAND_FAILED;
         }
 
@@ -1519,9 +1511,7 @@ int main(int argc, char *argv[])
 	con_newline();
 	con_flush();
         con_exit();
-#if USE_MALLOC
         free(buf);
-#endif /* USE_MALLOC */
 	return COMMAND_SUCCESS;
 }
 
