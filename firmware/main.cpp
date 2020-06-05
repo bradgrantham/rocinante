@@ -2484,7 +2484,7 @@ extern const uint32_t *Textures[8];
 
 
 typedef struct WolfensteinPrivateElement {
-    const ntsc_wave_t (*textureColumnBase);
+    const ntsc_wave_t *textureColumnBase;
     int wholePixelsHalfHeight;
     uint32_t textureRowOffsetFixed16;
     uint32_t textureRowPerScanRowFixed16;

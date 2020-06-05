@@ -9,6 +9,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <climits>
+#include <cassert>
 #include <cmath>
 #include <fcntl.h>   /* File control definitions */
 #include <termios.h> /* POSIX terminal control definitions */
@@ -356,7 +358,7 @@ int doTestSegmentMode(int wordCount, char **words)
     VideoSetMode(which);
 
     VideoSegmentedInfo info;
-    VideoSegmentedParameters params;
+    VideoSegmentedParameters params = {0};
     VideoModeGetInfo(VideoGetCurrentMode(), &info);
     VideoModeGetParameters(&params);
 
