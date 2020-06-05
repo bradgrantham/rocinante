@@ -14,6 +14,17 @@
 #include "commandline.h"
 #include "pocketgl.h"
 
+#ifndef HOSTED
+
+void RasterizeLine(const ScreenVertex& sv0, const ScreenVertex& sv1)
+{}
+void RasterizeTriangle(const ScreenVertex& sv0, const ScreenVertex& sv1, const ScreenVertex& sv2)
+{}
+void ClearColorBuffer(float r, float g, float b)
+{}
+
+#endif
+
 struct Vertex
 {
     float v[3];
