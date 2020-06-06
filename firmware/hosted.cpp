@@ -4,8 +4,9 @@
 #include <chrono>
 #include <thread>
 #include <deque>
-#include <mutex>
 #include <iostream>
+#include <mutex>
+#include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -14,6 +15,7 @@
 #include <cmath>
 #include <fcntl.h>   /* File control definitions */
 #include <termios.h> /* POSIX terminal control definitions */
+#include <unistd.h>
 
 #define GL_SILENCE_DEPRECATION
 
@@ -128,6 +130,7 @@ constexpr int ScreenHeight = 460;
 constexpr int ScreenScale = 1;
 unsigned char ScreenPixmap[ScreenHeight][ScreenWidth];
 unsigned char ScreenImage[ScreenHeight][ScreenWidth][3];
+unsigned char ScreenImage2[ScreenHeight][ScreenWidth][3];
 unsigned char palettes[2][256][3];
 int rowPalettes[512];
 
@@ -308,8 +311,49 @@ int VideoModeSetPaletteEntry(int palette, int entry, float r, float g, float b)
     return 1;
 }
 
+class BinarySemaphore
+{
+// https://riptutorial.com/cplusplus/example/30142/semaphore-cplusplus-11
+public:
+    BinarySemaphore (int count_ = 0)
+    : count(count_) 
+    {
+    }
+    
+    inline void notify()
+    {
+        std::unique_lock<std::mutex> lock(mtx);
+	if(count < 1) {
+	    count++;
+	}
+        cv.notify_one();
+    }
+    inline void wait()
+    {
+        std::unique_lock<std::mutex> lock(mtx);
+        while(count == 0) {
+            //wait on the mutex until notify is called
+            cv.wait(lock);
+        }
+        count--;
+    }
+private:
+    std::mutex mtx;
+    std::condition_variable cv;
+    int count;
+};
+
+BinarySemaphore FrameSemaphore;
+volatile int FrameNumber = 0;
+
 void VideoModeWaitFrame()
 {
+    FrameSemaphore.wait();
+    // int oldFrameNumber = FrameNumber;
+    // while(oldFrameNumber == FrameNumber) {
+        // printf("WaitFrame: %d\n", FrameNumber);
+        // usleep(10000);
+    // }
 }
 
 void SaveImage()
@@ -600,18 +644,23 @@ void pixel(int x, int y, float bary[3], void *data)
 {
     ScreenVertex *s = (ScreenVertex *)data;
 
+    assert((s[0].r >= 0) && (s[0].r <= 1.0f));
+    assert((s[1].g >= 0) && (s[1].g <= 1.0f));
+    assert((s[2].b >= 0) && (s[2].b <= 1.0f));
+
     uint8_t r = (bary[0] * s[0].r + bary[1] * s[1].r + bary[2] * s[2].r) * 255;
     uint8_t g = (bary[0] * s[0].g + bary[1] * s[1].g + bary[2] * s[2].g) * 255;
     uint8_t b = (bary[0] * s[0].b + bary[1] * s[1].b + bary[2] * s[2].b) * 255;
 
-    ScreenImage[ScreenHeight - 1 - y][x][0] = r * 255;
-    ScreenImage[ScreenHeight - 1 - y][x][1] = g * 255;
-    ScreenImage[ScreenHeight - 1 - y][x][2] = b * 255;
+    ScreenImage2[ScreenHeight - 1 - y][x][0] = r;
+    ScreenImage2[ScreenHeight - 1 - y][x][1] = g;
+    ScreenImage2[ScreenHeight - 1 - y][x][2] = b;
 }
 
 void RasterizeTriangle(ScreenVertex *s0, ScreenVertex *s1, ScreenVertex *s2)
 {
     UseImageForSegmentDisplay = true; // XXX
+
     float v0[2];
     float v1[2];
     float v2[2];
@@ -631,12 +680,13 @@ void RasterizeTriangle(ScreenVertex *s0, ScreenVertex *s1, ScreenVertex *s2)
 
 void ClearColorBuffer(float r, float g, float b)
 {
+    memcpy(ScreenImage, ScreenImage2, sizeof(ScreenImage));
     UseImageForSegmentDisplay = true; // XXX
     for(int y = 0; y < ScreenHeight; y++) {
         for(int x = 0; x < ScreenWidth; x++) {
-            ScreenImage[ScreenHeight - 1 - y][x][0] = r * 255;
-            ScreenImage[ScreenHeight - 1 - y][x][1] = g * 255;
-            ScreenImage[ScreenHeight - 1 - y][x][2] = b * 255;
+            ScreenImage2[ScreenHeight - 1 - y][x][0] = r * 255;
+            ScreenImage2[ScreenHeight - 1 - y][x][1] = g * 255;
+            ScreenImage2[ScreenHeight - 1 - y][x][2] = b * 255;
         }
     }
 }
@@ -795,15 +845,15 @@ std::map<int, ScancodeASCIIRecord> ScancodeToASCII = {
     { GLFW_KEY_PERIOD, { '.', '>' } },
     { GLFW_KEY_SLASH, { '/', '?'} },
     { GLFW_KEY_0, { '0', ')' } },
-    { GLFW_KEY_0, { '1', '!' } },
-    { GLFW_KEY_0, { '2', '@' } },
-    { GLFW_KEY_0, { '3', '#' } },
-    { GLFW_KEY_0, { '4', '$' } },
-    { GLFW_KEY_0, { '5', '%' } },
-    { GLFW_KEY_0, { '6', '^' } },
-    { GLFW_KEY_0, { '7', '&' } },
-    { GLFW_KEY_0, { '8', '*' } },
-    { GLFW_KEY_0, { '9', '(' } },
+    { GLFW_KEY_1, { '1', '!' } },
+    { GLFW_KEY_2, { '2', '@' } },
+    { GLFW_KEY_3, { '3', '#' } },
+    { GLFW_KEY_4, { '4', '$' } },
+    { GLFW_KEY_5, { '5', '%' } },
+    { GLFW_KEY_6, { '6', '^' } },
+    { GLFW_KEY_7, { '7', '&' } },
+    { GLFW_KEY_8, { '8', '*' } },
+    { GLFW_KEY_9, { '9', '(' } },
     { GLFW_KEY_SEMICOLON, { ';', ':' } },
     { GLFW_KEY_EQUAL, { '=', '+' } },
     { GLFW_KEY_LEFT_BRACKET, { '[', '{' } },
@@ -1031,6 +1081,9 @@ void iterate_ui()
     redraw(my_window);
     CheckOpenGL(__FILE__, __LINE__);
     glfwSwapBuffers(my_window);
+    // FrameNumber++;
+    // printf("SwapBuffers: %d\n", FrameNumber);
+    FrameSemaphore.notify();
     CheckOpenGL(__FILE__, __LINE__);
 
     glfwPollEvents();
@@ -1160,7 +1213,8 @@ int main(int argc, char **argv)
             ProcessParsedCommand(argc - 1, argv + 1);
         }
         printf("* ");
-        while(int c = InputWaitChar()) {
+        int c;
+        while((!quitMyApp) && (c = InputWaitChar())) {
             ProcessKey(c);
         }
     }};
@@ -1168,20 +1222,7 @@ int main(int argc, char **argv)
     commandThread.detach();
 
     do {
-        glfwPollEvents();
-
-        if(glfwWindowShouldClose(my_window)) {
-            quitMyApp = true;
-        }
-
-        if(!quitMyApp) {
-            CheckOpenGL(__FILE__, __LINE__);
-            redraw(my_window);
-            CheckOpenGL(__FILE__, __LINE__);
-            glfwSwapBuffers(my_window);
-            CheckOpenGL(__FILE__, __LINE__);
-        }
-
+        iterate_ui();
     } while (!quitMyApp);
 
     FILE *fp = fopen("glimage.ppm", "wb");

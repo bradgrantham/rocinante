@@ -1,5 +1,6 @@
 #include <memory>
 #include <vector>
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -117,7 +118,8 @@ static void DrawIndexedTriangles(float object_time, bool draw_wireframe, bool fl
     pglEnableClientState(GL_VERTEX_ARRAY);
     pglEnableClientState(GL_NORMAL_ARRAY);
     pglVertexPointer(3, GL_FLOAT, sizeof(vertices[0]), (void*)&vertices[0].v[0]);
-    pglNormalPointer(GL_FLOAT, sizeof(vertices[0]), (void*)&vertices[0].n[0]);
+    const float *normalPointer = &vertices[0].n[0];
+    pglNormalPointer(GL_FLOAT, sizeof(vertices[0]), (void*)normalPointer);
 
     if(draw_wireframe) {
 #if 0
@@ -311,6 +313,7 @@ static int AppSpinModel(int argc, char **argv)
             }
 
             // draw triangles
+            VideoModeWaitFrame();
             DrawFrame(frame_time, draw_wireframe, flat_shade, vertices.data(), triangleIndices.data(), triangleIndices.size() / 3, size, center);
             frame_time += 1 / 30.0f;
 

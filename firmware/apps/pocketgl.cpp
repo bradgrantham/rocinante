@@ -1,7 +1,9 @@
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <cmath>
+#include <cassert>
 
 #ifndef M_PI
 #define M_PI 3.1415926
@@ -531,7 +533,7 @@ struct light {
     bool enabled;
 };
 
-static const int light_max = 4;
+static constexpr int light_max = 4;
 static light lights[light_max];
 
 struct material {
@@ -904,7 +906,7 @@ struct world_vertex
     // vec4f texcoord;
 };
 
-void fetch_vertex(int which, world_vertex *v)
+static void fetch_vertex(int which, world_vertex *v)
 {
     // XXX check vertex array enablement!!
     switch(vertex_array.type) {
@@ -936,7 +938,7 @@ void fetch_vertex(int which, world_vertex *v)
 }
 
 
-void light_vertex(material *mtl, const vec4f& coord, const vec3f& normal, vec4f& color)
+static void light_vertex(material *mtl, const vec4f& coord, const vec3f& normal, vec4f& color)
 {
     color.set(0.0f, 0.0f, 0.0f, 0.0f);
 
@@ -969,12 +971,7 @@ void light_vertex(material *mtl, const vec4f& coord, const vec3f& normal, vec4f&
     }
 }
 
-float clamp(float v)
-{
-	return v > 1.0f ? 1.0f : (v < 0.0f ? 0.0f : v);
-}
-
-void per_vertex(world_vertex *wv, ScreenVertex *sv)
+static void per_vertex(world_vertex *wv, ScreenVertex *sv)
 {
     vec4f tv;
     vec4f pv;
@@ -999,12 +996,12 @@ void per_vertex(world_vertex *wv, ScreenVertex *sv)
     sv->x = (pv[0] / pv[3] + 1) * viewport_width / 2 + viewport_x;
     sv->y = (1 - pv[1] / pv[3]) * viewport_height / 2 + viewport_y;
 
-    sv->r = clamp(wv->color[0]);
-    sv->g = clamp(wv->color[1]);
-    sv->b = clamp(wv->color[2]);
+    sv->r = std::clamp(wv->color[0], 0.0f, 1.0f);
+    sv->g = std::clamp(wv->color[1], 0.0f, 1.0f);
+    sv->b = std::clamp(wv->color[2], 0.0f, 1.0f);
 }
 
-void per_triangle(const ScreenVertex* sv0, const ScreenVertex* sv1, const ScreenVertex* sv2)
+static void per_triangle(const ScreenVertex* sv0, const ScreenVertex* sv1, const ScreenVertex* sv2)
 {
     int v1[2]; // sv0sv1 rotated by 90 degrees
     v1[0] = - (sv1->y - sv0->y);
@@ -1022,7 +1019,8 @@ void per_triangle(const ScreenVertex* sv0, const ScreenVertex* sv1, const Screen
     if(cull_face && !ccw)
         return;
 
-    // clip
+    // XXX clip
+
     RasterizeTriangle(*sv0, *sv1, *sv2);
 }
 
