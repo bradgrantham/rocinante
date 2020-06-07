@@ -1,17 +1,31 @@
 Close on segmented framebuffer
-    trapezoid to segments - gradient, textured, solid
-        assume already in the middle of Update
-    triangle to trapezoids - gradient, textured, solid
-    ClipSegment.*
+    What screen approach?
+        1) defer all triangles
+            N * 3 * ScreenVertex(4 + 4 + 3 + 2?) = N * 39, then still have to sort, then (2) or (3)
+            only need one scanline of unmerged segments-with-depth around for 2
+            still need to keep complete screen of segments-without-depth for SetScanlines style API
+                460 * sqrt(N)-ish * Segment(7 * 2) = sqrt(N) * 6440, then still have to merge
+            But one pass, top to bottom, output each SegmentWithDepth complete
+        2) triangles into sorted per-line segment list with depth, merge segments as rasterized
+            460 * sqrt(N)-ish * SegmentWithDepth(9 * 2) = sqrt(N) * 8280
+            Make SetScanlines take SegmentWithDepth and discard the depth
+        So if N < 2226, (1) uses less memory, else (2) uses less memory
+            32KB of deferred triangles is only like 1000 triangles anyway.
+            Teapot is 576 triangles
+            Polytope64 is 244 triangles
+            Polytope256 is 1012 triangles
+            So (1).
+            But 1000 triangles (evenly distributed sqrt(N) * segment) is 261836 bytes?  Yikes!
+        Therefore defer and then create screen one scanline at a time top to bottom, filling in VideoSegmentedScanline
+    triangle to trapezoids (gradient, textured, solid)
+    trapezoid to segments (gradient, textured, solid)
+    clear screen is initial segments at depth = 0xffff
     SetSegmentTextured
     SetSegmentSolid
-    MergeSegment
     PaintSegments
-    test triangle with each segment type
-    test multiple triangles with different segment types
     handle gradient, textured, solid in SetScanlines
     set aspect ratio in Segmented mode and honor in segtest
-Special nasty FB mode, 16 bits per pixel, Y8I4Q4? 100K RAM plus 50K VRAM: 320 x 240?
+Special nasty truecolor FB mode, 16 bits per pixel, Y8I4Q4? 100K RAM plus 50K VRAM: 320 x 240?
 Move Wolf to palette-RGB-style textures (reduce bandwidth to make up lookup & process cost?)
 honor aspect ratio in "show"
 Some things to improve in "show"
