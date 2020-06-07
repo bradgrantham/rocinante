@@ -73,12 +73,14 @@ void pglDrawElements(int primitive_type, int vertex_count, int index_type, const
 
 struct ScreenVertex
 {
-    float x, y;
+    float x, y, z;
     float r, g, b;
 };
 
-extern void RasterizeLine(const ScreenVertex& sv0, const ScreenVertex& sv1);
-extern void RasterizeTriangle(const ScreenVertex& sv0, const ScreenVertex& sv1, const ScreenVertex& sv2);
-extern void ClearColorBuffer(float r, float g, float b);
+extern void RasterizerStart();
+extern void RasterizerClear(float r, float g, float b);
+extern void RasterizerAddLine(const ScreenVertex& sv0, const ScreenVertex& sv1);
+extern void RasterizerAddTriangle(const ScreenVertex& sv0, const ScreenVertex& sv1, const ScreenVertex& sv2);
+extern void RasterizerEnd();
 
 }

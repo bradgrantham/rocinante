@@ -17,12 +17,11 @@
 
 #ifndef HOSTED
 
-void RasterizeLine(const ScreenVertex& sv0, const ScreenVertex& sv1)
-{}
-void RasterizeTriangle(const ScreenVertex& sv0, const ScreenVertex& sv1, const ScreenVertex& sv2)
-{}
-void ClearColorBuffer(float r, float g, float b)
-{}
+extern void RasterizerStart() {}
+extern void RasterizerClear(float r, float g, float b) {}
+extern void RasterizerAddLine(const ScreenVertex& sv0, const ScreenVertex& sv1) {}
+extern void RasterizerAddTriangle(const ScreenVertex& sv0, const ScreenVertex& sv1, const ScreenVertex& sv2) {}
+extern void RasterizerEnd() {}
 
 #endif
 
@@ -150,6 +149,8 @@ static void DrawIndexedTriangles(float object_time, bool draw_wireframe, bool fl
 
 void DrawFrame(float frame_time, bool draw_wireframe, bool flat_shade, const Vertex *vertices, const int *indices, int triangleCount, float size, float center[3])
 {
+    RasterizerStart();
+
     pglClear(GL_COLOR_BUFFER_BIT);
     CHECK_OPENGL(__LINE__);
 
@@ -164,6 +165,8 @@ void DrawFrame(float frame_time, bool draw_wireframe, bool flat_shade, const Ver
     DrawIndexedTriangles(object_time, draw_wireframe, flat_shade, vertices, indices, triangleCount, size, center);
 
     last_frame_time = frame_time;
+
+    RasterizerEnd();
 }
 
 void InitState()

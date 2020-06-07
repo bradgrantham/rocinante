@@ -995,6 +995,7 @@ static void per_vertex(world_vertex *wv, ScreenVertex *sv)
 
     sv->x = (pv[0] / pv[3] + 1) * viewport_width / 2 + viewport_x;
     sv->y = (1 - pv[1] / pv[3]) * viewport_height / 2 + viewport_y;
+    sv->z = (pv[2] / pv[3] + 1) / 2;
 
     sv->r = std::clamp(wv->color[0], 0.0f, 1.0f);
     sv->g = std::clamp(wv->color[1], 0.0f, 1.0f);
@@ -1021,7 +1022,7 @@ static void per_triangle(const ScreenVertex* sv0, const ScreenVertex* sv1, const
 
     // XXX clip
 
-    RasterizeTriangle(*sv0, *sv1, *sv2);
+    RasterizerAddTriangle(*sv0, *sv1, *sv2);
 }
 
 void pglDrawArrays(int primitive_type, int first, int count)
@@ -1063,11 +1064,11 @@ void pglDrawArrays(int primitive_type, int first, int count)
             for(int i = 1; i < count; i++) {
                 fetch_vertex(first + i, &wv2);
                 per_vertex(&wv2, &sv2);
-                RasterizeLine(sv1, sv2);
+                RasterizerAddLine(sv1, sv2);
                 sv1 = sv2;
             }
 
-            RasterizeLine(sv2, sv0);
+            RasterizerAddLine(sv2, sv0);
             break;
 
         default:
@@ -1122,11 +1123,11 @@ void pglDrawElements(int primitive_type, int element_count, int index_type, cons
             for(int i = 1; i < element_count; i++) {
                 fetch_vertex(indices[i], &wv2);
                 per_vertex(&wv2, &sv2);
-                RasterizeLine(sv1, sv2);
+                RasterizerAddLine(sv1, sv2);
                 sv1 = sv2;
             }
 
-            RasterizeLine(sv2, sv0);
+            RasterizerAddLine(sv2, sv0);
             break;
 
         default:
@@ -1138,7 +1139,7 @@ void pglDrawElements(int primitive_type, int element_count, int index_type, cons
 void pglClear(int bits)
 {
     if(bits & GL_COLOR_BUFFER_BIT){
-        ClearColorBuffer(clear_color[0], clear_color[1], clear_color[2]);
+        RasterizerClear(clear_color[0], clear_color[1], clear_color[2]);
         bits &= ~GL_COLOR_BUFFER_BIT;
     }
     if(bits != 0)

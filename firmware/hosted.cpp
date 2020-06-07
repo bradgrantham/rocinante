@@ -128,10 +128,11 @@ int PaintSegments(const VideoSegmentedScanlineSegment *segs, unsigned char (*pix
 constexpr int ScreenWidth = 704;
 constexpr int ScreenHeight = 460;
 constexpr int ScreenScale = 1;
-unsigned char ScreenPixmap[ScreenHeight][ScreenWidth];
-unsigned char ScreenImage[ScreenHeight][ScreenWidth][3];
-unsigned char ScreenImage2[ScreenHeight][ScreenWidth][3];
-unsigned char palettes[2][256][3];
+uint8_t ScreenPixmap[ScreenHeight][ScreenWidth];
+uint8_t ScreenImage[ScreenHeight][ScreenWidth][3];
+uint16_t ScreenDepth[ScreenHeight][ScreenWidth];
+uint8_t ScreenImage2[ScreenHeight][ScreenWidth][3];
+uint8_t palettes[2][256][3];
 int rowPalettes[512];
 
 enum {
@@ -190,6 +191,7 @@ int SegmentedSetScanlines(int scanlineCount, VideoSegmentedScanline *scanlines)
             return 4; // INVALID - exceeded length of line
         }
     }
+    VideoModeWaitFrame();
     std::scoped_lock<std::mutex> lk(SegmentsAccessMutex);
     for(int i = 0; i < ScreenHeight; i++) {
         SegmentsCopy[i].clear();
@@ -510,13 +512,15 @@ static void RegisterCommandTestSegmentMode(void)
 
 struct ScreenVertex
 {
-    float x, y;
+    float x, y, z;
     float r, g, b;
 };
 
 extern "C" {
 
-void RasterizeLine(const ScreenVertex& sv0, const ScreenVertex& sv1) {}
+void RasterizerStart() {}
+void RasterizerEnd() {}
+void RasterizerAddLine(const ScreenVertex& sv0, const ScreenVertex& sv1) {}
 
 static float triArea2f(float v0[2], float v1[2], float v2[2])
 {
@@ -651,13 +655,17 @@ void pixel(int x, int y, float bary[3], void *data)
     uint8_t r = (bary[0] * s[0].r + bary[1] * s[1].r + bary[2] * s[2].r) * 255;
     uint8_t g = (bary[0] * s[0].g + bary[1] * s[1].g + bary[2] * s[2].g) * 255;
     uint8_t b = (bary[0] * s[0].b + bary[1] * s[1].b + bary[2] * s[2].b) * 255;
+    uint16_t depth = (bary[0] * s[0].z + bary[1] * s[1].z + bary[2] * s[2].z) * 65535;
 
-    ScreenImage2[ScreenHeight - 1 - y][x][0] = r;
-    ScreenImage2[ScreenHeight - 1 - y][x][1] = g;
-    ScreenImage2[ScreenHeight - 1 - y][x][2] = b;
+    if(depth < ScreenDepth[ScreenHeight - 1 - y][x]) { 
+        ScreenImage2[ScreenHeight - 1 - y][x][0] = r;
+        ScreenImage2[ScreenHeight - 1 - y][x][1] = g;
+        ScreenImage2[ScreenHeight - 1 - y][x][2] = b;
+        ScreenDepth[ScreenHeight - 1 - y][x] = depth;
+    }
 }
 
-void RasterizeTriangle(ScreenVertex *s0, ScreenVertex *s1, ScreenVertex *s2)
+void RasterizerAddTriangle(ScreenVertex *s0, ScreenVertex *s1, ScreenVertex *s2)
 {
     UseImageForSegmentDisplay = true; // XXX
 
@@ -678,7 +686,7 @@ void RasterizeTriangle(ScreenVertex *s0, ScreenVertex *s1, ScreenVertex *s2)
     triRast(v0, v1, v2, viewport, s, pixel);
 }
 
-void ClearColorBuffer(float r, float g, float b)
+void RasterizerClear(float r, float g, float b)
 {
     memcpy(ScreenImage, ScreenImage2, sizeof(ScreenImage));
     UseImageForSegmentDisplay = true; // XXX
@@ -687,6 +695,7 @@ void ClearColorBuffer(float r, float g, float b)
             ScreenImage2[ScreenHeight - 1 - y][x][0] = r * 255;
             ScreenImage2[ScreenHeight - 1 - y][x][1] = g * 255;
             ScreenImage2[ScreenHeight - 1 - y][x][2] = b * 255;
+            ScreenDepth[ScreenHeight - 1 - y][x] = 0xFFFF;
         }
     }
 }
