@@ -518,10 +518,6 @@ struct ScreenVertex
 
 extern "C" {
 
-void RasterizerStart() {}
-void RasterizerEnd() {}
-void RasterizerAddLine(const ScreenVertex& sv0, const ScreenVertex& sv1) {}
-
 static float triArea2f(float v0[2], float v1[2], float v2[2])
 {
     float      s, a, b, c;
@@ -556,7 +552,7 @@ void calcBaryCoords2f(float v0[2], float v1[2], float v2[2], float p[2],
     *c = triArea2f(v0, v1, p) / area;
 }
 
-typedef void (*pixelFunc)(int x, int y, float bary[3], void *data);
+typedef void (*pixelFunc)(int x, int y, float bary[3], const void *data);
 
 void boxi2DClear(int bbox[4])
 {
@@ -601,7 +597,7 @@ void calcHalfPlaneDiffs(float v0[2], float v1[2], float v2[2],
 }
 
 void triRast(float v0[2], float v1[2], float v2[2], int viewport[4],
-    void *data, pixelFunc doPixel)
+    const void *data, pixelFunc doPixel)
 {
     int bbox[4];
     int i, j;
@@ -644,9 +640,9 @@ void triRast(float v0[2], float v1[2], float v2[2], int viewport[4],
     }
 }
 
-void pixel(int x, int y, float bary[3], void *data)
+void pixel(int x, int y, float bary[3], const void *data)
 {
-    ScreenVertex *s = (ScreenVertex *)data;
+    const ScreenVertex *s = (ScreenVertex *)data;
 
     assert((s[0].r >= 0) && (s[0].r <= 1.0f));
     assert((s[1].g >= 0) && (s[1].g <= 1.0f));
@@ -665,29 +661,45 @@ void pixel(int x, int y, float bary[3], void *data)
     }
 }
 
-void RasterizerAddTriangle(ScreenVertex *s0, ScreenVertex *s1, ScreenVertex *s2)
+struct Triangle
 {
-    UseImageForSegmentDisplay = true; // XXX
+    ScreenVertex v[3];
+};
 
+constexpr size_t MaxDeferredTriangleCount = 32768 / sizeof(Triangle);
+static Triangle DeferredTriangles[MaxDeferredTriangleCount];
+size_t DeferredTriangleCount = 0;
+
+int RasterizerAddTriangle(ScreenVertex *s0, ScreenVertex *s1, ScreenVertex *s2)
+{
+    if(DeferredTriangleCount >= MaxDeferredTriangleCount) {
+        return 1; // out of memory
+    }
+    auto &t = DeferredTriangles[DeferredTriangleCount++];
+    t.v[0] = *s0;
+    t.v[1] = *s1;
+    t.v[2] = *s2;
+    return 0;
+}
+
+static void HandleDeferredTriangle(const Triangle &t)
+{
     float v0[2];
     float v1[2];
     float v2[2];
-    v0[0] = s0->x;
-    v0[1] = s0->y;
-    v1[0] = s1->x;
-    v1[1] = s1->y;
-    v2[0] = s2->x;
-    v2[1] = s2->y;
+    v0[0] = t.v[0].x;
+    v0[1] = t.v[0].y;
+    v1[0] = t.v[1].x;
+    v1[1] = t.v[1].y;
+    v2[0] = t.v[2].x;
+    v2[1] = t.v[2].y;
     static int viewport[4] = {0, 0, ScreenWidth, ScreenHeight};
-    ScreenVertex s[3];
-    s[0] = *s0;
-    s[1] = *s1;
-    s[2] = *s2;
-    triRast(v0, v1, v2, viewport, s, pixel);
+    triRast(v0, v1, v2, viewport, t.v, pixel);
 }
 
 void RasterizerClear(float r, float g, float b)
 {
+    DeferredTriangleCount = 0; 
     memcpy(ScreenImage, ScreenImage2, sizeof(ScreenImage));
     UseImageForSegmentDisplay = true; // XXX
     for(int y = 0; y < ScreenHeight; y++) {
@@ -699,6 +711,26 @@ void RasterizerClear(float r, float g, float b)
         }
     }
 }
+
+void RasterizerStart()
+{
+    UseImageForSegmentDisplay = true; // XXX
+    DeferredTriangleCount = 0; 
+}
+
+void RasterizerEnd()
+{
+    for(size_t i = 0; i < DeferredTriangleCount; i++) {
+        HandleDeferredTriangle(DeferredTriangles[i]);
+    }
+    DeferredTriangleCount = 0; 
+}
+
+void RasterizerAddLine(const ScreenVertex& sv0, const ScreenVertex& sv1)
+{
+    abort();
+}
+
 
 };
 
@@ -767,9 +799,7 @@ static const char *image_fragment_shader = R"(
     void main()
     {
         ivec2 tc = ivec2(raster_coords.x, raster_coords.y);
-        // float pixel = texture(image, raster_coords * image_coord_scale);.x;
-        vec4 pixel = texture(image, raster_coords * image_coord_scale);
-        color = pixel; // vec4(pixel, pixel, pixel, 1);
+        color = texture(image, raster_coords * image_coord_scale);
     }
 )";
 

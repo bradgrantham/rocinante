@@ -19,8 +19,8 @@
 
 extern void RasterizerStart() {}
 extern void RasterizerClear(float r, float g, float b) {}
-extern void RasterizerAddLine(const ScreenVertex& sv0, const ScreenVertex& sv1) {}
-extern void RasterizerAddTriangle(const ScreenVertex& sv0, const ScreenVertex& sv1, const ScreenVertex& sv2) {}
+extern int RasterizerAddLine(const ScreenVertex& sv0, const ScreenVertex& sv1) { return 0; }
+extern int RasterizerAddTriangle(const ScreenVertex& sv0, const ScreenVertex& sv1, const ScreenVertex& sv2) { return 0; }
 extern void RasterizerEnd() {}
 
 #endif

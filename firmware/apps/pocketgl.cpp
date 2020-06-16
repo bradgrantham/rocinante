@@ -1002,7 +1002,7 @@ static void per_vertex(world_vertex *wv, ScreenVertex *sv)
     sv->b = std::clamp(wv->color[2], 0.0f, 1.0f);
 }
 
-static void per_triangle(const ScreenVertex* sv0, const ScreenVertex* sv1, const ScreenVertex* sv2)
+static int per_triangle(const ScreenVertex* sv0, const ScreenVertex* sv1, const ScreenVertex* sv2)
 {
     int v1[2]; // sv0sv1 rotated by 90 degrees
     v1[0] = - (sv1->y - sv0->y);
@@ -1018,11 +1018,11 @@ static void per_triangle(const ScreenVertex* sv0, const ScreenVertex* sv1, const
 
     // XXX only CCW
     if(cull_face && !ccw)
-        return;
+        return 0;
 
     // XXX clip
 
-    RasterizerAddTriangle(*sv0, *sv1, *sv2);
+    return RasterizerAddTriangle(*sv0, *sv1, *sv2); // XXX non-zero assumed to be out-of-memory
 }
 
 void pglDrawArrays(int primitive_type, int first, int count)
@@ -1039,7 +1039,10 @@ void pglDrawArrays(int primitive_type, int first, int count)
                 per_vertex(&wv0, &sv0);
                 per_vertex(&wv1, &sv1);
                 per_vertex(&wv2, &sv2);
-                per_triangle(&sv0, &sv1, &sv2);
+                if(per_triangle(&sv0, &sv1, &sv2) != 0) {
+                    set_gl_error(GL_OUT_OF_MEMORY);
+                    return;
+                }
             }
             break;
 
@@ -1051,7 +1054,10 @@ void pglDrawArrays(int primitive_type, int first, int count)
             for(int i = 2; i < count; i++) {
                 fetch_vertex(first + i, &wv2);
                 per_vertex(&wv2, &sv2);
-                per_triangle(&sv0, &sv1, &sv2);
+                if(per_triangle(&sv0, &sv1, &sv2) != 0) {
+                    set_gl_error(GL_OUT_OF_MEMORY);
+                    return;
+                }
                 sv1 = sv2;
             }
             break;
@@ -1064,11 +1070,17 @@ void pglDrawArrays(int primitive_type, int first, int count)
             for(int i = 1; i < count; i++) {
                 fetch_vertex(first + i, &wv2);
                 per_vertex(&wv2, &sv2);
-                RasterizerAddLine(sv1, sv2);
+                if(RasterizerAddLine(sv1, sv2) != 0) {
+                    set_gl_error(GL_OUT_OF_MEMORY);
+                    return;
+                }
                 sv1 = sv2;
             }
 
-            RasterizerAddLine(sv2, sv0);
+            if(RasterizerAddLine(sv2, sv0) != 0) {
+                set_gl_error(GL_OUT_OF_MEMORY);
+                return;
+            }
             break;
 
         default:
@@ -1098,7 +1110,10 @@ void pglDrawElements(int primitive_type, int element_count, int index_type, cons
                 per_vertex(&wv0, &sv0);
                 per_vertex(&wv1, &sv1);
                 per_vertex(&wv2, &sv2);
-                per_triangle(&sv0, &sv1, &sv2);
+                if(per_triangle(&sv0, &sv1, &sv2) != 0) {
+                    set_gl_error(GL_OUT_OF_MEMORY);
+                    return;
+                }
             }
             break;
 
@@ -1110,7 +1125,10 @@ void pglDrawElements(int primitive_type, int element_count, int index_type, cons
             for(int i = 2; i < element_count; i++) {
                 fetch_vertex(indices[i], &wv2);
                 per_vertex(&wv2, &sv2);
-                per_triangle(&sv0, &sv1, &sv2);
+                if(per_triangle(&sv0, &sv1, &sv2) != 0) {
+                    set_gl_error(GL_OUT_OF_MEMORY);
+                    return;
+                }
                 sv1 = sv2;
             }
             break;
@@ -1123,11 +1141,17 @@ void pglDrawElements(int primitive_type, int element_count, int index_type, cons
             for(int i = 1; i < element_count; i++) {
                 fetch_vertex(indices[i], &wv2);
                 per_vertex(&wv2, &sv2);
-                RasterizerAddLine(sv1, sv2);
+                if(RasterizerAddLine(sv1, sv2) != 0) {
+                    set_gl_error(GL_OUT_OF_MEMORY);
+                    return;
+                }
                 sv1 = sv2;
             }
 
-            RasterizerAddLine(sv2, sv0);
+            if(RasterizerAddLine(sv2, sv0) != 0) {
+                set_gl_error(GL_OUT_OF_MEMORY);
+                return;
+            }
             break;
 
         default:

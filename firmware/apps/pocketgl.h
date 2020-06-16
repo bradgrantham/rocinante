@@ -43,6 +43,8 @@ typedef unsigned int GLenum;
 #define GL_SMOOTH                         0x1D01
 
 #define GL_NO_ERROR                             0x0000
+#define GL_OUT_OF_MEMORY			0x0505
+
 
 GLenum pglGetError();
 void pglLoadIdentity();
@@ -79,8 +81,8 @@ struct ScreenVertex
 
 extern void RasterizerStart();
 extern void RasterizerClear(float r, float g, float b);
-extern void RasterizerAddLine(const ScreenVertex& sv0, const ScreenVertex& sv1);
-extern void RasterizerAddTriangle(const ScreenVertex& sv0, const ScreenVertex& sv1, const ScreenVertex& sv2);
+extern int RasterizerAddLine(const ScreenVertex& sv0, const ScreenVertex& sv1);
+extern int RasterizerAddTriangle(const ScreenVertex& sv0, const ScreenVertex& sv1, const ScreenVertex& sv2);
 extern void RasterizerEnd();
 
 }
