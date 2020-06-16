@@ -9,7 +9,7 @@ Close on segmented framebuffer
         2) triangles into sorted per-line segment list with depth, merge segments as rasterized
             460 * sqrt(N)-ish * SegmentWithDepth(9 * 2) = sqrt(N) * 8280
             Make SetScanlines take SegmentWithDepth and discard the depth
-        So if N < 2226, (1) uses less memory, else (2) uses less memory
+        If N < 2226, (1) uses less memory, else (2) uses less memory
             32KB of deferred triangles is only like 1000 triangles anyway.
             Teapot is 576 triangles
             Polytope64 is 244 triangles
