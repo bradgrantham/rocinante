@@ -77,6 +77,17 @@ struct ScreenVertex
 {
     float x, y, z;
     float r, g, b;
+
+    ScreenVertex operator+=(const ScreenVertex& v)
+    {
+        x += v.x;
+        y += v.y;
+        z += v.z;
+        r += v.r;
+        g += v.g;
+        b += v.b;
+        return *this;
+    }
 };
 
 extern void RasterizerStart();
