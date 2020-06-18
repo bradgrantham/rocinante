@@ -530,7 +530,7 @@ struct ScreenVertex
 struct TrapezoidVertex
 {
     float x;
-    int16_t zFixed16;
+    float z;
     int16_t rFixed16;
     int16_t gFixed16;
     int16_t bFixed16;
@@ -540,7 +540,7 @@ struct TrapezoidVertex
     TrapezoidVertex(const ScreenVertex& v)
     {
         x = v.x;
-        zFixed16 = v.z * 32767;
+        z = v.z;
         rFixed16 = v.r * 32767;
         gFixed16 = v.g * 32767;
         bFixed16 = v.b * 32767;
@@ -548,7 +548,7 @@ struct TrapezoidVertex
     TrapezoidVertex& operator=(const ScreenVertex& v)
     {
         x = v.x;
-        zFixed16 = v.z * 32767;
+        z = v.z;
         rFixed16 = v.r * 32767;
         gFixed16 = v.g * 32767;
         bFixed16 = v.b * 32767;
@@ -557,7 +557,7 @@ struct TrapezoidVertex
     TrapezoidVertex operator+=(const TrapezoidVertex& v)
     {
         x += v.x;
-        zFixed16 += v.zFixed16;
+        z += v.z;
         rFixed16 += v.rFixed16;
         gFixed16 += v.gFixed16;
         bFixed16 += v.bFixed16;
@@ -596,9 +596,9 @@ struct Trapezoid
     uint16_t next;
 };
 
-constexpr size_t MaxDeferredTrapezoidCount = (128 * 1024) / sizeof(Trapezoid);
+constexpr size_t MaxDeferredTrapezoidCount = (64 * 1024) / sizeof(Trapezoid);
 static Trapezoid DeferredTrapezoids[MaxDeferredTrapezoidCount];
-static uint16_t TrapezoidsByScanline[1024]; // XXX will need to allocate dynamically later
+static uint16_t DeferredTrapezoidsByScanline[1024]; // XXX will need to allocate dynamically later
 size_t DeferredTrapezoidCount = 0;
 
 // Y of topRight assumed to be the same as Y of topLeft
@@ -631,23 +631,21 @@ static int AddTrapezoid(const ScreenVertex& topLeft, const ScreenVertex& bottomL
     }
 
     float actualHeight = bottomLeft.y - topLeft.y;
-    float distanceTofirstCenter = firstScanlineCenter + 0.5f - topLeft.y;
+    float distanceToFirstCenter = firstScanlineCenter + 0.5f - topLeft.y;
 
     auto *t = &DeferredTrapezoids[DeferredTrapezoidCount++];
     ScreenVertex leftScanlineDelta = (bottomLeft - topLeft) / actualHeight;
     ScreenVertex rightScanlineDelta = (bottomRight - topRight) / actualHeight;
     t->leftScanlineDelta = leftScanlineDelta;
     t->rightScanlineDelta = rightScanlineDelta;
-    t->topLeft = topLeft + leftScanlineDelta * distanceTofirstCenter;
-    t->topRight = topRight + rightScanlineDelta * distanceTofirstCenter;
+    t->topLeft = topLeft + leftScanlineDelta * distanceToFirstCenter;
+    t->topRight = topRight + rightScanlineDelta * distanceToFirstCenter;
     t->top = firstScanlineCenter;
     t->scanlineCount = lastScanlineCenter - firstScanlineCenter + 1;
-    if(false) { // XXX debug
     assert(firstScanlineCenter > 0);
     assert(firstScanlineCenter < 1024);
-    t->next = TrapezoidsByScanline[firstScanlineCenter];
-    TrapezoidsByScanline[firstScanlineCenter] = t - DeferredTrapezoids;
-    }
+    t->next = DeferredTrapezoidsByScanline[firstScanlineCenter];
+    DeferredTrapezoidsByScanline[firstScanlineCenter] = t - DeferredTrapezoids;
 
 #if 0
     assert(t.topLeft.r >= 0.0f);
@@ -690,7 +688,7 @@ struct PixelAttributes
 
     PixelAttributes(const TrapezoidVertex& v)
     {
-        z = v.zFixed16 / 32767.0;
+        z = v.z;
         r = v.rFixed16 / 32767.0;
         g = v.gFixed16 / 32767.0;
         b = v.bFixed16 / 32767.0;
@@ -698,7 +696,7 @@ struct PixelAttributes
 
     PixelAttributes& operator=(const TrapezoidVertex& v)
     {
-        z = v.zFixed16 / 32767.0;
+        z = v.z;
         r = v.rFixed16 / 32767.0;
         g = v.gFixed16 / 32767.0;
         b = v.bFixed16 / 32767.0;
@@ -751,7 +749,7 @@ void drawpixel(int x, int y, const PixelAttributes& p)
 }
 
 
-void MakeScanline(const TrapezoidVertex& left, const TrapezoidVertex& right, int* startX, PixelAttributes* firstPixel, PixelAttributes* pixelDelta, int *pixelCount)
+void GetPixelRunParameters(const TrapezoidVertex& left, const TrapezoidVertex& right, int* startX, PixelAttributes* firstPixel, PixelAttributes* pixelDelta, int *pixelCount)
 {
     int firstPixelCenter = floorf(left.x + 0.5f);
     int lastPixelCenter = floorf(right.x - 0.5f);
@@ -763,32 +761,61 @@ void MakeScanline(const TrapezoidVertex& left, const TrapezoidVertex& right, int
     }
 
     float actualLength = right.x - left.x;
-    float distanceTofirstCenter = firstPixelCenter + 0.5f - left.x;
+    float distanceToFirstCenter = firstPixelCenter + 0.5f - left.x;
     *pixelDelta = (PixelAttributes(right) - PixelAttributes(left)) / actualLength;
-    *firstPixel = PixelAttributes(left) + *pixelDelta * distanceTofirstCenter;
+    *firstPixel = PixelAttributes(left) + *pixelDelta * distanceToFirstCenter;
     *pixelCount = lastPixelCenter - firstPixelCenter + 1;
     *startX = firstPixelCenter;
 }
 
-static void HandleDeferredTrapezoid(const Trapezoid &t)
+void ProcessOneTrapezoidScanline(int y, Trapezoid &t)
 {
-    TrapezoidVertex left = t.topLeft;
-    TrapezoidVertex right = t.topRight;
+    int x;
+    PixelAttributes pixelValues;
+    PixelAttributes pixelDelta;
+    int pixelCount;
 
-    int y = t.top;
-    for(int scanline = 0; scanline < t.scanlineCount; y++, scanline++) {
-        PixelAttributes pixelValues, pixelDelta;
-        int pixelCount, x;
+    GetPixelRunParameters(t.topLeft, t.topRight, &x, &pixelValues, &pixelDelta, &pixelCount);
 
-        MakeScanline(left, right, &x, &pixelValues, &pixelDelta, &pixelCount);
+    for(int pixel = 0; pixel < pixelCount; x++, pixel++) {
+        drawpixel(x, y, pixelValues);
+        pixelValues += pixelDelta;
+    }
 
-        for(int pixel = 0; pixel < pixelCount; x++, pixel++) {
-            drawpixel(x, y, pixelValues);
-            pixelValues += pixelDelta;
+    t.topLeft += t.leftScanlineDelta;
+    t.topRight += t.rightScanlineDelta;
+    t.scanlineCount--;
+}
+
+void ProcessScanlineListIncrementingPointer(int y, uint16_t *&curPointer, Trapezoid *trapezoids)
+{
+    while(*curPointer != 0xFFFF) {
+        Trapezoid& t = trapezoids[*curPointer];
+
+        ProcessOneTrapezoidScanline(y, t);
+        if(t.scanlineCount == 0) {
+            // delete this trapezoid from active list
+            *curPointer = t.next; // Set the pointer to the next trapezoid pointer to the next trapezoid in the list
+        } else {
+            curPointer = &t.next; // Set the next trapezoid pointer to point to the next field that points to the next trapezoid
         }
+    }
+}
 
-        left += t.leftScanlineDelta;
-        right += t.rightScanlineDelta;
+void ProcessTrapezoids(Trapezoid *trapezoids, uint16_t *byScanline)
+{
+    uint16_t active = 0xFFFF;
+
+    for(int y = 0; y < ScreenHeight; y++) {
+
+        uint16_t *curPointer = &active;
+
+        ProcessScanlineListIncrementingPointer(y, curPointer, trapezoids);
+        if(byScanline[y] != 0xFFFF) {
+
+            *curPointer = byScanline[y];
+            ProcessScanlineListIncrementingPointer(y, curPointer, trapezoids);
+        }
     }
 }
 
@@ -860,8 +887,8 @@ int RasterizerAddTriangle(ScreenVertex *s0, ScreenVertex *s1, ScreenVertex *s2)
 void RasterizerClear(float r, float g, float b)
 {
     DeferredTrapezoidCount = 0; 
-    for(int i = 0; i < sizeof(TrapezoidsByScanline) / sizeof(TrapezoidsByScanline[0]); i++) { 
-        TrapezoidsByScanline[i] = 0xffff;
+    for(int i = 0; i < sizeof(DeferredTrapezoidsByScanline) / sizeof(DeferredTrapezoidsByScanline[0]); i++) { 
+        DeferredTrapezoidsByScanline[i] = 0xffff;
     }
     memcpy(ScreenImage, ScreenImage2, sizeof(ScreenImage));
     UseImageForSegmentDisplay = true; // XXX
@@ -883,9 +910,12 @@ void RasterizerStart()
 
 void RasterizerEnd()
 {
-    for(size_t i = 0; i < DeferredTrapezoidCount; i++) {
-        HandleDeferredTrapezoid(DeferredTrapezoids[i]);
+    static size_t MaxCount = 0;
+    if(DeferredTrapezoidCount > MaxCount) {
+        MaxCount = DeferredTrapezoidCount;
+        printf("%zd in traps\n", sizeof(Trapezoid) * MaxCount);
     }
+    ProcessTrapezoids(DeferredTrapezoids, DeferredTrapezoidsByScanline);
     DeferredTrapezoidCount = 0; 
 }
 
