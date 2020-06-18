@@ -527,165 +527,43 @@ struct ScreenVertex
     }
 };
 
-extern "C" {
-
-static float triArea2f(float v0[2], float v1[2], float v2[2])
+struct TrapezoidVertex
 {
-    float      s, a, b, c;
-    float      av[2], bv[2], cv[2];
+    float x;
+    int16_t zFixed16;
+    int16_t rFixed16;
+    int16_t gFixed16;
+    int16_t bFixed16;
 
-    /*
-     * faster area calculation?  length of cross product / 2? */
-    av[0] = v1[0] - v0[0];
-    av[1] = v1[1] - v0[1];
+    TrapezoidVertex() {}
 
-    bv[0] = v2[0] - v1[0];
-    bv[1] = v2[1] - v1[1];
-
-    cv[0] = v0[0] - v2[0];
-    cv[1] = v0[1] - v2[1];
-
-    a = sqrtf(av[0] * av[0] + av[1] * av[1]);
-    b = sqrtf(bv[0] * bv[0] + bv[1] * bv[1]);
-    c = sqrtf(cv[0] * cv[0] + cv[1] * cv[1]);
-
-    s = (a + b + c) / 2;
-    return sqrtf(s * (s - a) * (s - b) * (s - c));
-}
-
-void calcBaryCoords2f(float v0[2], float v1[2], float v2[2], float p[2],
-    float *a, float *b, float *c)
-{
-    float area;
-    area = triArea2f(v0, v1, v2);
-    *a = triArea2f(v1, v2, p) / area;
-    *b = triArea2f(v2, v0, p) / area;
-    *c = triArea2f(v0, v1, p) / area;
-}
-
-typedef void (*pixelFunc)(int x, int y, float bary[3], const void *data);
-
-void boxi2DClear(int bbox[4])
-{
-    bbox[0] = INT_MAX;
-    bbox[1] = INT_MIN;
-    bbox[2] = INT_MAX;
-    bbox[3] = INT_MIN;
-}
-
-void boxi2DGrow(int bbox[4], float *v)
-{
-    if(floor(v[0]) < bbox[0]) bbox[0] = floor(v[0]);
-    if(ceil(v[0]) > bbox[1]) bbox[1] = ceil(v[0]);
-    if(floor(v[1]) < bbox[2]) bbox[2] = floor(v[1]);
-    if(ceil(v[1]) > bbox[3]) bbox[3] = ceil(v[1]);
-}
-
-void boxi2DIsect(int bb1[4], int bb2[4], int r[4])
-{
-    r[0] = (bb1[0] < bb2[0]) ? bb1[0] : bb1[0];
-    r[1] = (bb1[1] > bb2[1]) ? bb1[1] : bb1[1];
-    r[2] = (bb1[2] < bb2[2]) ? bb1[2] : bb1[2];
-    r[3] = (bb1[3] > bb2[3]) ? bb1[3] : bb1[3];
-}
-
-float evalHalfPlane(float v0[2], float v1[2], float v2[2], float x, float y)
-{
-    float n[2];
-
-    n[0] = - (v1[1] - v0[1]);
-    n[1] = v1[0] - v0[0];
-
-    return ((x - v0[0]) * n[0] + (y - v0[1]) * n[1]) / 
-        ((v2[0] - v0[0]) * n[0] + (v2[1] - v0[1]) * n[1]);
-}
-
-void calcHalfPlaneDiffs(float v0[2], float v1[2], float v2[2],
-    float *dx, float *dy)
-{
-    *dx = evalHalfPlane(v0, v1, v2, 1, 0) - evalHalfPlane(v0, v1, v2, 0, 0);
-    *dy = evalHalfPlane(v0, v1, v2, 0, 1) - evalHalfPlane(v0, v1, v2, 0, 0);
-}
-
-void triRast(float v0[2], float v1[2], float v2[2], int viewport[4],
-    const void *data, pixelFunc doPixel)
-{
-    int bbox[4];
-    int i, j;
-    float bary[3];
-    float dxa, dxb, dxc;
-    float dya, dyb, dyc;
-    float rowa, rowb, rowc;
-
-    boxi2DClear(bbox);
-    boxi2DGrow(bbox, v0);
-    boxi2DGrow(bbox, v1);
-    boxi2DGrow(bbox, v2);
-    boxi2DIsect(bbox, viewport, bbox);
-
-    calcHalfPlaneDiffs(v1, v2, v0, &dxa, &dya);
-    rowa = evalHalfPlane(v1, v2, v0, bbox[0] + 0.5f, bbox[2] + 0.5f);
-
-    calcHalfPlaneDiffs(v2, v0, v1, &dxb, &dyb);
-    rowb = evalHalfPlane(v2, v0, v1, bbox[0] + 0.5f, bbox[2] + 0.5f);
-
-    calcHalfPlaneDiffs(v0, v1, v2, &dxc, &dyc);
-    rowc = evalHalfPlane(v0, v1, v2, bbox[0] + 0.5f, bbox[2] + 0.5f);
-
-    for(j = bbox[2]; j < bbox[3]; j++) {
-        bary[0] = rowa;
-        bary[1] = rowb;
-        bary[2] = rowc;
-	for(i = bbox[0]; i < bbox[1]; i++) {
-	    if((bary[0] > -0.001 && bary[0] < 1.001f) &&
-	        (bary[1] > -0.001 && bary[1] < 1.001f) &&
-	        (bary[2] > -0.001 && bary[2] < 1.001f))
-		    doPixel(i, j, bary, data);
-	    bary[0] += dxa;
-	    bary[1] += dxb;
-	    bary[2] += dxc;
-	}
-	rowa += dya;
-	rowb += dyb;
-	rowc += dyc;
+    TrapezoidVertex(const ScreenVertex& v)
+    {
+        x = v.x;
+        zFixed16 = v.z * 32767;
+        rFixed16 = v.r * 32767;
+        gFixed16 = v.g * 32767;
+        bFixed16 = v.b * 32767;
     }
-}
-
-void drawpixel(int x, int y, const ScreenVertex& v)
-{
-    uint8_t r = v.r * 255;
-    uint8_t g = v.g * 255;
-    uint8_t b = v.b * 255;
-    uint16_t depth = v.z * 65535;
-
-    if(depth < ScreenDepth[y][x]) { 
-        ScreenImage2[y][x][0] = r;
-        ScreenImage2[y][x][1] = g;
-        ScreenImage2[y][x][2] = b;
-        ScreenDepth[y][x] = depth;
+    TrapezoidVertex& operator=(const ScreenVertex& v)
+    {
+        x = v.x;
+        zFixed16 = v.z * 32767;
+        rFixed16 = v.r * 32767;
+        gFixed16 = v.g * 32767;
+        bFixed16 = v.b * 32767;
+        return *this;
     }
-}
-
-void barypixel(int x, int y, float bary[3], const void *data)
-{
-    const ScreenVertex *s = (ScreenVertex *)data;
-
-    assert((s[0].r >= 0) && (s[0].r <= 1.0f));
-    assert((s[1].g >= 0) && (s[1].g <= 1.0f));
-    assert((s[2].b >= 0) && (s[2].b <= 1.0f));
-
-    uint8_t r = (bary[0] * s[0].r + bary[1] * s[1].r + bary[2] * s[2].r) * 255;
-    uint8_t g = (bary[0] * s[0].g + bary[1] * s[1].g + bary[2] * s[2].g) * 255;
-    uint8_t b = (bary[0] * s[0].b + bary[1] * s[1].b + bary[2] * s[2].b) * 255;
-    uint16_t depth = (bary[0] * s[0].z + bary[1] * s[1].z + bary[2] * s[2].z) * 65535;
-
-    if(depth < ScreenDepth[ScreenHeight - 1 - y][x]) { 
-        ScreenImage2[ScreenHeight - 1 - y][x][0] = r;
-        ScreenImage2[ScreenHeight - 1 - y][x][1] = g;
-        ScreenImage2[ScreenHeight - 1 - y][x][2] = b;
-        ScreenDepth[ScreenHeight - 1 - y][x] = depth;
+    TrapezoidVertex operator+=(const TrapezoidVertex& v)
+    {
+        x += v.x;
+        zFixed16 += v.zFixed16;
+        rFixed16 += v.rFixed16;
+        gFixed16 += v.gFixed16;
+        bFixed16 += v.bFixed16;
+        return *this;
     }
-}
+};
 
 ScreenVertex operator-(const ScreenVertex& v1, const ScreenVertex& v0)
 {
@@ -709,15 +587,18 @@ ScreenVertex operator*(const ScreenVertex& v, float f)
 
 struct Trapezoid
 {
-    ScreenVertex topLeft;
-    ScreenVertex topRight;
-    int scanlineCount;
-    ScreenVertex leftScanlineDelta;
-    ScreenVertex rightScanlineDelta;
+    uint16_t top;
+    uint16_t scanlineCount;
+    TrapezoidVertex topLeft;
+    TrapezoidVertex topRight;
+    TrapezoidVertex leftScanlineDelta;
+    TrapezoidVertex rightScanlineDelta;
+    uint16_t next;
 };
 
-constexpr size_t MaxDeferredTrapezoidCount = 65536 / sizeof(Trapezoid);
+constexpr size_t MaxDeferredTrapezoidCount = (128 * 1024) / sizeof(Trapezoid);
 static Trapezoid DeferredTrapezoids[MaxDeferredTrapezoidCount];
+static uint16_t TrapezoidsByScanline[1024]; // XXX will need to allocate dynamically later
 size_t DeferredTrapezoidCount = 0;
 
 // Y of topRight assumed to be the same as Y of topLeft
@@ -752,13 +633,23 @@ static int AddTrapezoid(const ScreenVertex& topLeft, const ScreenVertex& bottomL
     float actualHeight = bottomLeft.y - topLeft.y;
     float distanceTofirstCenter = firstScanlineCenter + 0.5f - topLeft.y;
 
-    auto &t = DeferredTrapezoids[DeferredTrapezoidCount++];
-    t.leftScanlineDelta = (bottomLeft - topLeft) / actualHeight;
-    t.rightScanlineDelta = (bottomRight - topRight) / actualHeight;
-    t.topLeft = topLeft + t.leftScanlineDelta * distanceTofirstCenter;
-    t.topRight = topRight + t.rightScanlineDelta * distanceTofirstCenter;
-    t.scanlineCount = lastScanlineCenter - firstScanlineCenter + 1;
+    auto *t = &DeferredTrapezoids[DeferredTrapezoidCount++];
+    ScreenVertex leftScanlineDelta = (bottomLeft - topLeft) / actualHeight;
+    ScreenVertex rightScanlineDelta = (bottomRight - topRight) / actualHeight;
+    t->leftScanlineDelta = leftScanlineDelta;
+    t->rightScanlineDelta = rightScanlineDelta;
+    t->topLeft = topLeft + leftScanlineDelta * distanceTofirstCenter;
+    t->topRight = topRight + rightScanlineDelta * distanceTofirstCenter;
+    t->top = firstScanlineCenter;
+    t->scanlineCount = lastScanlineCenter - firstScanlineCenter + 1;
+    if(false) { // XXX debug
+    assert(firstScanlineCenter > 0);
+    assert(firstScanlineCenter < 1024);
+    t->next = TrapezoidsByScanline[firstScanlineCenter];
+    TrapezoidsByScanline[firstScanlineCenter] = t - DeferredTrapezoids;
+    }
 
+#if 0
     assert(t.topLeft.r >= 0.0f);
     assert(t.topLeft.g >= 0.0f);
     assert(t.topLeft.b >= 0.0f);
@@ -772,21 +663,136 @@ static int AddTrapezoid(const ScreenVertex& topLeft, const ScreenVertex& bottomL
     assert(t.topRight.g <= 1.0f);
     assert(t.topRight.b <= 1.0f);
 
-    assert(t.topLeft.r + t.leftScanlineDelta.r * (t.scanlineCount - 1) >= 0.0f);
-    assert(t.topLeft.r + t.leftScanlineDelta.r * (t.scanlineCount - 1) <= 1.0f);
-    assert(t.topLeft.g + t.leftScanlineDelta.g * (t.scanlineCount - 1) >= 0.0f);
-    assert(t.topLeft.g + t.leftScanlineDelta.g * (t.scanlineCount - 1) <= 1.0f);
-    assert(t.topLeft.b + t.leftScanlineDelta.b * (t.scanlineCount - 1) >= 0.0f);
-    assert(t.topLeft.b + t.leftScanlineDelta.b * (t.scanlineCount - 1) <= 1.0f);
-    assert(t.topRight.r + t.rightScanlineDelta.r * (t.scanlineCount - 1) >= 0.0f);
-    assert(t.topRight.r + t.rightScanlineDelta.r * (t.scanlineCount - 1) <= 1.0f);
-    assert(t.topRight.g + t.rightScanlineDelta.g * (t.scanlineCount - 1) >= 0.0f);
-    assert(t.topRight.g + t.rightScanlineDelta.g * (t.scanlineCount - 1) <= 1.0f);
-    assert(t.topRight.b + t.rightScanlineDelta.b * (t.scanlineCount - 1) >= 0.0f);
-    assert(t.topRight.b + t.rightScanlineDelta.b * (t.scanlineCount - 1) <= 1.0f);
+    assert(t.topLeft.r + t.leftScanlineDelta.r * (t.scanlineCount - 1) >= -.000001f);
+    assert(t.topLeft.r + t.leftScanlineDelta.r * (t.scanlineCount - 1) <= 1.000001f);
+    assert(t.topLeft.g + t.leftScanlineDelta.g * (t.scanlineCount - 1) >= -.000001f);
+    assert(t.topLeft.g + t.leftScanlineDelta.g * (t.scanlineCount - 1) <= 1.000001f);
+    assert(t.topLeft.b + t.leftScanlineDelta.b * (t.scanlineCount - 1) >= -.000001f);
+    assert(t.topLeft.b + t.leftScanlineDelta.b * (t.scanlineCount - 1) <= 1.000001f);
+    assert(t.topRight.r + t.rightScanlineDelta.r * (t.scanlineCount - 1) >= -.000001f);
+    assert(t.topRight.r + t.rightScanlineDelta.r * (t.scanlineCount - 1) <= 1.000001f);
+    assert(t.topRight.g + t.rightScanlineDelta.g * (t.scanlineCount - 1) >= -.000001f);
+    assert(t.topRight.g + t.rightScanlineDelta.g * (t.scanlineCount - 1) <= 1.000001f);
+    assert(t.topRight.b + t.rightScanlineDelta.b * (t.scanlineCount - 1) >= -.000001f);
+    assert(t.topRight.b + t.rightScanlineDelta.b * (t.scanlineCount - 1) <= 1.000001f);
+#endif
 
     return 0;
 }
+
+struct PixelAttributes
+{
+    float z, r, g, b;
+
+    PixelAttributes() : z(0), r(0), g(0), b(0) {}
+
+    PixelAttributes(float z_, float r_, float g_, float b_) : z(z_), r(r_), g(g_), b(b_) {}
+
+    PixelAttributes(const TrapezoidVertex& v)
+    {
+        z = v.zFixed16 / 32767.0;
+        r = v.rFixed16 / 32767.0;
+        g = v.gFixed16 / 32767.0;
+        b = v.bFixed16 / 32767.0;
+    }
+
+    PixelAttributes& operator=(const TrapezoidVertex& v)
+    {
+        z = v.zFixed16 / 32767.0;
+        r = v.rFixed16 / 32767.0;
+        g = v.gFixed16 / 32767.0;
+        b = v.bFixed16 / 32767.0;
+        return *this;
+    }
+
+    PixelAttributes operator+=(const PixelAttributes& v)
+    {
+        z += v.z;
+        r += v.r;
+        g += v.g;
+        b += v.b;
+        return *this;
+    }
+};
+
+PixelAttributes operator-(const PixelAttributes& v1, const PixelAttributes& v0)
+{
+    return {v1.z - v0.z, v1.r - v0.r, v1.g - v0.g, v1.b - v0.b};
+}
+
+PixelAttributes operator+(const PixelAttributes& v0, const PixelAttributes& v1)
+{
+    return {v1.z + v0.z, v1.r + v0.r, v1.g + v0.g, v1.b + v0.b};
+}
+
+PixelAttributes operator/(const PixelAttributes& v, float f)
+{
+    return {v.z / f, v.r / f, v.g / f, v.b / f};
+}
+
+PixelAttributes operator*(const PixelAttributes& v, float f)
+{
+    return {v.z * f, v.r * f, v.g * f, v.b * f};
+}
+
+void drawpixel(int x, int y, const PixelAttributes& p)
+{
+    uint8_t r = p.r * 255;
+    uint8_t g = p.g * 255;
+    uint8_t b = p.b * 255;
+    uint16_t depth = p.z * 65535;
+
+    if(depth < ScreenDepth[y][x]) { 
+        ScreenImage2[y][x][0] = r;
+        ScreenImage2[y][x][1] = g;
+        ScreenImage2[y][x][2] = b;
+        ScreenDepth[y][x] = depth;
+    }
+}
+
+
+void MakeScanline(const TrapezoidVertex& left, const TrapezoidVertex& right, int* startX, PixelAttributes* firstPixel, PixelAttributes* pixelDelta, int *pixelCount)
+{
+    int firstPixelCenter = floorf(left.x + 0.5f);
+    int lastPixelCenter = floorf(right.x - 0.5f);
+
+    if(firstPixelCenter > lastPixelCenter) {
+        *pixelCount = 0;
+        // Then the line didn't cross any scanline centers
+        return;
+    }
+
+    float actualLength = right.x - left.x;
+    float distanceTofirstCenter = firstPixelCenter + 0.5f - left.x;
+    *pixelDelta = (PixelAttributes(right) - PixelAttributes(left)) / actualLength;
+    *firstPixel = PixelAttributes(left) + *pixelDelta * distanceTofirstCenter;
+    *pixelCount = lastPixelCenter - firstPixelCenter + 1;
+    *startX = firstPixelCenter;
+}
+
+static void HandleDeferredTrapezoid(const Trapezoid &t)
+{
+    TrapezoidVertex left = t.topLeft;
+    TrapezoidVertex right = t.topRight;
+
+    int y = t.top;
+    for(int scanline = 0; scanline < t.scanlineCount; y++, scanline++) {
+        PixelAttributes pixelValues, pixelDelta;
+        int pixelCount, x;
+
+        MakeScanline(left, right, &x, &pixelValues, &pixelDelta, &pixelCount);
+
+        for(int pixel = 0; pixel < pixelCount; x++, pixel++) {
+            drawpixel(x, y, pixelValues);
+            pixelValues += pixelDelta;
+        }
+
+        left += t.leftScanlineDelta;
+        right += t.rightScanlineDelta;
+    }
+}
+
+extern "C" {
 
 int RasterizerAddTriangle(ScreenVertex *s0, ScreenVertex *s1, ScreenVertex *s2)
 {
@@ -851,50 +857,12 @@ int RasterizerAddTriangle(ScreenVertex *s0, ScreenVertex *s1, ScreenVertex *s2)
     return 0;
 }
 
-void MakeScanline(const ScreenVertex& left, const ScreenVertex& right, ScreenVertex* firstPixel, ScreenVertex* pixelDelta, int *pixelCount)
-{
-    int firstPixelCenter = floorf(left.x + 0.5f);
-    int lastPixelCenter = floorf(right.x - 0.5f);
-
-    if(firstPixelCenter > lastPixelCenter) {
-        *pixelCount = 0;
-        // Then the line didn't cross any scanline centers
-        return;
-    }
-
-    float actualLength = right.x - left.x;
-    float distanceTofirstCenter = firstPixelCenter + 0.5f - left.x;
-    *pixelDelta = (right - left) / actualLength;
-    *firstPixel = left + *pixelDelta * distanceTofirstCenter;
-    *pixelCount = lastPixelCenter - firstPixelCenter + 1;
-}
-
-static void HandleDeferredTrapezoid(const Trapezoid &t)
-{
-    ScreenVertex left = t.topLeft;
-    ScreenVertex right = t.topRight;
-
-    int y = floorf(t.topLeft.y);
-    for(int scanline = 0; scanline < t.scanlineCount; y++, scanline++) {
-        ScreenVertex pixelValues, pixelDelta;
-        int pixelCount;
-
-        MakeScanline(left, right, &pixelValues, &pixelDelta, &pixelCount);
-
-        int x = floorf(pixelValues.x);
-        for(int pixel = 0; pixel < pixelCount; x++, pixel++) {
-            drawpixel(x, y, pixelValues);
-            pixelValues += pixelDelta;
-        }
-
-        left += t.leftScanlineDelta;
-        right += t.rightScanlineDelta;
-    }
-}
-
 void RasterizerClear(float r, float g, float b)
 {
     DeferredTrapezoidCount = 0; 
+    for(int i = 0; i < sizeof(TrapezoidsByScanline) / sizeof(TrapezoidsByScanline[0]); i++) { 
+        TrapezoidsByScanline[i] = 0xffff;
+    }
     memcpy(ScreenImage, ScreenImage2, sizeof(ScreenImage));
     UseImageForSegmentDisplay = true; // XXX
     for(int y = 0; y < ScreenHeight; y++) {
