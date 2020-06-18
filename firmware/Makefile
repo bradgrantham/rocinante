@@ -9,6 +9,7 @@ OPT             =       -O2 -g -funroll-loops -ffast-math
 
 # TOOLROOT        ?=      $(HOME)/trees/gcc-arm-none-eabi-5_3-2016q1
 TOOLROOT        ?=      $(HOME)/packages/gcc-arm-none-eabi-7-2018-q2-update
+# TOOLROOT        ?=      $(HOME)/Downloads/gcc-arm-none-eabi-9-2020-q2-update
 # STM32FCUBEROOT  ?=      $(HOME)/trees/STM32Cube_FW_F4_V1.9.0
 # STM32FCUBEROOT  ?=      $(HOME)/packages/STM32Cube_FW_F4_V1.21.0/
 STM32FCUBEROOT  ?=      $(HOME)/STM32Cube/Repository/STM32Cube_FW_F7_V1.15.0/
@@ -52,12 +53,9 @@ COBJECTS = \
         ff.o \
         diskio.o \
         ff_unicode.o \
-        apps/less.o \
         ps2_keyboard.o \
         keyboard.o \
-        apps/vile.o \
         textport.o \
-        apps/wolf.o \
         wolftextures.o \
         $(NULL)
         # need ff_unicode if ExFAT and LFN support are compiled in
@@ -77,6 +75,9 @@ CXXOBJECTS = \
         apps/pocketgl.o \
         utility.o \
         segment_utility.o \
+        apps/vile.o \
+        apps/less.o \
+        apps/wolf.o \
         $(NULL)
 
 OBJECTS = $(CXXOBJECTS) $(COBJECTS)
@@ -120,6 +121,7 @@ burn: main.dfu
 segment_test: segment_test.cpp segment_utility.cpp
 
 hosted: apps/showimage.cpp utility.cpp graphics.cpp hosted.cpp apps/spin.cpp apps/pocketgl.cpp segment_utility.cpp gl_utility.cpp commandline.cpp
-	c++ $(CXXFLAGS) $(OPT) -I. -I/opt/local/include/ -L/opt/local/lib -std=c++17 -lglfw -framework OpenGL -framework Cocoa -framework IOkit $^ -o $@ 
+	c++ -DHOSTED $(CXXFLAGS) $(OPT) -I. -I/opt/local/include/ -L/opt/local/lib -std=c++17 -lglfw -framework OpenGL -framework Cocoa -framework IOkit $^ -o $@ 
+	# c++ -DHOSTED $(CXXFLAGS) $(OPT) -I. -I/opt/local/include/ -L/opt/local/lib -std=c++17 $^ -o $@ -lglfw -lGLEW -lpthread -lGL
 
 #apps/showimage.cpp utility.cpp graphics.cpp hosted.cpp apps/spin.cpp apps/pocketgl.cpp segment_utility.cpp -o hosted
