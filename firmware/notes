@@ -25,6 +25,18 @@ Close on segmented framebuffer
     PaintSegments
     handle gradient, textured, solid in SetScanlines
     set aspect ratio in Segmented mode and honor in segtest
+    teapot with Enable(CULLFACE):
+        max 74 segments in one row
+        max 8651 segments in frame
+        max 41184 traps
+    polytope64 with Enable(CULLFACE):
+        max 35 segments in one row
+        max 6168 segments in frame
+        max 17280 traps
+    polytope256 with Enable(CULLFACE):
+        max 62 segments in one row
+        max 11426 segments in frame
+        max 64728 traps
 Special nasty truecolor FB mode, 16 bits per pixel, Y8I4Q4? 100K RAM plus 50K VRAM: 320 x 240?
 Move Wolf to palette-RGB-style textures (reduce bandwidth to make up lookup & process cost?)
 honor aspect ratio in "show"

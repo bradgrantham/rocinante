@@ -787,12 +787,14 @@ void ProcessOneTrapezoidScanline(int y, Trapezoid &t)
     t.scanlineCount--;
 }
 
-void ProcessScanlineListIncrementingPointer(int y, uint16_t *&curPointer, Trapezoid *trapezoids)
+int ProcessScanlineListIncrementingPointer(int y, uint16_t *&curPointer, Trapezoid *trapezoids)
 {
+    int segmentCount = 0;
     while(*curPointer != 0xFFFF) {
         Trapezoid& t = trapezoids[*curPointer];
 
         ProcessOneTrapezoidScanline(y, t);
+        segmentCount ++;
         if(t.scanlineCount == 0) {
             // delete this trapezoid from active list
             *curPointer = t.next; // Set the pointer to the next trapezoid pointer to the next trapezoid in the list
@@ -800,22 +802,37 @@ void ProcessScanlineListIncrementingPointer(int y, uint16_t *&curPointer, Trapez
             curPointer = &t.next; // Set the next trapezoid pointer to point to the next field that points to the next trapezoid
         }
     }
+    return segmentCount;
 }
+
 
 void ProcessTrapezoids(Trapezoid *trapezoids, uint16_t *byScanline)
 {
     uint16_t active = 0xFFFF;
+    static int MaxScanlineSegmentCount = 0;
+    static int MaxFrameSegmentCount = 0;
+    int totalSegmentCount = 0;
 
     for(int y = 0; y < ScreenHeight; y++) {
 
         uint16_t *curPointer = &active;
 
-        ProcessScanlineListIncrementingPointer(y, curPointer, trapezoids);
+        int segmentCount = ProcessScanlineListIncrementingPointer(y, curPointer, trapezoids);
         if(byScanline[y] != 0xFFFF) {
 
             *curPointer = byScanline[y];
-            ProcessScanlineListIncrementingPointer(y, curPointer, trapezoids);
+            segmentCount += ProcessScanlineListIncrementingPointer(y, curPointer, trapezoids);
         }
+        if(segmentCount > MaxScanlineSegmentCount) {
+            MaxScanlineSegmentCount = segmentCount;
+            printf("max %d segments in one row\n", MaxScanlineSegmentCount);
+        }
+        totalSegmentCount += segmentCount;
+    }
+
+    if(totalSegmentCount > MaxFrameSegmentCount) {
+        MaxFrameSegmentCount = totalSegmentCount;
+        printf("max %d segments in frame\n", MaxFrameSegmentCount);
     }
 }
 
@@ -913,7 +930,7 @@ void RasterizerEnd()
     static size_t MaxCount = 0;
     if(DeferredTrapezoidCount > MaxCount) {
         MaxCount = DeferredTrapezoidCount;
-        printf("%zd in traps\n", sizeof(Trapezoid) * MaxCount);
+        printf("max %zd traps\n", sizeof(Trapezoid) * MaxCount);
     }
     ProcessTrapezoids(DeferredTrapezoids, DeferredTrapezoidsByScanline);
     DeferredTrapezoidCount = 0; 
