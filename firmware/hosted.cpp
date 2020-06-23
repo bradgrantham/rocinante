@@ -596,9 +596,78 @@ struct Trapezoid
     uint16_t next;
 };
 
+struct TrapezoidList
+{
+    uint16_t head;
+    int count;
+    static constexpr uint16_t LIST_END = 0xFFFF;
+
+    TrapezoidList() :
+        head(LIST_END),
+        count(0)
+    {}
+
+    void Reset() 
+    {
+        head = LIST_END;
+        count = 0;
+    }
+
+    void MakeTrapezoidNewHead(uint16_t t, Trapezoid* trapezoids)
+    {
+        trapezoids[t].next = head;
+        head = t;
+        count++;
+    }
+
+    void DeleteNextTrapezoid(uint16_t *addressOfNext, Trapezoid* trapezoids)
+    {
+        if(*addressOfNext == LIST_END) {
+            return;
+        }
+
+        Trapezoid& t = trapezoids[*addressOfNext];
+        
+        *addressOfNext = t.next; // Set the pointer to the next trapezoid pointer to the next trapezoid in the list
+        t.next = LIST_END;
+        count--;
+    }
+
+    // XXX warning - O(N) where N is length of this list
+    // Could keep a tail pointer, but increases size by 2 bytes in
+    // an unaligned structure that is repeated 500x in a system with 140KB...
+    void AppendList(const TrapezoidList& list, Trapezoid* trapezoids)
+    {
+        if(head == LIST_END) {
+
+            // *this is empty, so just make it the appended list
+
+            head = list.head;
+            count = list.count;
+
+        } else {
+
+	    // walk to the end of *this, set that "next" to point
+	    // to the new list add count from appended list to *this
+	    // count
+
+            uint16_t* addressOfNext = &head;
+
+            while(*addressOfNext != LIST_END) {
+                addressOfNext = &trapezoids[*addressOfNext].next;
+            }
+
+            *addressOfNext = list.head;
+
+            count += list.count;
+        }
+    }
+};
+
 constexpr size_t MaxDeferredTrapezoidCount = (64 * 1024) / sizeof(Trapezoid);
 static Trapezoid DeferredTrapezoids[MaxDeferredTrapezoidCount];
-static uint16_t DeferredTrapezoidsByScanline[1024]; // XXX will need to allocate dynamically later
+constexpr size_t MaxDeferredTrapezoidScanlineCount = 1024;
+static TrapezoidList DeferredTrapezoidsByFirstScanline[MaxDeferredTrapezoidScanlineCount]; // XXX will need to allocate dynamically later
 size_t DeferredTrapezoidCount = 0;
 
 // Y of topRight assumed to be the same as Y of topLeft
@@ -642,10 +711,11 @@ static int AddTrapezoid(const ScreenVertex& topLeft, const ScreenVertex& bottomL
     t->topRight = topRight + rightScanlineDelta * distanceToFirstCenter;
     t->top = firstScanlineCenter;
     t->scanlineCount = lastScanlineCenter - firstScanlineCenter + 1;
+
     assert(firstScanlineCenter > 0);
     assert(firstScanlineCenter < 1024);
-    t->next = DeferredTrapezoidsByScanline[firstScanlineCenter];
-    DeferredTrapezoidsByScanline[firstScanlineCenter] = t - DeferredTrapezoids;
+
+    DeferredTrapezoidsByFirstScanline[firstScanlineCenter].MakeTrapezoidNewHead(t - DeferredTrapezoids, DeferredTrapezoids);
 
 #if 0
     assert(t.topLeft.r >= 0.0f);
@@ -787,47 +857,59 @@ void ProcessOneTrapezoidScanline(int y, Trapezoid &t)
     t.scanlineCount--;
 }
 
-int ProcessScanlineListIncrementingPointer(int y, uint16_t *&curPointer, Trapezoid *trapezoids)
+void ProcessScanlineList(int y, TrapezoidList &list, Trapezoid *trapezoids)
 {
-    int segmentCount = 0;
-    while(*curPointer != 0xFFFF) {
-        Trapezoid& t = trapezoids[*curPointer];
+    uint16_t *addressOfNext = &list.head;
+
+    while(*addressOfNext != TrapezoidList::LIST_END) {
+
+        Trapezoid& t = trapezoids[*addressOfNext];
 
         ProcessOneTrapezoidScanline(y, t);
-        segmentCount ++;
+
         if(t.scanlineCount == 0) {
-            // delete this trapezoid from active list
-            *curPointer = t.next; // Set the pointer to the next trapezoid pointer to the next trapezoid in the list
+            // This trapezoid ended, delete from the list
+            list.DeleteNextTrapezoid(addressOfNext, trapezoids);
         } else {
-            curPointer = &t.next; // Set the next trapezoid pointer to point to the next field that points to the next trapezoid
+            addressOfNext = &t.next; // Set the next trapezoid pointer to point to the next field that points to the next trapezoid
         }
     }
-    return segmentCount;
 }
 
-
-void ProcessTrapezoids(Trapezoid *trapezoids, uint16_t *byScanline)
+int MergeAndSortTrapezoidLists(TrapezoidList &active, TrapezoidList thisScanline, Trapezoid *trapezoids)
 {
-    uint16_t active = 0xFFFF;
+    // If there are new trapezoids, so add the active list to the end of thisScanline, then set the active
+    // list equal to thisScanline list.
+
+    thisScanline.AppendList(active, trapezoids);
+    active = thisScanline;
+
+    // XXX Sort the list dumbly by using std::sort
+    return 0;
+}
+
+void ProcessTrapezoids(Trapezoid *trapezoids, TrapezoidList *byScanline)
+{
+    TrapezoidList active;
     static int MaxScanlineSegmentCount = 0;
     static int MaxFrameSegmentCount = 0;
     int totalSegmentCount = 0;
 
     for(int y = 0; y < ScreenHeight; y++) {
 
-        uint16_t *curPointer = &active;
+        MergeAndSortTrapezoidLists(active, byScanline[y], trapezoids);
+        // At this point, active contains all active trapezoids for this scan line
 
-        int segmentCount = ProcessScanlineListIncrementingPointer(y, curPointer, trapezoids);
-        if(byScanline[y] != 0xFFFF) {
-
-            *curPointer = byScanline[y];
-            segmentCount += ProcessScanlineListIncrementingPointer(y, curPointer, trapezoids);
-        }
-        if(segmentCount > MaxScanlineSegmentCount) {
-            MaxScanlineSegmentCount = segmentCount;
+        if(active.count > MaxScanlineSegmentCount) {
+            MaxScanlineSegmentCount = active.count;
             printf("max %d segments in one row\n", MaxScanlineSegmentCount);
         }
-        totalSegmentCount += segmentCount;
+
+        totalSegmentCount += active.count;
+
+        ProcessScanlineList(y, active, trapezoids);
+	// At this point, active contains only all previous trapezoids
+	// that are *also* active for the next scan line
     }
 
     if(totalSegmentCount > MaxFrameSegmentCount) {
@@ -904,8 +986,8 @@ int RasterizerAddTriangle(ScreenVertex *s0, ScreenVertex *s1, ScreenVertex *s2)
 void RasterizerClear(float r, float g, float b)
 {
     DeferredTrapezoidCount = 0; 
-    for(int i = 0; i < sizeof(DeferredTrapezoidsByScanline) / sizeof(DeferredTrapezoidsByScanline[0]); i++) { 
-        DeferredTrapezoidsByScanline[i] = 0xffff;
+    for(int i = 0; i < ScreenHeight; i++) { 
+        DeferredTrapezoidsByFirstScanline[i].Reset();
     }
     memcpy(ScreenImage, ScreenImage2, sizeof(ScreenImage));
     UseImageForSegmentDisplay = true; // XXX
@@ -932,7 +1014,7 @@ void RasterizerEnd()
         MaxCount = DeferredTrapezoidCount;
         printf("max %zd traps\n", sizeof(Trapezoid) * MaxCount);
     }
-    ProcessTrapezoids(DeferredTrapezoids, DeferredTrapezoidsByScanline);
+    ProcessTrapezoids(DeferredTrapezoids, DeferredTrapezoidsByFirstScanline);
     DeferredTrapezoidCount = 0; 
 }
 
