@@ -37,31 +37,62 @@ Close on segmented framebuffer
         max 62 segments in one row
         max 11426 segments in frame
         max 64728 traps
+windowed mode
+    every window (only front window?) has a 2 or 4-pixel border
+    every scanline effectively needs a list of ranges owned by windows
+    every window needs to be able to allocate only memory for storage for its ranges per row. :-/
+        Or is memory size dictated by video mode and windowing system allocates?
+	could memory allocation and populating memory and calling expansion to video stream pixels be decoupled from the video mode?
+            Wolf, DCT, 9918, Text, aren't scanline specific.
+    need a video mode which is a solid color
+    base video mode routines need add window annotations
+    all video modes can be windowed, but front can be fullscreen
+        stop offering out pointers to memory, use Set-style functions for all content
+        is fullscreen just a window that's full-screen size?  Or does it mean something else?
+            wouldn't have border in fullscreen
+            all memory can be dedicated to fullscreen and minimal book-keeping used
+    Because NTSC has BW and Color modes, FRONT window dictates in NTSC whether Colorburst is added
+    Win+Up to fullscreen FRONT window, Win+Down to return to previous size
+    Click on not-FRONT window brings to FRONT
+    Click on FRONT window passed to FRONT
+    non-FRONT window doesn't get mouse moves
+    Click on border resizes (just outline is shown until button release)
+    need an event queue
+        mouse move events
+        raw keyboard events
+        RESIZE with size
+        FULLSCREEN - going to fullscreen
+        WINDOWED - return to windowed
+        FRONT - frontmost (e.g. cursor to solid, etc?)
+        BEHIND - not frontmost (e.g. cursor to outline, etc)
+        REDRAW with rectangle
+    transparent backing-store mode from non-VRAM
+        hooks the event functions and the Set-style functions
+        catches REDRAW etc events, updates from backing-store when possible
+        passes on to app if necessary (RESIZE, FULLSCREEN)
 Special nasty truecolor FB mode, 16 bits per pixel, Y8I4Q4? 100K RAM plus 50K VRAM: 320 x 240?
 Move Wolf to palette-RGB-style textures (reduce bandwidth to make up lookup & process cost?)
 honor aspect ratio in "show"
 Some things to improve in "show"
     [--gray] - use a grayscale palette
-    [N] - use mode N
-Move to C++
-Move to part with less ROM and more RAM, run by loading program into RAM
-Need some confidence I can run at 250MHz or higher, then choose a crystal and PLL configuration to nail 14.31818MHz at ~250MHz that can also nail it somewhere more in the acceptable clock range 200-216MHz
-    But 250MHz would give 20% more CPU availability to video modes or processing
+Move to STM32H750 with less ROM and more RAM, run by loading program into RAM, maybe have a flash part on QSPI
+    Run at 480MHz
+    Has 192K coupled RAM, so can expand framebuffer x3
+        still can't have 640x480x1 but could maybe have 640x480x4 or 512x375x8
 Make circle renderer find pixel center coordinates to see if the weird jumpiness is being caused by integer snapping - can't expect decent lit or textured rendering if the coordinates are going to jump around for some reason
 DB-9 Coleco game controller
-PS/2 keyboard
-imgBuffer should be called VRAM or something
+PS/2 keyboard and mouse
 paletteToWave and rowPalette should be carved from imgBuffer so imgBuffer for non-palette modes has more space
 Some things to improve living
-    tab should autocomplete at CLI
-        tab in first completes commands
-        tab in second et al completes filenames
     textport should be virtual and overlaid on screen in text mode and preserved for returning to text mode
         so then textport output would ALWAYS work and be recorded, and switching back to text would restore the old viewport.
         40 vs 80?  - just always 80?  (Could maybe get to 106x60 chars with 5x7 wide at 480p)
         make a scrollback buffer (what are the keyboard controls to scroll back?)
         3 pages of 80x24 = 5760 bytes, need to keep in RAM somewhere
     Factor out shell
+        tab should autocomplete at CLI
+            tab in first completes commands
+            tab in second et al completes filenames
     system button kicks back to text 0?
         or at least pops textport while button is down
         need a way to interrupt
