@@ -662,6 +662,30 @@ struct TrapezoidList
             count += list.count;
         }
     }
+
+    int ListToArray(uint16_t *list, size_t listMaxSize, Trapezoid* trapezoids)
+    {
+        if(count > listMaxSize) {
+            printf("Active trapezoid list size %d exceeded static sort list size\n", count);
+            return 1;
+        }
+        uint16_t next = head;
+        for(int i = 0; i < count; i++) {
+            list[i] = next;
+            next = trapezoids[next].next;
+        }
+        return 0;
+    }
+
+    void ReplaceUsingArray(uint16_t *list, size_t listSize, Trapezoid* trapezoids)
+    {
+        uint16_t *addressOfNext = &head;
+        for(int i = 0; i < listSize; i++) {
+            *addressOfNext = list[i];
+            addressOfNext = &trapezoids[*addressOfNext].next;
+        }
+        *addressOfNext = TrapezoidList::LIST_END;
+    }
 };
 
 constexpr size_t MaxDeferredTrapezoidCount = (64 * 1024) / sizeof(Trapezoid);
@@ -885,6 +909,30 @@ int MergeAndSortTrapezoidLists(TrapezoidList &active, TrapezoidList thisScanline
     active = thisScanline;
 
     // XXX Sort the list dumbly by using std::sort
+    static uint16_t sortList[128];
+    int result = active.ListToArray(sortList, 128, trapezoids);
+    if(result != 0) {
+        printf("Making sort list from active trapezoid list failed with %d\n", result);
+        return 1;
+    }
+#if 0
+    for(int i = 0; i < active.count; i++) {
+        printf("%u ", sortList[i]); fflush(stdout);
+    }
+    puts("");
+#endif
+
+    std::sort(sortList + 0, sortList + active.count, [&trapezoids](const uint16_t &a, const uint16_t &b)->bool{ return trapezoids[a].topLeft.x < trapezoids[b].topLeft.x;});
+#if 0
+    for(int i = 0; i < active.count; i++) {
+        printf("%u ", sortList[i]); fflush(stdout);
+    }
+    puts("");
+    puts("");
+#endif
+
+    active.ReplaceUsingArray(sortList, active.count, trapezoids);
+
     return 0;
 }
 
