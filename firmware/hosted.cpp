@@ -13,6 +13,7 @@
 #include <climits>
 #include <cassert>
 #include <cmath>
+#include <cfloat>
 #include <fcntl.h>   /* File control definitions */
 #include <termios.h> /* POSIX terminal control definitions */
 #include <unistd.h>
@@ -633,6 +634,13 @@ struct TrapezoidList
         count--;
     }
 
+    uint16_t DeleteAndReturnHead(Trapezoid* trapezoids)
+    {
+        uint16_t which = head;
+        DeleteNextTrapezoid(&head, trapezoids);
+        return which;
+    }
+
     // XXX warning - O(N) where N is length of this list
     // Could keep a tail pointer, but increases size by 2 bytes in
     // an unaligned structure that is repeated 500x in a system with 140KB...
@@ -693,6 +701,7 @@ static Trapezoid DeferredTrapezoids[MaxDeferredTrapezoidCount];
 constexpr size_t MaxDeferredTrapezoidScanlineCount = 1024;
 static TrapezoidList DeferredTrapezoidsByFirstScanline[MaxDeferredTrapezoidScanlineCount]; // XXX will need to allocate dynamically later
 size_t DeferredTrapezoidCount = 0;
+float ClearColor[3] = {0.0f, 0.0f, 0.0f};
 
 // Y of topRight assumed to be the same as Y of topLeft
 // Y of bottomRight assumed to be the same as Y of bottomLeft
@@ -876,12 +885,135 @@ void ProcessOneTrapezoidScanline(int y, Trapezoid &t)
         pixelValues += pixelDelta;
     }
 
-    t.topLeft += t.leftScanlineDelta;
-    t.topRight += t.rightScanlineDelta;
-    t.scanlineCount--;
 }
 
-void ProcessScanlineList(int y, TrapezoidList &list, Trapezoid *trapezoids)
+struct ActiveTrapezoid
+{
+    uint16_t trapezoid;
+    PixelAttributes currentAttributes;  // incremented to current pixel
+    PixelAttributes pixelDelta;
+    int pixelCount;
+};
+
+struct TrapezoidSegment
+{
+    int indexWithinNowScanning;
+    PixelAttributes start;
+    int length;
+};
+
+// Requires trapezoids are all clipped to width, e.g. none past pixel center at (width - 1)
+int MakeSegmentsFromScanlineList(int y, TrapezoidList &list, Trapezoid *trapezoids)
+{
+    TrapezoidList notYetScanning = list;
+    TrapezoidList doneScanning;
+
+    constexpr int nowScanningMax = 32;
+    static ActiveTrapezoid nowScanning[nowScanningMax];
+    static int nowScanningCount = 0;
+
+    PixelAttributes backgroundColorAttributes = {1.0, ClearColor[0], ClearColor[1], ClearColor[2]};
+
+    // TrapezoidSegment segment = {-1, backgroundColorAttributes, 0};
+    int pixel = 0;
+
+    while(pixel < ScreenWidth) {
+
+        // AddScanningTrapezoids()
+        while((notYetScanning.head != TrapezoidList::LIST_END) && (floorf(trapezoids[notYetScanning.head].topLeft.x + 0.5f) <= pixel)) {
+
+            // remove head from notYetScanning
+            uint16_t which = notYetScanning.DeleteAndReturnHead(trapezoids);
+            
+            if(floorf(trapezoids[which].topRight.x - 0.5f) >= pixel) {
+
+                // if trapezoid on this scanline ends after this pixel, add to nowScanning
+                if(nowScanningCount >= nowScanningMax) {
+                    printf("exceeded storage for active trapezoids making segments from one scanline\n"); 
+                    return 1;
+                }
+                PixelAttributes currentAttributes;  // incremented to current pixel
+                PixelAttributes pixelDelta;
+                int pixelCount;
+                int startX;
+                GetPixelRunParameters(trapezoids[which].topLeft, trapezoids[which].topRight, &startX, &currentAttributes, &pixelDelta, &pixelCount);
+                nowScanning[nowScanningCount++] = {which, currentAttributes, pixelDelta, pixelCount};
+
+            } else {
+
+                // if trapezoid on this scanline ends before this pixel, add it directly to doneScanning
+                doneScanning.MakeTrapezoidNewHead(which, trapezoids);
+
+            }
+        }
+
+        int nextNewScanning = (notYetScanning.head == TrapezoidList::LIST_END) ? ScreenWidth : floorf(trapezoids[notYetScanning.head].topLeft.x + 0.5f);
+
+        if(nowScanningCount == 0) {
+            if(0) {
+                // XXX add to segment with background up to and not including nextNewScanning
+            } else {
+                for(int x = pixel; x < nextNewScanning; x++) {
+                    drawpixel(pixel, y, backgroundColorAttributes);
+                }
+            }
+            pixel = nextNewScanning;
+        } else if(nowScanningCount == 1) {
+            int nextChange = std::min(nextNewScanning, pixel + nowScanning[0].pixelCount);
+            if(0) {
+                // XXX add to segment with nowScanning[0] parameters up to and not including nextNewScanning
+            } else {
+                for(int x = pixel; x < nextChange; x++) {
+                    drawpixel(x, y, nowScanning[0].currentAttributes);
+                    nowScanning[0].currentAttributes += nowScanning[0].pixelDelta;
+                    nowScanning[0].pixelCount --;
+                }
+            }
+            pixel = nextChange;
+        } else  {
+            int closest = -1;
+            float closestZ = FLT_MAX;
+            for(int n = 0; n < nowScanningCount; n++) {
+                if(nowScanning[n].currentAttributes.z < closestZ) {
+                    closest = n;
+                    closestZ = nowScanning[n].currentAttributes.z;
+                }
+            }
+            if(0) {
+                // XXX add one pixel to segment with frontTPZ
+            } else {
+                drawpixel(pixel, y, nowScanning[closest].currentAttributes);
+            }
+            pixel++;
+        }
+
+        // StepOrRemoveScanningTrapezoids()
+        for(int n = 0; n < nowScanningCount;) {
+            nowScanning[n].pixelCount --;
+
+            if(nowScanning[n].pixelCount <= 0) {
+
+                uint16_t which = nowScanning[n].trapezoid;
+                doneScanning.MakeTrapezoidNewHead(which, trapezoids);
+                if(n < nowScanningCount - 1) {
+                    nowScanning[n] = nowScanning[nowScanningCount - 1];
+                }
+                nowScanningCount -= 1;
+
+            } else {
+
+                nowScanning[n].currentAttributes += nowScanning[n].pixelDelta;
+                n++;
+            }
+        }
+    }
+
+    list = doneScanning;
+
+    return 0;
+}
+
+void MoveScanlineListDownOne(TrapezoidList &list, Trapezoid *trapezoids)
 {
     uint16_t *addressOfNext = &list.head;
 
@@ -889,7 +1021,9 @@ void ProcessScanlineList(int y, TrapezoidList &list, Trapezoid *trapezoids)
 
         Trapezoid& t = trapezoids[*addressOfNext];
 
-        ProcessOneTrapezoidScanline(y, t);
+        t.topLeft += t.leftScanlineDelta;
+        t.topRight += t.rightScanlineDelta;
+        t.scanlineCount--;
 
         if(t.scanlineCount == 0) {
             // This trapezoid ended, delete from the list
@@ -915,21 +1049,8 @@ int MergeAndSortTrapezoidLists(TrapezoidList &active, TrapezoidList thisScanline
         printf("Making sort list from active trapezoid list failed with %d\n", result);
         return 1;
     }
-#if 0
-    for(int i = 0; i < active.count; i++) {
-        printf("%u ", sortList[i]); fflush(stdout);
-    }
-    puts("");
-#endif
 
     std::sort(sortList + 0, sortList + active.count, [&trapezoids](const uint16_t &a, const uint16_t &b)->bool{ return trapezoids[a].topLeft.x < trapezoids[b].topLeft.x;});
-#if 0
-    for(int i = 0; i < active.count; i++) {
-        printf("%u ", sortList[i]); fflush(stdout);
-    }
-    puts("");
-    puts("");
-#endif
 
     active.ReplaceUsingArray(sortList, active.count, trapezoids);
 
@@ -955,7 +1076,9 @@ void ProcessTrapezoids(Trapezoid *trapezoids, TrapezoidList *byScanline)
 
         totalSegmentCount += active.count;
 
-        ProcessScanlineList(y, active, trapezoids);
+        MakeSegmentsFromScanlineList(y, active, trapezoids);
+
+        MoveScanlineListDownOne(active, trapezoids);
 	// At this point, active contains only all previous trapezoids
 	// that are *also* active for the next scan line
     }
