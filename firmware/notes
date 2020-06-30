@@ -26,9 +26,9 @@ Close on segmented framebuffer
     handle gradient, textured, solid in SetScanlines
     set aspect ratio in Segmented mode and honor in segtest
     teapot with Enable(CULLFACE):
-        max 74 segments in one row
-        max 8651 segments in frame
-        max 41184 traps
+        max 75 segments in one row
+        max 8756 segments in frame
+        max 41976 trapezoids per frame
     polytope64 with Enable(CULLFACE):
         max 35 segments in one row
         max 6168 segments in frame

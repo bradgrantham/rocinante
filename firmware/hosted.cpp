@@ -608,6 +608,11 @@ struct TrapezoidList
         count(0)
     {}
 
+    bool IsEmpty()
+    {
+        return head == LIST_END;
+    }
+
     void Reset() 
     {
         head = LIST_END;
@@ -925,7 +930,7 @@ int MakeSegmentsFromScanlineList(int y, TrapezoidList &list, Trapezoid *trapezoi
             // remove head from notYetScanning
             uint16_t which = notYetScanning.DeleteAndReturnHead(trapezoids);
             
-            if(floorf(trapezoids[which].topRight.x - 0.5f) >= pixel) {
+            if(floorf(trapezoids[which].topRight.x - 0.5f) > pixel) {
 
                 // if trapezoid on this scanline ends after this pixel, add to nowScanning
                 if(nowScanningCount >= nowScanningMax) {
@@ -947,7 +952,7 @@ int MakeSegmentsFromScanlineList(int y, TrapezoidList &list, Trapezoid *trapezoi
             }
         }
 
-        int nextNewScanning = (notYetScanning.head == TrapezoidList::LIST_END) ? ScreenWidth : floorf(trapezoids[notYetScanning.head].topLeft.x + 0.5f);
+        int nextNewScanning = notYetScanning.IsEmpty() ? ScreenWidth : floorf(trapezoids[notYetScanning.head].topLeft.x + 0.5f);
 
         if(nowScanningCount == 0) {
             if(0) {
@@ -1036,7 +1041,7 @@ void MoveScanlineListDownOne(TrapezoidList &list, Trapezoid *trapezoids)
 
 int MergeAndSortTrapezoidLists(TrapezoidList &active, TrapezoidList thisScanline, Trapezoid *trapezoids)
 {
-    // If there are new trapezoids, so add the active list to the end of thisScanline, then set the active
+    // If there are new trapezoids, add the active list to the end of thisScanline, then set the active
     // list equal to thisScanline list.
 
     thisScanline.AppendList(active, trapezoids);
@@ -1183,7 +1188,7 @@ void RasterizerEnd()
     static size_t MaxCount = 0;
     if(DeferredTrapezoidCount > MaxCount) {
         MaxCount = DeferredTrapezoidCount;
-        printf("max %zd traps\n", sizeof(Trapezoid) * MaxCount);
+        printf("max %zd trapezoids per frame\n", sizeof(Trapezoid) * MaxCount);
     }
     ProcessTrapezoids(DeferredTrapezoids, DeferredTrapezoidsByFirstScanline);
     DeferredTrapezoidCount = 0; 
