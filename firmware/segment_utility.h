@@ -15,7 +15,8 @@ void SegmentSetGradient(VideoSegmentedScanlineSegment *seg, int pixelCount, floa
 
 int MergeSegment(VideoSegmentedScanlineSegment *newSegment, int start, VideoSegmentedScanlineSegment *oldSegments, int pixelCount, VideoSegmentedScanlineSegment *resultSegments, int maxNewSegmentCount, int *newCount);
 
-typedef struct VideoSegmentBuffer {
+typedef struct VideoSegmentBuffer
+{
     int scanlineWidth;  // pixels in scanline
     int segmentsInPool; // Total number of segments allocated
     VideoSegmentedScanlineSegment *segmentPool;

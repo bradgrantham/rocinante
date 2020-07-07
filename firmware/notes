@@ -45,6 +45,8 @@ windowed mode
 	could memory allocation and populating memory and calling expansion to video stream pixels be decoupled from the video mode?
             Wolf, DCT, 9918, Text, aren't scanline specific.
     need a video mode which is a solid color
+    Do video game modes (TMS9918A, Woz, TIA) require full-screen?  Maybe.  Debug overlay says "Game mode" if ALT-space pressed or some such?
+        Wolfenstein, too?
     base video mode routines need add window annotations
     all video modes can be windowed, but front can be fullscreen
         stop offering out pointers to memory, use Set-style functions for all content

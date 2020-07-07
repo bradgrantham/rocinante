@@ -708,6 +708,16 @@ static TrapezoidList DeferredTrapezoidsByFirstScanline[MaxDeferredTrapezoidScanl
 size_t DeferredTrapezoidCount = 0;
 float ClearColor[3] = {0.0f, 0.0f, 0.0f};
 
+float FirstPixel(float start) 
+{
+    return floorf(start + 0.5f);
+}
+
+float LastPixel(float finish)
+{
+    return floorf(finish - 0.5f);
+}
+
 // Y of topRight assumed to be the same as Y of topLeft
 // Y of bottomRight assumed to be the same as Y of bottomLeft
 static int AddTrapezoid(const ScreenVertex& topLeft, const ScreenVertex& bottomLeft, const ScreenVertex& topRight, const ScreenVertex& bottomRight)
@@ -725,8 +735,8 @@ static int AddTrapezoid(const ScreenVertex& topLeft, const ScreenVertex& bottomL
     assert(topRight.g <= 1.0f);
     assert(topRight.b <= 1.0f);
 
-    int firstScanlineCenter = floorf(topLeft.y + 0.5f);
-    int lastScanlineCenter = floorf(bottomLeft.y - 0.5f);
+    int firstScanlineCenter = FirstPixel(topLeft.y);
+    int lastScanlineCenter = LastPixel(bottomLeft.y);
 
     if(firstScanlineCenter > lastScanlineCenter) {
         // Then the trapezoid didn't cross any scanline centers
@@ -856,24 +866,24 @@ void drawpixel(int x, int y, const PixelAttributes& p)
     }
 }
 
-
-void GetPixelRunParameters(const TrapezoidVertex& left, const TrapezoidVertex& right, int* startX, PixelAttributes* firstPixel, PixelAttributes* pixelDelta, int *pixelCount)
+void GetPixelRunParameters(const TrapezoidVertex& left, const TrapezoidVertex& right, int* startX, PixelAttributes* firstPixelValues, PixelAttributes* pixelDelta, int *pixelCount)
 {
-    int firstPixelCenter = floorf(left.x + 0.5f);
-    int lastPixelCenter = floorf(right.x - 0.5f);
+    int firstPixel = FirstPixel(left.x);
+    int lastPixel = LastPixel(right.x);
 
-    if(firstPixelCenter > lastPixelCenter) {
+    if(firstPixel > lastPixel) {
         *pixelCount = 0;
         // Then the line didn't cross any scanline centers
         return;
     }
 
     float actualLength = right.x - left.x;
-    float distanceToFirstCenter = firstPixelCenter + 0.5f - left.x;
+    float firstPixelCenter = firstPixel + 0.5f;
+    float distanceToFirstCenter = firstPixelCenter - left.x;
     *pixelDelta = (PixelAttributes(right) - PixelAttributes(left)) / actualLength;
-    *firstPixel = PixelAttributes(left) + *pixelDelta * distanceToFirstCenter;
-    *pixelCount = lastPixelCenter - firstPixelCenter + 1;
-    *startX = firstPixelCenter;
+    *firstPixelValues = PixelAttributes(left) + *pixelDelta * distanceToFirstCenter;
+    *pixelCount = lastPixel - firstPixel + 1;
+    *startX = firstPixel;
 }
 
 void ProcessOneTrapezoidScanline(int y, Trapezoid &t)
@@ -900,15 +910,107 @@ struct ActiveTrapezoid
     int pixelCount;
 };
 
+template <int ScanlineCount>
+struct VideoSegmentBuffer2
+{
+    int scanlineWidth;  // pixels in scanline
+    int segmentCount; // Total number of segments allocated
+    VideoSegmentedScanlineSegment *segments = nullptr;
+    std::array<VideoSegmentedScanline, ScanlineCount> scanlines;
+
+    int currentScanline = 0;
+    int currentSegment = 0;
+
+    VideoSegmentBuffer2(int width)
+    {
+        // Scanline parameters
+        scanlineWidth = width;
+    }
+
+    int Allocate(int totalSegments)
+    {
+        // segment parameters
+        segmentCount = totalSegments;
+
+        segments = (VideoSegmentedScanlineSegment*)malloc(sizeof(VideoSegmentedScanlineSegment) * segmentCount);
+        if(!segments) {
+            return 1; // couldn't allocate segment pool 
+        }
+
+        return 0;
+    }
+
+    int StartFrame()
+    {
+        if(!segments) {
+            return 1; // Segment pool not allocated
+        }
+        currentScanline = 0;
+        currentSegment = 0;
+        scanlines[currentScanline].segmentCount = 0;
+        scanlines[currentScanline].segments = segments + currentSegment;
+        return 0;
+    }
+
+    int NextScanline()
+    {
+        if(currentScanline >= ScanlineCount) {
+            return 1; // End of scanlines
+        }
+        currentScanline++;
+        if(currentScanline < ScanlineCount) {
+            scanlines[currentScanline].segmentCount = 0;
+            scanlines[currentScanline].segments = segments + currentSegment;
+        }
+        return 0;
+    }
+
+    int AddSegmentToCurrentScanline(const VideoSegmentedScanlineSegment& seg)
+    {
+        if(currentSegment >= segmentCount) {
+            return 1; // Out of segments
+        }
+
+        scanlines[currentScanline].segmentCount++;
+        segments[currentSegment++] = seg;
+
+        return 0;
+    }
+
+    ~VideoSegmentBuffer2()
+    {
+        delete segments;
+    }
+};
+
+typedef VideoSegmentBuffer2<ScreenHeight> NTSCVideoSegmentBuffer;
+
 struct TrapezoidSegment
 {
     int indexWithinNowScanning;
     PixelAttributes start;
+    PixelAttributes delta;
     int length;
+
+    int AddToSegmentBuffer(NTSCVideoSegmentBuffer& buffer)
+    {
+        VideoSegmentedScanlineSegment seg;
+
+        seg.type = VIDEO_SEGMENT_TYPE_GRADIENT;
+        seg.pixelCount = length;
+        seg.g.r0 = start.r;
+        seg.g.g0 = start.g;
+        seg.g.b0 = start.b;
+        seg.g.r1 = start.r + delta.r * length;
+        seg.g.g1 = start.g + delta.r * length;
+        seg.g.b1 = start.b + delta.r * length;
+
+        return buffer.AddSegmentToCurrentScanline(seg);
+    }
 };
 
 // Requires trapezoids are all clipped to width, e.g. none past pixel center at (width - 1)
-int MakeSegmentsFromScanlineList(int y, TrapezoidList &list, Trapezoid *trapezoids)
+int MakeSegmentsFromScanlineList(int y, TrapezoidList &list, Trapezoid *trapezoids, NTSCVideoSegmentBuffer& buffer)
 {
     TrapezoidList notYetScanning = list;
     TrapezoidList doneScanning;
@@ -918,21 +1020,23 @@ int MakeSegmentsFromScanlineList(int y, TrapezoidList &list, Trapezoid *trapezoi
     static int nowScanningCount = 0;
 
     PixelAttributes backgroundColorAttributes = {1.0, ClearColor[0], ClearColor[1], ClearColor[2]};
+    PixelAttributes noDelta = {0.0, 0.0f, 0.0f, 0.0f};
 
-    // TrapezoidSegment segment = {-1, backgroundColorAttributes, 0};
+    TrapezoidSegment segment = {-1, backgroundColorAttributes, noDelta, 0};
     int pixel = 0;
 
     while(pixel < ScreenWidth) {
 
         // AddScanningTrapezoids()
-        while((notYetScanning.head != TrapezoidList::LIST_END) && (floorf(trapezoids[notYetScanning.head].topLeft.x + 0.5f) <= pixel)) {
+        // Add all trapezoids starting before or on this pixel to the nowScanning list
+        while(!notYetScanning.IsEmpty() && (FirstPixel(trapezoids[notYetScanning.head].topLeft.x) <= pixel)) {
 
             // remove head from notYetScanning
             uint16_t which = notYetScanning.DeleteAndReturnHead(trapezoids);
             
-            if(floorf(trapezoids[which].topRight.x - 0.5f) > pixel) {
+            if(LastPixel(trapezoids[which].topRight.x) >= pixel) {
 
-                // if trapezoid on this scanline ends after this pixel, add to nowScanning
+                // if trapezoid on this scanline contains this pixel, add to nowScanning
                 if(nowScanningCount >= nowScanningMax) {
                     printf("exceeded storage for active trapezoids making segments from one scanline\n"); 
                     return 1;
@@ -952,30 +1056,63 @@ int MakeSegmentsFromScanlineList(int y, TrapezoidList &list, Trapezoid *trapezoi
             }
         }
 
-        int nextNewScanning = notYetScanning.IsEmpty() ? ScreenWidth : floorf(trapezoids[notYetScanning.head].topLeft.x + 0.5f);
+        int nextNewScanning = notYetScanning.IsEmpty() ? ScreenWidth : FirstPixel(trapezoids[notYetScanning.head].topLeft.x);
 
         if(nowScanningCount == 0) {
-            if(0) {
-                // XXX add to segment with background up to and not including nextNewScanning
+
+            if(1) {
+                if(segment.indexWithinNowScanning != -1) {
+                    if(segment.length > 0) {
+                        int result = segment.AddToSegmentBuffer(buffer);
+                        if(result != 0) {
+                            printf("AddToSegmentBuffer returned %d\n", result);
+                            return 2;
+                        }
+                        segment = {-1, backgroundColorAttributes, noDelta, nextNewScanning - pixel};
+                    }
+                } else {
+                    segment.length += nextNewScanning - pixel;
+                }
             } else {
                 for(int x = pixel; x < nextNewScanning; x++) {
                     drawpixel(pixel, y, backgroundColorAttributes);
                 }
             }
+
             pixel = nextNewScanning;
-        } else if(nowScanningCount == 1) {
-            int nextChange = std::min(nextNewScanning, pixel + nowScanning[0].pixelCount);
-            if(0) {
-                // XXX add to segment with nowScanning[0] parameters up to and not including nextNewScanning
+        } else if(false && (nowScanningCount == 1)) {
+
+            ActiveTrapezoid& scanning = nowScanning[0];
+
+            int nextChange = std::min(nextNewScanning, pixel + scanning.pixelCount);
+
+            if(1) {
+                // XXX add to segment with scanning parameters up to and not including nextChange
+                ActiveTrapezoid& closestScanning = nowScanning[0];
+                if(segment.indexWithinNowScanning != 0) {
+                    if(segment.length > 0) {
+                        int result = segment.AddToSegmentBuffer(buffer);
+                        if(result != 0) {
+                            printf("AddToSegmentBuffer returned %d\n", result);
+                            return 2;
+                        }
+                        segment = {0, closestScanning.currentAttributes, closestScanning.pixelDelta, nextChange - pixel};
+                    }
+                } else {
+                    segment.length += nextChange - pixel;
+                }
             } else {
                 for(int x = pixel; x < nextChange; x++) {
-                    drawpixel(x, y, nowScanning[0].currentAttributes);
-                    nowScanning[0].currentAttributes += nowScanning[0].pixelDelta;
-                    nowScanning[0].pixelCount --;
+                    drawpixel(x, y, scanning.currentAttributes);
+                    scanning.currentAttributes += scanning.pixelDelta;
+                    scanning.pixelCount --;
                 }
             }
+
             pixel = nextChange;
+
         } else  {
+
             int closest = -1;
             float closestZ = FLT_MAX;
             for(int n = 0; n < nowScanningCount; n++) {
@@ -984,11 +1121,26 @@ int MakeSegmentsFromScanlineList(int y, TrapezoidList &list, Trapezoid *trapezoi
                     closestZ = nowScanning[n].currentAttributes.z;
                 }
             }
-            if(0) {
+
+            if(1) {
                 // XXX add one pixel to segment with frontTPZ
+                if(segment.indexWithinNowScanning != closest) {
+                    ActiveTrapezoid& closestScanning = nowScanning[closest];
+                    if(segment.length > 0) {
+                        int result = segment.AddToSegmentBuffer(buffer);
+                        if(result != 0) {
+                            printf("AddToSegmentBuffer returned %d\n", result);
+                            return 2;
+                        }
+                        segment = {closest, closestScanning.currentAttributes, closestScanning.pixelDelta, 1};
+                    }
+                } else {
+                    segment.length += 1;
+                }
             } else {
                 drawpixel(pixel, y, nowScanning[closest].currentAttributes);
             }
+
             pixel++;
         }
 
@@ -1010,6 +1162,14 @@ int MakeSegmentsFromScanlineList(int y, TrapezoidList &list, Trapezoid *trapezoi
                 nowScanning[n].currentAttributes += nowScanning[n].pixelDelta;
                 n++;
             }
+        }
+    }
+
+    if(segment.length > 0) {
+        int result = segment.AddToSegmentBuffer(buffer);
+        if(result != 0) {
+            printf("AddToSegmentBuffer returned %d\n", result);
+            return 5;
         }
     }
 
@@ -1062,12 +1222,18 @@ int MergeAndSortTrapezoidLists(TrapezoidList &active, TrapezoidList thisScanline
     return 0;
 }
 
-void ProcessTrapezoids(Trapezoid *trapezoids, TrapezoidList *byScanline)
+int ProcessTrapezoids(Trapezoid *trapezoids, TrapezoidList *byScanline, NTSCVideoSegmentBuffer& buffer)
 {
     TrapezoidList active;
     static int MaxScanlineSegmentCount = 0;
     static int MaxFrameSegmentCount = 0;
     int totalSegmentCount = 0;
+
+    int result = buffer.StartFrame();
+    if(result != 0) {
+        printf("couldn't VideoSegmentBuffer::StartFrame, result %d\n", result);
+        return 1; // failure to StartFrame
+    }
 
     for(int y = 0; y < ScreenHeight; y++) {
 
@@ -1081,17 +1247,25 @@ void ProcessTrapezoids(Trapezoid *trapezoids, TrapezoidList *byScanline)
 
         totalSegmentCount += active.count;
 
-        MakeSegmentsFromScanlineList(y, active, trapezoids);
+        MakeSegmentsFromScanlineList(y, active, trapezoids, buffer);
 
         MoveScanlineListDownOne(active, trapezoids);
 	// At this point, active contains only all previous trapezoids
 	// that are *also* active for the next scan line
+
+        int result = buffer.NextScanline();
+        if(result != 0) {
+            printf("couldn't VideoSegmentBuffer::NextScanline, result %d\n", result);
+            return 2; // failure to NextScanline
+        }
     }
 
     if(totalSegmentCount > MaxFrameSegmentCount) {
         MaxFrameSegmentCount = totalSegmentCount;
         printf("max %d segments in frame\n", MaxFrameSegmentCount);
     }
+
+    return 0;
 }
 
 extern "C" {
@@ -1166,7 +1340,7 @@ void RasterizerClear(float r, float g, float b)
         DeferredTrapezoidsByFirstScanline[i].Reset();
     }
     memcpy(ScreenImage, ScreenImage2, sizeof(ScreenImage));
-    UseImageForSegmentDisplay = true; // XXX
+    UseImageForSegmentDisplay = false; // true; // XXX
     for(int y = 0; y < ScreenHeight; y++) {
         for(int x = 0; x < ScreenWidth; x++) {
             ScreenImage2[ScreenHeight - 1 - y][x][0] = r * 255;
@@ -1180,7 +1354,7 @@ void RasterizerClear(float r, float g, float b)
 void RasterizerStart()
 {
     UseImageForSegmentDisplay = true; // XXX
-    DeferredTrapezoidCount = 0; 
+    DeferredTrapezoidCount = 0;
 }
 
 void RasterizerEnd()
@@ -1190,7 +1364,23 @@ void RasterizerEnd()
         MaxCount = DeferredTrapezoidCount;
         printf("max %zd trapezoids per frame\n", sizeof(Trapezoid) * MaxCount);
     }
-    ProcessTrapezoids(DeferredTrapezoids, DeferredTrapezoidsByFirstScanline);
+    NTSCVideoSegmentBuffer buffer(ScreenWidth);
+    int result = buffer.Allocate(11500);
+    if(result != 0) {
+        printf("failed to allocate video buffer with 11500 segments, result = %d\n", result);
+        return; // COMMAND_FAILED;
+    }
+
+    ProcessTrapezoids(DeferredTrapezoids, DeferredTrapezoidsByFirstScanline, buffer);
+
+    VideoSegmentedParameters params = {0};
+    VideoModeGetParameters(&params);
+    result = params.setScanlines(ScreenHeight, buffer.scanlines.data());
+    if(result != 0) {
+        printf("failed to set scanlines, result = %d\n", result);
+        return; // COMMAND_FAILED;
+    }
+
     DeferredTrapezoidCount = 0; 
 }
 
