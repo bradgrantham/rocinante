@@ -15,6 +15,7 @@ typedef struct VideoSegmentedInfo
 {
     int width;
     int height;
+    int aspectX, aspectY;       // X:Y aspect ratio, e.g., on Orion for 1-clock pixel, 225 / 520
 } VideoSegmentedInfo;
 
 #define VIDEO_SEGMENT_TYPE_MAX 31U /* Must be 2^n - 1, and match SHIFT in private struct... */

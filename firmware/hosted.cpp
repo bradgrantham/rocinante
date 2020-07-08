@@ -132,7 +132,6 @@ constexpr int ScreenScale = 1;
 uint8_t ScreenPixmap[ScreenHeight][ScreenWidth];
 uint8_t ScreenImage[ScreenHeight][ScreenWidth][3];
 uint16_t ScreenDepth[ScreenHeight][ScreenWidth];
-uint8_t ScreenImage2[ScreenHeight][ScreenWidth][3];
 uint8_t palettes[2][256][3];
 int rowPalettes[512];
 
@@ -160,16 +159,20 @@ void VideoModeGetInfo(int n, void *info)
             break;
         }
         case VIDEO_MODE_SEGMENTS_512_512:  {
-            VideoSegmentedInfo& segments = *(VideoSegmentedInfo*)info; segments.width = ScreenWidth;
+            VideoSegmentedInfo& segments = *(VideoSegmentedInfo*)info;
+            segments.width = ScreenWidth;
             segments.height = ScreenHeight;
+            segments.aspectX = ScreenWidth;
+            segments.aspectY = ScreenHeight;
             break;
         }
     }
 }
 
 std::mutex SegmentsAccessMutex;
-bool UseImageForSegmentDisplay = false;
 std::array<std::vector<VideoSegmentedScanlineSegment>, ScreenHeight> SegmentsCopy;
+
+constexpr int MAX_SEGMENT_COUNT = 8200; // ((VRAM_SIZE - sizeof(SegmentedVideoPrivate)) / sizeof(SegmentedSegmentPrivate))
 
 // scanlineCount must be equal to mode height
 int SegmentedSetScanlines(int scanlineCount, VideoSegmentedScanline *scanlines)
@@ -192,13 +195,18 @@ int SegmentedSetScanlines(int scanlineCount, VideoSegmentedScanline *scanlines)
             return 4; // INVALID - exceeded length of line
         }
     }
+
+    if(totalSegments > MAX_SEGMENT_COUNT) {
+        printf("totalSegments = %zd\n", totalSegments);
+        return 5; // too many
+    }
+
     VideoModeWaitFrame();
     std::scoped_lock<std::mutex> lk(SegmentsAccessMutex);
     for(int i = 0; i < ScreenHeight; i++) {
         SegmentsCopy[i].clear();
         SegmentsCopy[i] = std::vector<VideoSegmentedScanlineSegment>(scanlines[i].segments, scanlines[i].segments + scanlines[i].segmentCount);
     }
-    UseImageForSegmentDisplay = false; // XXX
     return 0;
 }
 
@@ -220,12 +228,10 @@ void VideoModeFillGLTexture()
         case VIDEO_MODE_SEGMENTS_512_512:  {
             {
                 std::scoped_lock<std::mutex> lk(SegmentsAccessMutex);
-                if(!UseImageForSegmentDisplay) { // XXX
-                    int row = 0;
-                    for(auto const& segments : SegmentsCopy) {
-                        PaintSegments(segments.data(), ScreenImage[row], ScreenWidth);
-                        row++;
-                    }
+                int row = 0;
+                for(auto const& segments : SegmentsCopy) {
+                    PaintSegments(segments.data(), ScreenImage[row], ScreenWidth);
+                    row++;
                 }
             }
             glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, ScreenWidth, ScreenHeight, 0, GL_RGB, GL_UNSIGNED_BYTE, ScreenImage);
@@ -701,7 +707,7 @@ struct TrapezoidList
     }
 };
 
-constexpr size_t MaxDeferredTrapezoidCount = (64 * 1024) / sizeof(Trapezoid);
+constexpr size_t MaxDeferredTrapezoidCount = 20000; // (64 * 1024) / sizeof(Trapezoid);
 static Trapezoid DeferredTrapezoids[MaxDeferredTrapezoidCount];
 constexpr size_t MaxDeferredTrapezoidScanlineCount = 1024;
 static TrapezoidList DeferredTrapezoidsByFirstScanline[MaxDeferredTrapezoidScanlineCount]; // XXX will need to allocate dynamically later
@@ -829,6 +835,14 @@ struct PixelAttributes
         b += v.b;
         return *this;
     }
+
+    bool ColorsCloseEnough(const PixelAttributes& v, float delta) const
+    {
+        return
+            (fabsf(v.r - r) < delta) && 
+            (fabsf(v.g - g) < delta) && 
+            (fabsf(v.b - b) < delta);
+    }
 };
 
 PixelAttributes operator-(const PixelAttributes& v1, const PixelAttributes& v0)
@@ -851,21 +865,6 @@ PixelAttributes operator*(const PixelAttributes& v, float f)
     return {v.z * f, v.r * f, v.g * f, v.b * f};
 }
 
-void drawpixel(int x, int y, const PixelAttributes& p)
-{
-    uint8_t r = p.r * 255;
-    uint8_t g = p.g * 255;
-    uint8_t b = p.b * 255;
-    uint16_t depth = p.z * 65535;
-
-    if(depth < ScreenDepth[y][x]) { 
-        ScreenImage2[y][x][0] = r;
-        ScreenImage2[y][x][1] = g;
-        ScreenImage2[y][x][2] = b;
-        ScreenDepth[y][x] = depth;
-    }
-}
-
 void GetPixelRunParameters(const TrapezoidVertex& left, const TrapezoidVertex& right, int* startX, PixelAttributes* firstPixelValues, PixelAttributes* pixelDelta, int *pixelCount)
 {
     int firstPixel = FirstPixel(left.x);
@@ -884,22 +883,6 @@ void GetPixelRunParameters(const TrapezoidVertex& left, const TrapezoidVertex& r
     *firstPixelValues = PixelAttributes(left) + *pixelDelta * distanceToFirstCenter;
     *pixelCount = lastPixel - firstPixel + 1;
     *startX = firstPixel;
-}
-
-void ProcessOneTrapezoidScanline(int y, Trapezoid &t)
-{
-    int x;
-    PixelAttributes pixelValues;
-    PixelAttributes pixelDelta;
-    int pixelCount;
-
-    GetPixelRunParameters(t.topLeft, t.topRight, &x, &pixelValues, &pixelDelta, &pixelCount);
-
-    for(int pixel = 0; pixel < pixelCount; x++, pixel++) {
-        drawpixel(x, y, pixelValues);
-        pixelValues += pixelDelta;
-    }
-
 }
 
 struct ActiveTrapezoid
@@ -947,8 +930,8 @@ struct VideoSegmentBuffer2
         }
         currentScanline = 0;
         currentSegment = 0;
-        scanlines[currentScanline].segmentCount = 0;
-        scanlines[currentScanline].segments = segments + currentSegment;
+        scanlines[0].segmentCount = 0;
+        scanlines[0].segments = segments;
         return 0;
     }
 
@@ -971,8 +954,9 @@ struct VideoSegmentBuffer2
             return 1; // Out of segments
         }
 
-        scanlines[currentScanline].segmentCount++;
-        segments[currentSegment++] = seg;
+        segments[currentSegment] = seg;
+        scanlines[currentScanline].segmentCount ++;
+        currentSegment ++;
 
         return 0;
     }
@@ -987,13 +971,17 @@ typedef VideoSegmentBuffer2<ScreenHeight> NTSCVideoSegmentBuffer;
 
 struct TrapezoidSegment
 {
-    int indexWithinNowScanning;
+    int which;
     PixelAttributes start;
     PixelAttributes delta;
     int length;
 
     int AddToSegmentBuffer(NTSCVideoSegmentBuffer& buffer)
     {
+        if(length == 0) {
+            return 0;
+        }
+
         VideoSegmentedScanlineSegment seg;
 
         seg.type = VIDEO_SEGMENT_TYPE_GRADIENT;
@@ -1002,10 +990,18 @@ struct TrapezoidSegment
         seg.g.g0 = start.g;
         seg.g.b0 = start.b;
         seg.g.r1 = start.r + delta.r * length;
-        seg.g.g1 = start.g + delta.r * length;
-        seg.g.b1 = start.b + delta.r * length;
+        seg.g.g1 = start.g + delta.g * length;
+        seg.g.b1 = start.b + delta.b * length;
 
         return buffer.AddSegmentToCurrentScanline(seg);
+    }
+
+    bool CanAddMorePixels(int nextTrapezoid, const PixelAttributes& nextValues, const PixelAttributes& nextDelta)
+    {
+        bool sameTrackedSegment = (which == nextTrapezoid);
+        bool colorCloseEnough = nextValues.ColorsCloseEnough(start + delta * (length + 1), .01f);
+        bool gradientCloseEnough = nextDelta.ColorsCloseEnough(delta, .0001f);
+        return sameTrackedSegment || (false /* XXX */ && colorCloseEnough && gradientCloseEnough); // XXX fringing, so this logic is wrong or incomplete
     }
 };
 
@@ -1022,7 +1018,7 @@ int MakeSegmentsFromScanlineList(int y, TrapezoidList &list, Trapezoid *trapezoi
     PixelAttributes backgroundColorAttributes = {1.0, ClearColor[0], ClearColor[1], ClearColor[2]};
     PixelAttributes noDelta = {0.0, 0.0f, 0.0f, 0.0f};
 
-    TrapezoidSegment segment = {-1, backgroundColorAttributes, noDelta, 0};
+    TrapezoidSegment trackedSegment = {-1, backgroundColorAttributes, noDelta, 0};
     int pixel = 0;
 
     while(pixel < ScreenWidth) {
@@ -1059,54 +1055,53 @@ int MakeSegmentsFromScanlineList(int y, TrapezoidList &list, Trapezoid *trapezoi
         int nextNewScanning = notYetScanning.IsEmpty() ? ScreenWidth : FirstPixel(trapezoids[notYetScanning.head].topLeft.x);
 
         if(nowScanningCount == 0) {
+            // Only background (clear color) is visible
 
-            if(1) {
-                if(segment.indexWithinNowScanning != -1) {
-                    if(segment.length > 0) {
-                        int result = segment.AddToSegmentBuffer(buffer);
-                        if(result != 0) {
-                            printf("AddToSegmentBuffer returned %d\n", result);
-                            return 2;
-                        }
-                        segment = {-1, backgroundColorAttributes, noDelta, nextNewScanning - pixel};
-                    }
-                } else {
-                    segment.length += nextNewScanning - pixel;
+            if(trackedSegment.which != -1) {
+                // If previously tracked segment wasn't background (-1), then store that segment.
+                int result = trackedSegment.AddToSegmentBuffer(buffer);
+                if(result != 0) {
+                    printf("AddToSegmentBuffer returned %d\n", result);
+                    return 2;
                 }
+                trackedSegment = {-1, backgroundColorAttributes, noDelta, nextNewScanning - pixel};
             } else {
-                for(int x = pixel; x < nextNewScanning; x++) {
-                    drawpixel(pixel, y, backgroundColorAttributes);
-                }
+                trackedSegment.length += nextNewScanning - pixel;
             }
 
             pixel = nextNewScanning;
-        } else if(false && (nowScanningCount == 1)) {
+
+        } else if(false && (nowScanningCount == 1)) { // Disabled because getting garbage at edges
+
+	    // If there's only one trapezoid being scanned for this
+	    // pixel, output it directly
 
             ActiveTrapezoid& scanning = nowScanning[0];
 
             int nextChange = std::min(nextNewScanning, pixel + scanning.pixelCount);
 
-            if(1) {
-                // XXX add to segment with scanning parameters up to and not including nextChange
-                ActiveTrapezoid& closestScanning = nowScanning[0];
-                if(segment.indexWithinNowScanning != 0) {
-                    if(segment.length > 0) {
-                        int result = segment.AddToSegmentBuffer(buffer);
-                        if(result != 0) {
-                            printf("AddToSegmentBuffer returned %d\n", result);
-                            return 2;
-                        }
-                        segment = {0, closestScanning.currentAttributes, closestScanning.pixelDelta, nextChange - pixel};
-                    }
-                } else {
-                    segment.length += nextChange - pixel;
+            if(trackedSegment.which != scanning.trapezoid) {
+                // If previously tracked segment wasn't this, then store that segment.
+                int result = trackedSegment.AddToSegmentBuffer(buffer);
+                if(result != 0) {
+                    printf("AddToSegmentBuffer returned %d\n", result);
+                    return 2;
                 }
+                trackedSegment = {scanning.trapezoid, scanning.currentAttributes, scanning.pixelDelta, nextChange - pixel};
             } else {
-                for(int x = pixel; x < nextChange; x++) {
-                    drawpixel(x, y, scanning.currentAttributes);
-                    scanning.currentAttributes += scanning.pixelDelta;
-                    scanning.pixelCount --;
-                }
+                trackedSegment.length += nextChange - pixel;
+            }
+
+            if(scanning.pixelCount <= 0) {
+
+                uint16_t which = scanning.trapezoid;
+                doneScanning.MakeTrapezoidNewHead(which, trapezoids);
+                nowScanningCount = 0;
+
+            } else {
+
+                scanning.currentAttributes += scanning.pixelDelta * (nextChange - pixel);
+                scanning.pixelCount -= nextChange - pixel;
             }
 
             pixel = nextChange;
@@ -1116,61 +1111,58 @@ int MakeSegmentsFromScanlineList(int y, TrapezoidList &list, Trapezoid *trapezoi
             int closest = -1;
             float closestZ = FLT_MAX;
             for(int n = 0; n < nowScanningCount; n++) {
-                if(nowScanning[n].currentAttributes.z < closestZ) {
+                ActiveTrapezoid& candidate = nowScanning[n];
+                if(candidate.currentAttributes.z < closestZ) {
                     closest = n;
-                    closestZ = nowScanning[n].currentAttributes.z;
+                    closestZ = candidate.currentAttributes.z;
                 }
             }
 
-            if(1) {
-                // XXX add one pixel to segment with frontTPZ
-                if(segment.indexWithinNowScanning != closest) {
-                    ActiveTrapezoid& closestScanning = nowScanning[closest];
-                    if(segment.length > 0) {
-                        int result = segment.AddToSegmentBuffer(buffer);
-                        if(result != 0) {
-                            printf("AddToSegmentBuffer returned %d\n", result);
-                            return 2;
-                        }
-                        segment = {closest, closestScanning.currentAttributes, closestScanning.pixelDelta, 1};
-                    }
-                } else {
-                    segment.length += 1;
-                }
+            ActiveTrapezoid& closestScanning = nowScanning[closest];
+
+            if(trackedSegment.CanAddMorePixels(closestScanning.trapezoid, closestScanning.currentAttributes, closestScanning.pixelDelta)) {
+
+                trackedSegment.length += 1;
+
             } else {
-                drawpixel(pixel, y, nowScanning[closest].currentAttributes);
+
+                int result = trackedSegment.AddToSegmentBuffer(buffer);
+                if(result != 0) {
+                    printf("AddToSegmentBuffer returned %d\n", result);
+                    return 2;
+                }
+
+                trackedSegment = {closestScanning.trapezoid, closestScanning.currentAttributes, closestScanning.pixelDelta, 1};
             }
 
             pixel++;
-        }
 
-        // StepOrRemoveScanningTrapezoids()
-        for(int n = 0; n < nowScanningCount;) {
-            nowScanning[n].pixelCount --;
+            for(int n = 0; n < nowScanningCount;) {
+                ActiveTrapezoid& active = nowScanning[n];
+                active.pixelCount --;
 
-            if(nowScanning[n].pixelCount <= 0) {
+                if(active.pixelCount <= 0) {
 
-                uint16_t which = nowScanning[n].trapezoid;
-                doneScanning.MakeTrapezoidNewHead(which, trapezoids);
-                if(n < nowScanningCount - 1) {
-                    nowScanning[n] = nowScanning[nowScanningCount - 1];
+                    uint16_t which = active.trapezoid;
+                    doneScanning.MakeTrapezoidNewHead(which, trapezoids);
+                    if(n < nowScanningCount - 1) {
+                        nowScanning[n] = nowScanning[nowScanningCount - 1];
+                    }
+                    nowScanningCount -= 1;
+
+                } else {
+
+                    active.currentAttributes += active.pixelDelta;
+                    n++;
                 }
-                nowScanningCount -= 1;
-
-            } else {
-
-                nowScanning[n].currentAttributes += nowScanning[n].pixelDelta;
-                n++;
             }
         }
     }
 
-    if(segment.length > 0) {
-        int result = segment.AddToSegmentBuffer(buffer);
-        if(result != 0) {
-            printf("AddToSegmentBuffer returned %d\n", result);
-            return 5;
-        }
+    int result = trackedSegment.AddToSegmentBuffer(buffer);
+    if(result != 0) {
+        printf("AddToSegmentBuffer returned %d\n", result);
+        return 5;
     }
 
     list = doneScanning;
@@ -1207,9 +1199,9 @@ int MergeAndSortTrapezoidLists(TrapezoidList &active, TrapezoidList thisScanline
     thisScanline.AppendList(active, trapezoids);
     active = thisScanline;
 
-    // XXX Sort the list dumbly by using std::sort
-    static uint16_t sortList[128];
-    int result = active.ListToArray(sortList, 128, trapezoids);
+    constexpr int maxTrapezoidSortCapacity = 4096; // XXX - I'd like something more like 128
+    static uint16_t sortList[maxTrapezoidSortCapacity];
+    int result = active.ListToArray(sortList, maxTrapezoidSortCapacity, trapezoids);
     if(result != 0) {
         printf("Making sort list from active trapezoid list failed with %d\n", result);
         return 1;
@@ -1339,21 +1331,14 @@ void RasterizerClear(float r, float g, float b)
     for(int i = 0; i < ScreenHeight; i++) { 
         DeferredTrapezoidsByFirstScanline[i].Reset();
     }
-    memcpy(ScreenImage, ScreenImage2, sizeof(ScreenImage));
-    UseImageForSegmentDisplay = false; // true; // XXX
-    for(int y = 0; y < ScreenHeight; y++) {
-        for(int x = 0; x < ScreenWidth; x++) {
-            ScreenImage2[ScreenHeight - 1 - y][x][0] = r * 255;
-            ScreenImage2[ScreenHeight - 1 - y][x][1] = g * 255;
-            ScreenImage2[ScreenHeight - 1 - y][x][2] = b * 255;
-            ScreenDepth[ScreenHeight - 1 - y][x] = 0xFFFF;
-        }
-    }
+    ClearColor[0] = r;
+    ClearColor[1] = g;
+    ClearColor[2] = b;
 }
 
 void RasterizerStart()
 {
-    UseImageForSegmentDisplay = true; // XXX
+    // UseImageForSegmentDisplay = true; // XXX
     DeferredTrapezoidCount = 0;
 }
 
@@ -1365,7 +1350,7 @@ void RasterizerEnd()
         printf("max %zd trapezoids per frame\n", sizeof(Trapezoid) * MaxCount);
     }
     NTSCVideoSegmentBuffer buffer(ScreenWidth);
-    int result = buffer.Allocate(11500);
+    int result = buffer.Allocate(100000); // 11500);
     if(result != 0) {
         printf("failed to allocate video buffer with 11500 segments, result = %d\n", result);
         return; // COMMAND_FAILED;
@@ -1922,14 +1907,16 @@ int main(int argc, char **argv)
         iterate_ui();
     } while (!quitMyApp);
 
-    FILE *fp = fopen("glimage.ppm", "wb");
-    fprintf(fp, "P6 %d %d 255\n", ScreenWidth, ScreenHeight);
-    for(int y = 0; y < ScreenHeight; y++) {
-        for(int x = 0; x < ScreenWidth; x++) {
-            fwrite(ScreenImage[y][x], 3, 1, fp);
+    if(0) {
+        FILE *fp = fopen("glimage.ppm", "wb");
+        fprintf(fp, "P6 %d %d 255\n", ScreenWidth, ScreenHeight);
+        for(int y = 0; y < ScreenHeight; y++) {
+            for(int x = 0; x < ScreenWidth; x++) {
+                fwrite(ScreenImage[y][x], 3, 1, fp);
+            }
         }
+        fclose(fp);
     }
-    fclose(fp);
 
     setcooked();
     exit(EXIT_FAILURE);

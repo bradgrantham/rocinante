@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 import sys
 
+# expects geometric shape
+# one triangle per line
+# three vertices per triangle separated by whitespace
+# vertex is x y z nx ny nz separated by whitespace
+
 vertToIndex = {}
 verts = []
 triangles = []

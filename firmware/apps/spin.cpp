@@ -169,6 +169,8 @@ void DrawFrame(float frame_time, bool draw_wireframe, bool flat_shade, const Ver
     RasterizerEnd();
 }
 
+float aspectRatio = 1.0f;
+
 void InitState()
 {
     pglClearColor(1, 0, 0, 0);
@@ -181,7 +183,7 @@ void InitState()
     pglMatrixMode(GL_PROJECTION);
     pglLoadIdentity();
     // pglFrustum(-.07, .07, -.07, .07, .2, 100);
-    pglFrustum(-.03, .03, -.03, .03, .2, 100);
+    pglFrustum(-.03 * aspectRatio, .03 * aspectRatio, -.03, .03, .2, 100);
 
     pglMatrixMode(GL_MODELVIEW);
 
@@ -196,6 +198,7 @@ void InitState()
     pglEnable(GL_LIGHTING);
     CHECK_OPENGL(__LINE__);
 
+    // pglDisable(GL_CULL_FACE);
     pglEnable(GL_CULL_FACE);
 
     pglEnable(GL_NORMALIZE);
@@ -227,6 +230,8 @@ static int AppSpinModel(int argc, char **argv)
     VideoSegmentedParameters params;
     VideoModeGetInfo(VideoGetCurrentMode(), &info);
     VideoModeGetParameters(&params);
+
+    aspectRatio = info.aspectX / (float)info.aspectY;
 
     FILE *fp;
     fp = fopen (filename, "rb");
