@@ -1,38 +1,18 @@
+State explicitly: Make silicon do as much as possible - as few and as cheap external components as possible
+    So avoid external DAC (expensive)
+    Use internal DAC and opamp if that could be made to work - needs a current
+    and avoid external crystals for, e.g. video output
+    Settle on STM32H745IG for now
+
+Freq counter says my signal is 15490KHz, just putting the probe directly on video.
+    Real signal should be 15734.27KHz, so run the clock 1.01577x, or 1.577% faster?
+
 Close on segmented framebuffer
-    What screen approach?
-        1) defer all triangles
-            N * 3 * ScreenVertex(4 + 4 + 3 + 2?) = N * 39, then still have to sort, then (2) or (3)
-            only need one scanline of unmerged segments-with-depth around for 2
-            still need to keep complete screen of segments-without-depth for SetScanlines style API
-                460 * sqrt(N)-ish * Segment(7 * 2) = sqrt(N) * 6440, then still have to merge
-            But one pass, top to bottom, output each SegmentWithDepth complete
-        2) triangles into sorted per-line segment list with depth, merge segments as rasterized
-            460 * sqrt(N)-ish * SegmentWithDepth(9 * 2) = sqrt(N) * 8280
-            Make SetScanlines take SegmentWithDepth and discard the depth
-        If N < 2226, (1) uses less memory, else (2) uses less memory
-            32KB of deferred triangles is only like 1000 triangles anyway.
-            Teapot is 576 triangles
-            Polytope64 is 244 triangles
-            Polytope256 is 1012 triangles
-            So (1).
-            But 1000 triangles (evenly distributed sqrt(N) * segment) is 261836 bytes?  Yikes!
-        Therefore defer and then create screen one scanline at a time top to bottom, filling in VideoSegmentedScanline
-    triangle to trapezoids (gradient, textured, solid)
-    trapezoid to segments (gradient, textured, solid)
-    clear screen is initial segments at depth = 0xffff
-    SetSegmentTextured
-    SetSegmentSolid
-    PaintSegments
-    handle gradient, textured, solid in SetScanlines
-    set aspect ratio in Segmented mode and honor in segtest
+    textured and solid triangles, trapezoids, and segments
     teapot with Enable(CULLFACE):
         max 75 segments in one row
         max 8756 segments in frame
         max 41976 trapezoids per frame
-    polytope64 with Enable(CULLFACE):
-        max 35 segments in one row
-        max 6168 segments in frame
-        max 17280 traps
     polytope256 with Enable(CULLFACE):
         max 62 segments in one row
         max 11426 segments in frame
