@@ -93,7 +93,7 @@ struct ScreenVertex
 extern void RasterizerStart();
 extern void RasterizerClear(float r, float g, float b);
 extern int RasterizerAddLine(const ScreenVertex& sv0, const ScreenVertex& sv1);
-extern int RasterizerAddTriangle(const ScreenVertex& sv0, const ScreenVertex& sv1, const ScreenVertex& sv2);
+extern int RasterizerAddTriangle(const ScreenVertex* sv0, const ScreenVertex* sv1, const ScreenVertex* sv2);
 extern void RasterizerEnd();
 
 }

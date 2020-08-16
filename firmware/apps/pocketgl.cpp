@@ -971,6 +971,8 @@ static void light_vertex(material *mtl, const vec4f& coord, const vec3f& normal,
     }
 }
 
+int doprint = 0; // XXX debug
+
 static void per_vertex(world_vertex *wv, ScreenVertex *sv)
 {
     vec4f tv;
@@ -1022,7 +1024,7 @@ static int per_triangle(const ScreenVertex* sv0, const ScreenVertex* sv1, const 
 
     // XXX clip
 
-    return RasterizerAddTriangle(*sv0, *sv1, *sv2); // XXX non-zero assumed to be out-of-memory
+    return RasterizerAddTriangle(sv0, sv1, sv2); // XXX non-zero assumed to be out-of-memory
 }
 
 void pglDrawArrays(int primitive_type, int first, int count)
