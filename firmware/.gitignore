@@ -12,3 +12,5 @@ hosted
 *.o
 *.d
 Make.Out*
+polytope2indexed
+clocks.xlsx
