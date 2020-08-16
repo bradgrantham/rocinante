@@ -88,6 +88,9 @@ DEPS = $(COBJECTS:.o=.d) $(CXXOBJECTS:.o=.d)
 main.hex: main.elf
 	$(TOOLROOT)/bin/arm-none-eabi-objcopy -O ihex $< $@
 
+main.bin: main.elf
+	$(TOOLROOT)/bin/arm-none-eabi-objcopy -O binary -S $< $@
+
 -include $(DEPS)
 
 main.elf:  $(OBJECTS)
@@ -108,15 +111,12 @@ STM32Cube4/startup_stm32f746xx.o: STM32Cube4/startup_stm32f746xx.s
 clean:
 	rm -f *.hex *.elf *.o $(OBJECTS) $(DEPS) hosted segment_test
 
-bootrom.bin: ../../rom/rom.bin
-	(cd ../../rom ; make rom.bin)
-	dd bs=1024 count=1 if=../../rom/rom.bin of=bootrom.bin
-
 main.dfu: main.hex
 	python dfu-convert -i main.hex main.dfu
 
-burn: main.dfu
-	time dfu-util -d 0483:df11 -a 0 -D main.dfu
+burn: main.dfu main.bin
+	# time st-flash --reset write main.bin 0x8000000 # direct over ST-Link
+	time dfu-util -d 0483:df11 -a 0 -D main.dfu # DFU requires reset with BOOT0
 
 segment_test: segment_test.cpp segment_utility.cpp
 
