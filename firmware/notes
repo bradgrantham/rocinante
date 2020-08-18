@@ -1,11 +1,42 @@
+Measured MCO/5 as HSE at 4.00086MHz on freq counter, so 20MHz is giving me 20.00430 Mhz
+
+Drive DMA from 14.8181818MHz oscillator:
+    ./ put oscillator on breadboard, drive from 3.3, measure output on freq counter
+    ./ determine ETR pin on Nucleo :
+        A12 is XXX but is on USB
+        E7 is CN10-20 or CN12-44
+        ./ go with E7 / CN10-20 for easy jumper
+    ./ set TIM1_TRIG from ETR with count 1
+    if it doesn't work right away:
+        see if there's a pin I can put TIM1_TRIG on
+        tight CPU loop putting TIM1 on some GPIO, measure low bit with freq counter
+            "GPIOC->ODR = (GPIOE->IDR & 0x80)" yielded ~12.5MHz on the scope...? :-|
+    counter 611, and repetition 23434 would yield 1.00000055s per timer run, so could pulse clock at 1s from UIF
+        python script for this calculation:
+            for f in range(1,65537):
+             q = (1000000 * 315 // 22 // f)
+             if q < 65537:
+              qs.append((f, q, 1000000 * 315 / 22 / (f * q)))
+            qs2 = sorted(qs, key = lambda foo: foo[2])
+            qs2[0]
+    branch etr-trigger-update-experiment has code that runs at half-speed.  It seems I can't run COUNTER=0 and REPETITION=0.  If I run COUNTER=1, I get 7MHz, of course, 14.31818MHz oscillator divided by 2.
+        So, instead, try "input capture", a la https://www.cnblogs.com/shangdawei/p/4748426.html, and hope that's direct and not through the counter.
+        Need to wire PE9 and hook oscillator to that.
+        In the meantime I've ordered 28.363636MHz oscillators just in case I can't figure that out.
+
 State explicitly: Make silicon do as much as possible - as few and as cheap external components as possible
     So avoid external DAC (expensive)
     Use internal DAC and opamp if that could be made to work - needs a current
     and avoid external crystals for, e.g. video output
     Settle on STM32H745IG for now
 
-Freq counter says my signal is 15490KHz, just putting the probe directly on video.
-    Real signal should be 15734.27KHz, so run the clock 1.01577x, or 1.577% faster?
+Spend only another day on ETR
+Transition to H7
+    * verify where all pins are
+    * solder headers
+    * also do schematic as you transition
+    * verify HSI can be "close enough"
+    * order 25MHz
 
 Close on segmented framebuffer
     textured and solid triangles, trapezoids, and segments
@@ -52,19 +83,17 @@ windowed mode
         hooks the event functions and the Set-style functions
         catches REDRAW etc events, updates from backing-store when possible
         passes on to app if necessary (RESIZE, FULLSCREEN)
-Special nasty truecolor FB mode, 16 bits per pixel, Y8I4Q4? 100K RAM plus 50K VRAM: 320 x 240?
 Move Wolf to palette-RGB-style textures (reduce bandwidth to make up lookup & process cost?)
 honor aspect ratio in "show"
 Some things to improve in "show"
     [--gray] - use a grayscale palette
-Move to STM32H750 with less ROM and more RAM, run by loading program into RAM, maybe have a flash part on QSPI
-    Run at 480MHz
-    Has 192K coupled RAM, so can expand framebuffer x3
-        still can't have 640x480x1 but could maybe have 640x480x4 or 512x375x8
+    fix skipped lines in "hosted" - img lower resolution than framebuffer
+    antialias
 Make circle renderer find pixel center coordinates to see if the weird jumpiness is being caused by integer snapping - can't expect decent lit or textured rendering if the coordinates are going to jump around for some reason
 DB-9 Coleco game controller
 PS/2 keyboard and mouse
 paletteToWave and rowPalette should be carved from imgBuffer so imgBuffer for non-palette modes has more space
+    VRAMalloc
 Some things to improve living
     textport should be virtual and overlaid on screen in text mode and preserved for returning to text mode
         so then textport output would ALWAYS work and be recorded, and switching back to text would restore the old viewport.
