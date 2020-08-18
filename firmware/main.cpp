@@ -37,6 +37,8 @@
 // System driver internal definitions
 #include "videomodeinternal.h"
 
+TIM_HandleTypeDef htim1;
+
 static int gDumpKeyboardData = 0;
 
 #define IOBOARD_FIRMWARE_VERSION_STRING XSTR(IOBOARD_FIRMWARE_VERSION)
@@ -114,116 +116,16 @@ typedef struct {
 unsigned int whichConfig = 0;
 static const ClockConfiguration clockConfigs[] =
 {
-    // Base mode we know works?
+    // Base mode we know works on 415 and 746
     // { 229.14, 8000000, 7, 401, 2, 8, RCC_SYSCLK_DIV1, RCC_HCLK_DIV8, RCC_HCLK_DIV4, 3.580357, 0.000227 }, // can't get SD to lock in
     // { 200.50, 8000000, 4, 401, 4, 7, RCC_SYSCLK_DIV1, RCC_HCLK_DIV8, RCC_HCLK_DIV4, 3.580357, 0.000227},
 
-    // Know this one works at HSI 16MHz, but jittery, no color:
+    // Know this one works at HSI 16MHz on 746, but jittery, no color:
     // { 200.50, 16000000, 8, 401, 4, 7, RCC_SYSCLK_DIV1, RCC_HCLK_DIV8, RCC_HCLK_DIV4, 3.580357, 0.000227},
     // (16 / 8 * 401 / 4) / (7 * 2)
 
-    // PLL_OUTPUT MHz, HSE, PLLM, PLLN, PLLP, TIM_CLOCKS, HCLK_DIV, APB1_DIV, APB2_DIV, actual color clock MHz, error
-    {186.15, 20000000, 13, 242, 2, 13, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.579882, 0.000094},
-
-    {229.09, 20000000, 11, 252, 2, 8, RCC_SYSCLK_DIV1, RCC_HCLK_DIV8, RCC_HCLK_DIV4, 3.579545, 0.000000},
-    {200.48, 20000000, 21, 421, 2, 14, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.579932, 0.000108},
-    {186.11, 20000000, 18, 335, 2, 13, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.579060, -0.000136},
-    {200.50, 20000000, 20, 401, 2, 14, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.580357, 0.000227},
-    {186.19, 20000000, 21, 391, 2, 13, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.580586, 0.000291},
-    {200.53, 20000000, 19, 381, 2, 14, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.580827, 0.000358},
-    {200.56, 20000000, 18, 361, 2, 14, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.581349, 0.000504},
-    {186.25, 20000000, 16, 298, 2, 13, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.581731, 0.000611},
-    {200.59, 20000000, 17, 341, 2, 14, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.581933, 0.000667},
-    {186.00, 20000000, 10, 186, 2, 13, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.576923, -0.000732},
-    {186.00, 20000000, 15, 279, 2, 13, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.576923, -0.000732},
-    {186.00, 20000000, 20, 372, 2, 13, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.576923, -0.000732},
-    {200.62, 20000000, 16, 321, 2, 14, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.582589, 0.000850},
-    {186.32, 20000000, 19, 354, 2, 13, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.582996, 0.000964},
-    {200.67, 20000000, 15, 301, 2, 14, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.583333, 0.001058},
-    {186.36, 20000000, 11, 205, 2, 13, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.583916, 0.001221},
-    {200.71, 20000000, 14, 281, 2, 14, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.584184, 0.001296},
-    {185.88, 20000000, 17, 316, 2, 13, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.574661, -0.001365},
-    {200.77, 20000000, 13, 261, 2, 14, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.585165, 0.001570},
-    {186.43, 20000000, 14, 261, 2, 13, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.585165, 0.001570},
-    {185.83, 20000000, 12, 223, 2, 13, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.573718, -0.001628},
-    {186.47, 20000000, 17, 317, 2, 13, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.585973, 0.001796},
-    {185.79, 20000000, 19, 353, 2, 13, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.572874, -0.001864},
-    {200.83, 20000000, 12, 241, 2, 14, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.586310, 0.001890},
-    {186.50, 20000000, 20, 373, 2, 13, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.586538, 0.001954},
-    {200.00, 20000000, 17, 340, 2, 14, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.571429, -0.002267},
-    {185.71, 20000000, 14, 260, 2, 13, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.571429, -0.002267},
-    {185.71, 20000000, 21, 390, 2, 13, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.571429, -0.002267},
-    {200.00, 20000000, 10, 200, 2, 14, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.571429, -0.002267},
-    {200.00, 20000000, 11, 220, 2, 14, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.571429, -0.002267},
-    {200.00, 20000000, 12, 240, 2, 14, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.571429, -0.002267},
-    {200.00, 20000000, 13, 260, 2, 14, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.571429, -0.002267},
-    {200.00, 20000000, 14, 280, 2, 14, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.571429, -0.002267},
-    {200.00, 20000000, 15, 300, 2, 14, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.571429, -0.002267},
-    {200.00, 20000000, 16, 320, 2, 14, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.571429, -0.002267},
-    {200.00, 20000000, 20, 400, 2, 14, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.571429, -0.002267},
-    {200.00, 20000000, 21, 420, 2, 14, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.571429, -0.002267},
-    {200.00, 20000000, 18, 360, 2, 14, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.571429, -0.002267},
-    {200.00, 20000000, 19, 380, 2, 14, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.571429, -0.002267},
-    {200.91, 20000000, 11, 221, 2, 14, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.587662, 0.002268},
-    {200.95, 20000000, 21, 422, 2, 14, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.588435, 0.002484},
-    {201.00, 20000000, 10, 201, 2, 14, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.589286, 0.002721},
-    {201.00, 20000000, 20, 402, 2, 14, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.589286, 0.002721},
-    {185.62, 20000000, 16, 297, 2, 13, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.569712, -0.002747},
-    {186.67, 20000000, 15, 280, 2, 13, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.589744, 0.002849},
-    {186.67, 20000000, 18, 336, 2, 13, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.589744, 0.002849},
-    {186.67, 20000000, 12, 224, 2, 13, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.589744, 0.002849},
-    {186.67, 20000000, 21, 392, 2, 13, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.589744, 0.002849},
-    {201.05, 20000000, 19, 382, 2, 14, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.590226, 0.002984},
-    {185.56, 20000000, 18, 334, 2, 13, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.568376, -0.003120},
-    {201.11, 20000000, 18, 362, 2, 14, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.591270, 0.003276},
-    {185.50, 20000000, 20, 371, 2, 13, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.567308, -0.003419},
-    {201.18, 20000000, 17, 342, 2, 14, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.592437, 0.003602},
-    {185.45, 20000000, 11, 204, 2, 13, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.566434, -0.003663},
-    {186.84, 20000000, 19, 355, 2, 13, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.593117, 0.003792},
-    {201.25, 20000000, 16, 322, 2, 14, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.593750, 0.003968},
-    {186.88, 20000000, 16, 299, 2, 13, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.593750, 0.003968},
-    {185.38, 20000000, 13, 241, 2, 13, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.565089, -0.004039},
-    {186.92, 20000000, 13, 243, 2, 13, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.594675, 0.004227},
-    {185.33, 20000000, 15, 278, 2, 13, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.564103, -0.004314},
-    {201.33, 20000000, 15, 302, 2, 14, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.595238, 0.004384},
-    {185.29, 20000000, 17, 315, 2, 13, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.563348, -0.004525},
-    {187.00, 20000000, 10, 187, 2, 13, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.596154, 0.004640},
-    {187.00, 20000000, 20, 374, 2, 13, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.596154, 0.004640},
-    {199.52, 20000000, 21, 419, 2, 14, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.562925, -0.004643},
-    {185.26, 20000000, 19, 352, 2, 13, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.562753, -0.004691},
-    {199.50, 20000000, 20, 399, 2, 14, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.562500, -0.004762},
-    {185.24, 20000000, 21, 389, 2, 13, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.562271, -0.004826},
-    {201.43, 20000000, 14, 282, 2, 14, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.596939, 0.004859},
-    {201.43, 20000000, 21, 423, 2, 14, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.596939, 0.004859},
-    {199.47, 20000000, 19, 379, 2, 14, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.562030, -0.004893},
-    {187.06, 20000000, 17, 318, 2, 13, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.597285, 0.004956},
-    {199.44, 20000000, 18, 359, 2, 14, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.561508, -0.005039},
-    {199.41, 20000000, 17, 339, 2, 14, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.560924, -0.005202},
-    {201.50, 20000000, 20, 403, 2, 14, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.598214, 0.005216},
-    {199.38, 20000000, 16, 319, 2, 14, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.560268, -0.005385},
-    {201.54, 20000000, 13, 262, 2, 14, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.598901, 0.005407},
-    {187.14, 20000000, 14, 262, 2, 13, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.598901, 0.005407},
-    {187.14, 20000000, 21, 393, 2, 13, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.598901, 0.005407},
-    {199.33, 20000000, 15, 299, 2, 14, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.559524, -0.005593},
-    {201.58, 20000000, 19, 383, 2, 14, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.599624, 0.005609},
-    {199.29, 20000000, 14, 279, 2, 14, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.558673, -0.005831},
-    {187.22, 20000000, 18, 337, 2, 13, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.600427, 0.005834},
-    {201.67, 20000000, 18, 363, 2, 14, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.601190, 0.006047},
-    {201.67, 20000000, 12, 242, 2, 14, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.601190, 0.006047},
-    {199.23, 20000000, 13, 259, 2, 14, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.557692, -0.006105},
-    {185.00, 20000000, 10, 185, 2, 13, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.557692, -0.006105},
-    {185.00, 20000000, 12, 222, 2, 13, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.557692, -0.006105},
-    {185.00, 20000000, 14, 259, 2, 13, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.557692, -0.006105},
-    {185.00, 20000000, 16, 296, 2, 13, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.557692, -0.006105},
-    {185.00, 20000000, 20, 370, 2, 13, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.557692, -0.006105},
-    {185.00, 20000000, 18, 333, 2, 13, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.557692, -0.006105},
-    {187.27, 20000000, 11, 206, 2, 13, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.601399, 0.006105},
-    {199.17, 20000000, 12, 239, 2, 14, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.556548, -0.006425},
-    {187.33, 20000000, 15, 281, 2, 13, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.602564, 0.006431},
-    {201.76, 20000000, 17, 343, 2, 14, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.602941, 0.006536},
-    {187.37, 20000000, 19, 356, 2, 13, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.603239, 0.006619},
-    {199.09, 20000000, 11, 219, 2, 14, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.555195, -0.006803},
-    {201.82, 20000000, 11, 222, 2, 14, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 3.603896, 0.006803},
+// PLL_OUTPUT MHz, HSE, PLLM, PLLN, PLLP, TIM_CLOCKS, HCLK_DIV, APB1_DIV, APB2_DIV, actual color clock MHz, error
+    {204.54, 20004300, 20, 409, 2, 2, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 102.271984, 6.142805},
 };
 static const int clockConfigCount = sizeof(clockConfigs) / sizeof(clockConfigs[0]);
 
@@ -314,10 +216,11 @@ static void SystemClock_Config(void)
   __HAL_RCC_TIM9_CLK_ENABLE();
   __HAL_RCC_DMA2_CLK_ENABLE();
   __HAL_RCC_DAC_CLK_ENABLE();
-    __HAL_RCC_GPIOA_CLK_ENABLE();
-    __HAL_RCC_GPIOB_CLK_ENABLE();
-    __HAL_RCC_GPIOC_CLK_ENABLE();
-    __HAL_RCC_GPIOD_CLK_ENABLE();
+  __HAL_RCC_GPIOA_CLK_ENABLE();
+  __HAL_RCC_GPIOB_CLK_ENABLE();
+  __HAL_RCC_GPIOC_CLK_ENABLE();
+  __HAL_RCC_GPIOD_CLK_ENABLE();
+  __HAL_RCC_GPIOE_CLK_ENABLE();
 
     // Since this relies solely on the clock 
     delay_init();
@@ -994,6 +897,7 @@ void fillRowDebugOverlay(int frameNumber, int lineNumber, unsigned char* nextRow
 volatile int SECTION_CCMRAM lineNumber = 0;
 volatile int SECTION_CCMRAM frameNumber = 0;
 
+// unused at the present, was no faster than memcpy
 void MemoryCopyDMA(unsigned char* dst, unsigned char* src, size_t size)
 {
     // XXX wait on previous DMA
@@ -1072,7 +976,7 @@ static void RegisterCommandPlay(void)
 extern "C" {
 #endif /* __cplusplus */
 
-void DMA2_Stream2_IRQHandler(void)
+void DMA2_Stream5_IRQHandler(void)
 {
     // Configure timer TIM2 for performance measurement
     TIM9->CNT = 0;
@@ -1104,7 +1008,7 @@ void DMA2_Stream2_IRQHandler(void)
     DAC1->DHR8R1 = audioBuffer[audioBufferPosition];
     audioBufferPosition = (audioBufferPosition + 1) % sizeof(audioBuffer);
 
-    int whichIsScanning = (DMA2_Stream2->CR & DMA_SxCR_CT) ? 1 : 0;
+    int whichIsScanning = (DMA2_Stream5->CR & DMA_SxCR_CT) ? 1 : 0;
 
     unsigned char *nextRowBuffer = (whichIsScanning == 1) ? row0 : row1;
 
@@ -1130,7 +1034,7 @@ void DMA2_Stream2_IRQHandler(void)
         int withinVisiblePartOfOddFrame = (lineNumber > (262 + 27)) && (lineNumber < (262 + 257));
 
         if(withinVisiblePartOfEvenFrame || withinVisiblePartOfOddFrame) {
-            while(DMA2_Stream1->NDTR > 100);
+            while(DMA2_Stream5->NDTR > 100);
         }
     }
 
@@ -1139,7 +1043,7 @@ void DMA2_Stream2_IRQHandler(void)
     // rowCyclesSpent[lineNumber] = TIM9->CNT;     // TIM9 CK_INT is RCC on 415xxx, APB1 on 746xxx
     rowDMARemained[thisLineNumber] = 912 - TIM9->CNT / 7;
 #else
-    rowDMARemained[thisLineNumber] = *(uint16_t*)&DMA2_Stream1->NDTR;
+    rowDMARemained[thisLineNumber] = *(uint16_t*)&DMA2_Stream5->NDTR;
 #endif
 }
 
@@ -1150,6 +1054,8 @@ void DMA2_Stream2_IRQHandler(void)
 
 void DMAStartScanout(uint32_t dmaCount)
 {
+    HAL_StatusTypeDef status;
+
     // Configure DAC
     GPIO_InitTypeDef  GPIO_InitStruct = {0};
     GPIO_InitStruct.Pull = GPIO_NOPULL;
@@ -1158,53 +1064,134 @@ void DMAStartScanout(uint32_t dmaCount)
     GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
     HAL_GPIO_Init(GPIOC, &GPIO_InitStruct); 
 
+    // Configure E7, which is ETR input, which drives TIM
+    GPIO_InitStruct.Pin = GPIO_PIN_7;
+    GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+    GPIO_InitStruct.Pull = GPIO_NOPULL;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
+    GPIO_InitStruct.Alternate = GPIO_AF1_TIM1;
+    HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
+
     // Enable DMA interrupt handler
-    HAL_NVIC_SetPriority(DMA2_Stream2_IRQn, 0, 1);
-    HAL_NVIC_EnableIRQ(DMA2_Stream2_IRQn);
+    HAL_NVIC_SetPriority(DMA2_Stream5_IRQn, 0, 0);
+    HAL_NVIC_EnableIRQ(DMA2_Stream5_IRQn);
 
     // Configure DMA
-    DMA2_Stream2->NDTR = ROW_SAMPLES;
-    DMA2_Stream2->M0AR = (uint32_t)row0;        // Source buffer address 0
-    DMA2_Stream2->M1AR = (uint32_t)row1;        // Source buffer address 1 
-    DMA2_Stream2->PAR = (uint32_t)&GPIOC->ODR;  // Destination address
-    DMA2_Stream2->FCR = DMA_FIFOMODE_ENABLE |   // Enable FIFO to improve stutter
+    DMA2_Stream5->NDTR = ROW_SAMPLES;
+    DMA2_Stream5->M0AR = (uint32_t)row0;        // Source buffer address 0
+    DMA2_Stream5->M1AR = (uint32_t)row1;        // Source buffer address 1 
+    DMA2_Stream5->PAR = (uint32_t)&GPIOC->ODR;  // Destination address
+    DMA2_Stream5->FCR = DMA_FIFOMODE_ENABLE |   // Enable FIFO to improve stutter
         DMA_FIFO_THRESHOLD_FULL;        
-    DMA2_Stream2->CR =
+    DMA2_Stream5->CR =
         DMA_CHANNEL_6 |                         // which channel is driven by which timer to which peripheral is limited
         DMA_MEMORY_TO_PERIPH |                  // Memory to Peripheral
         DMA_PDATAALIGN_BYTE |                   // BYTES to peripheral
-        DMA_MDATAALIGN_HALFWORD |
+        // DMA_MDATAALIGN_HALFWORD |
+        DMA_MDATAALIGN_BYTE |
         DMA_SxCR_DBM |                          // double buffer
         DMA_PRIORITY_VERY_HIGH |                // Video data must be highest priority, can't stutter
         DMA_MINC_ENABLE |                       // Increment memory address
         DMA_IT_TC |                             // Interrupt on transfer complete of each buffer
-        // DMA_IT_HT |                             // Interrupt on transfer complete of each buffer 
+        // DMA_IT_HT |                          // Interrupt on transfer complete of half a buffer 
+        // DMA_IT_TE |                             // XXX Interrupt on transfer error
+        // DMA_IT_DME |                             // XXX Interrupt on DMA error
         0;
-
-    // Configure TIM1_CH2 to drive DMA
-    TIM1->CCR2 = (dmaCount + 1) / 2;         /* 50% duty cycle, although I've tried 1 and dmacount-1 and nothing seems to change.  Is this used? */ 
-    TIM1->CCER |= TIM_CCER_CC2E;        /* enable capture/compare CH2 */
-    TIM1->DIER |= TIM_DIER_CC2DE;       /* enable capture/compare updates DMA */
-
-    // Configure timer TIM1
-    TIM1->SR = 0;                       /* reset status */
-    TIM1->ARR = dmaCount - 1;           /* load the register with this */
-
-    lineNumber = 1; // Next up is row 1
-    frameNumber = 0; 
 
     // Clear FIFO and transfer error flags
     DMA2->LIFCR |= DMA_LIFCR_CFEIF2;
     DMA2->LIFCR |= DMA_LIFCR_CTEIF2;
 
-    DMA2_Stream2->CR |= DMA_SxCR_EN;    /* enable DMA */
-    TIM1->CR1 = TIM_CR1_CEN;            /* enable the timer */
+    DMA2_Stream5->CR |= DMA_SxCR_EN;    /* enable DMA */
+
+    // Configure TIM1 to clock from ETR
+    TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+    TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+    htim1.Instance = TIM1;
+    htim1.Init.Prescaler = 0;
+    htim1.Init.CounterMode = TIM_COUNTERMODE_UP;
+    htim1.Init.Period = 1;
+    htim1.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+    htim1.Init.RepetitionCounter = 0;
+    htim1.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+    if ((status = HAL_TIM_Base_Init(&htim1)) != HAL_OK)
+    {
+        printf("TIM_Base_Init failed, status %d\n", status);
+        panic();
+    }
+    sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_ETRMODE2;
+    sClockSourceConfig.ClockPolarity = TIM_CLOCKPOLARITY_NONINVERTED;
+    sClockSourceConfig.ClockPrescaler = TIM_CLOCKPRESCALER_DIV1;
+    sClockSourceConfig.ClockFilter = 0;
+    if ((status = HAL_TIM_ConfigClockSource(&htim1, &sClockSourceConfig)) != HAL_OK)
+    {
+        printf("HAL_TIM_ConfigClockSource failed, status %d\n", status);
+        panic();
+    }
+    sMasterConfig.MasterOutputTrigger = TIM_TRGO_UPDATE;
+    sMasterConfig.MasterOutputTrigger2 = TIM_TRGO2_RESET;
+    sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+    if ((status = HAL_TIMEx_MasterConfigSynchronization(&htim1, &sMasterConfig)) != HAL_OK)
+    {
+        printf("HAL_TIMEx_MasterConfigSynchronization failed, status %d\n", status);
+        panic();
+    }
+
+    // Set DMA request on update
+    // TIM1->DIER |= TIM_DIER_TDE;
+    TIM1->DIER |= TIM_DIER_UDE;
+
+    status = HAL_TIM_Base_Start(&htim1);
+    if(status != HAL_OK) {
+        printf("HAL_TIM_Base_Start status %d\n", status);
+        panic();
+    }
+
+    lineNumber = 1; // Next up is row 1
+    frameNumber = 0; 
+
+    printf("TIM1->CR1 = %08lX\n", TIM1->CR1);
+    printf("TIM1->CR2 = %08lX\n", TIM1->CR2);
+    printf("TIM1->SMCR = %08lX\n", TIM1->SMCR);
+    printf("TIM1->DIER = %08lX\n", TIM1->DIER);
+    printf("TIM1->SR = %08lX\n", TIM1->SR);
+    printf("TIM1->EGR = %08lX\n", TIM1->EGR);
+    printf("TIM1->CCMR1 = %08lX\n", TIM1->CCMR1);
+    printf("TIM1->CCMR2 = %08lX\n", TIM1->CCMR2);
+    printf("TIM1->CCER = %08lX\n", TIM1->CCER);
+    printf("TIM1->CNT = %08lX\n", TIM1->CNT);
+    printf("TIM1->PSC = %08lX\n", TIM1->PSC);
+    printf("TIM1->ARR = %08lX\n", TIM1->ARR);
+    printf("TIM1->RCR = %08lX\n", TIM1->RCR);
+    printf("TIM1->CCR1 = %08lX\n", TIM1->CCR1);
+    printf("TIM1->CCR2 = %08lX\n", TIM1->CCR2);
+    printf("TIM1->CCR3 = %08lX\n", TIM1->CCR3);
+    printf("TIM1->CCR4 = %08lX\n", TIM1->CCR4);
+    printf("TIM1->BDTR = %08lX\n", TIM1->BDTR);
+    printf("TIM1->DCR = %08lX\n", TIM1->DCR);
+    printf("TIM1->DMAR = %08lX\n", TIM1->DMAR);
+    printf("TIM1->OR = %08lX\n", TIM1->OR);
+    printf("TIM1->CCMR3 = %08lX\n", TIM1->CCMR3);
+    printf("TIM1->CCR5 = %08lX\n", TIM1->CCR5);
+    printf("TIM1->CCR6 = %08lX\n", TIM1->CCR6);
+
+    printf("DMA2->LISR = %08lX\n", DMA2->LISR);
+    printf("DMA2->HISR = %08lX\n", DMA2->HISR);
+
+    printf("DMA2_Stream5->CR = %08lX\n", DMA2_Stream5->CR);
+    printf("DMA2_Stream5->NDTR = %08lX\n", DMA2_Stream5->NDTR);
+    printf("DMA2_Stream5->PAR = %08lX\n", DMA2_Stream5->PAR);
+    printf("DMA2_Stream5->M0AR = %08lX\n", DMA2_Stream5->M0AR);
+    printf("DMA2_Stream5->M1AR = %08lX\n", DMA2_Stream5->M1AR);
+    printf("DMA2_Stream5->FCR = %08lX\n", DMA2_Stream5->FCR);
 }
 
 void DMAStopScanout()
 {
-    DMA2_Stream2->CR &= ~DMA_SxCR_EN;       /* disable DMA */
-    TIM1->CR1 &= ~TIM_CR1_CEN;            /* disable the timer */
+    DMA2_Stream5->CR &= ~DMA_SxCR_EN;       /* disable DMA */
+    // TIM1->CR1 &= ~TIM_CR1_CEN;            /* disable the timer... what's the HAL function? */
+    HAL_TIM_Base_Stop(&htim1);
 }
 
 //----------------------------------------------------------------------------
