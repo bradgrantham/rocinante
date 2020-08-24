@@ -125,7 +125,9 @@ static const ClockConfiguration clockConfigs[] =
     // (16 / 8 * 401 / 4) / (7 * 2)
 
 // PLL_OUTPUT MHz, HSE, PLLM, PLLN, PLLP, TIM_CLOCKS, HCLK_DIV, APB1_DIV, APB2_DIV, actual color clock MHz, error
-    {204.54, 20004300, 20, 409, 2, 2, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 102.271984, 6.142805},
+    // {204.54, 20004300, 20, 409, 2, 2, RCC_SYSCLK_DIV1, RCC_HCLK_DIV4, RCC_HCLK_DIV2, 102.271984, 6.142805},
+
+{ 215.93, 20004300, 17, 367, 2, 29, RCC_SYSCLK_DIV1, RCC_HCLK_DIV8, RCC_HCLK_DIV4, 3.722910, -0.739987 },
 };
 static const int clockConfigCount = sizeof(clockConfigs) / sizeof(clockConfigs[0]);
 
@@ -976,15 +978,16 @@ static void RegisterCommandPlay(void)
 extern "C" {
 #endif /* __cplusplus */
 
-void DMA2_Stream5_IRQHandler(void)
+uint32_t oldLISR = 0;
+
+void DMA2_Stream1_IRQHandler(void)
 {
     // Configure timer TIM2 for performance measurement
     TIM9->CNT = 0;
     TIM9->CR1 = TIM_CR1_CEN;            /* enable the timer */
 
     // Clear interrupt flag
-    DMA2->LIFCR |= DMA_LIFCR_CTCIF2;
-    // DMA2->LIFCR |= DMA_LIFCR_CHTIF2;
+    DMA2->LIFCR |= DMA_LIFCR_CTCIF1; // XXX this bit (and other LISR/LIFCR HISR/HIFCR) are dependent on the stream 
 
     if(markHandlerInSamples) {
         for(int i = 0; i < 28; i++) { GPIOC->ODR = (GPIOC->ODR & 0xFFFFFF00) | 0xFFFFFFF8; }
@@ -995,20 +998,28 @@ void DMA2_Stream5_IRQHandler(void)
         //for(int i = 0; i < 15; i++) { GPIOJ->ODR = GPIOJ_ODR; }
     }
 
-    if(DMA2->LISR & DMA_FLAG_FEIF2_6) {
-        DMA2->LIFCR |= DMA_LIFCR_CFEIF2;
+    if(DMA2->LISR & DMA_FLAG_FEIF1_5) { // XXX 1_5 is "1 or 5"
+        DMA2->LIFCR |= DMA_LIFCR_CFEIF1;
         DMAFIFOUnderruns++;
     }
-    if(DMA2->LISR & DMA_FLAG_TEIF2_6) {
-        DMA2->LIFCR |= DMA_LIFCR_CTEIF2;
+    if(DMA2->LISR & DMA_FLAG_TEIF1_5) {
+        DMA2->LIFCR |= DMA_LIFCR_CTEIF1;
         DMATransferErrors++;
+    }
+    if(DMA2->LISR & DMA_FLAG_HTIF1_5) {
+        DMA2->LIFCR |= DMA_LIFCR_CHTIF1;
+    }
+
+    if(DMA2->LISR) {
+        oldLISR = DMA2->LISR;
+        DMA2->LIFCR = 0xFFFF;
     }
 
     // XXX audio experiment
     DAC1->DHR8R1 = audioBuffer[audioBufferPosition];
     audioBufferPosition = (audioBufferPosition + 1) % sizeof(audioBuffer);
 
-    int whichIsScanning = (DMA2_Stream5->CR & DMA_SxCR_CT) ? 1 : 0;
+    int whichIsScanning = (DMA2_Stream1->CR & DMA_SxCR_CT) ? 1 : 0;
 
     unsigned char *nextRowBuffer = (whichIsScanning == 1) ? row0 : row1;
 
@@ -1034,7 +1045,7 @@ void DMA2_Stream5_IRQHandler(void)
         int withinVisiblePartOfOddFrame = (lineNumber > (262 + 27)) && (lineNumber < (262 + 257));
 
         if(withinVisiblePartOfEvenFrame || withinVisiblePartOfOddFrame) {
-            while(DMA2_Stream5->NDTR > 100);
+            while(DMA2_Stream1->NDTR > 100);
         }
     }
 
@@ -1043,7 +1054,7 @@ void DMA2_Stream5_IRQHandler(void)
     // rowCyclesSpent[lineNumber] = TIM9->CNT;     // TIM9 CK_INT is RCC on 415xxx, APB1 on 746xxx
     rowDMARemained[thisLineNumber] = 912 - TIM9->CNT / 7;
 #else
-    rowDMARemained[thisLineNumber] = *(uint16_t*)&DMA2_Stream5->NDTR;
+    rowDMARemained[thisLineNumber] = *(uint16_t*)&DMA2_Stream1->NDTR;
 #endif
 }
 
@@ -1064,31 +1075,30 @@ void DMAStartScanout(uint32_t dmaCount)
     GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
     HAL_GPIO_Init(GPIOC, &GPIO_InitStruct); 
 
-    // Configure E7, which is ETR input, which drives TIM
-    GPIO_InitStruct.Pin = GPIO_PIN_7;
+    // Configure E9 as TI1_CH1 
+    GPIO_InitStruct.Pin = GPIO_PIN_9;
     GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-    GPIO_InitStruct.Pull = GPIO_NOPULL;
+    GPIO_InitStruct.Pull = GPIO_PULLDOWN;
     GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
     GPIO_InitStruct.Alternate = GPIO_AF1_TIM1;
     HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
 
     // Enable DMA interrupt handler
-    HAL_NVIC_SetPriority(DMA2_Stream5_IRQn, 0, 0);
-    HAL_NVIC_EnableIRQ(DMA2_Stream5_IRQn);
+    HAL_NVIC_SetPriority(DMA2_Stream1_IRQn, 0, 1);
+    HAL_NVIC_EnableIRQ(DMA2_Stream1_IRQn);
 
     // Configure DMA
-    DMA2_Stream5->NDTR = ROW_SAMPLES;
-    DMA2_Stream5->M0AR = (uint32_t)row0;        // Source buffer address 0
-    DMA2_Stream5->M1AR = (uint32_t)row1;        // Source buffer address 1 
-    DMA2_Stream5->PAR = (uint32_t)&GPIOC->ODR;  // Destination address
-    DMA2_Stream5->FCR = DMA_FIFOMODE_ENABLE |   // Enable FIFO to improve stutter
+    DMA2_Stream1->NDTR = ROW_SAMPLES;
+    DMA2_Stream1->M0AR = (uint32_t)row0;        // Source buffer address 0
+    DMA2_Stream1->M1AR = (uint32_t)row1;        // Source buffer address 1 
+    DMA2_Stream1->PAR = (uint32_t)&GPIOC->ODR;  // Destination address
+    DMA2_Stream1->FCR = DMA_FIFOMODE_ENABLE |   // Enable FIFO to improve stutter
         DMA_FIFO_THRESHOLD_FULL;        
-    DMA2_Stream5->CR =
+    DMA2_Stream1->CR =
         DMA_CHANNEL_6 |                         // which channel is driven by which timer to which peripheral is limited
         DMA_MEMORY_TO_PERIPH |                  // Memory to Peripheral
         DMA_PDATAALIGN_BYTE |                   // BYTES to peripheral
-        // DMA_MDATAALIGN_HALFWORD |
-        DMA_MDATAALIGN_BYTE |
+        DMA_MDATAALIGN_HALFWORD |
         DMA_SxCR_DBM |                          // double buffer
         DMA_PRIORITY_VERY_HIGH |                // Video data must be highest priority, can't stutter
         DMA_MINC_ENABLE |                       // Increment memory address
@@ -1102,51 +1112,44 @@ void DMAStartScanout(uint32_t dmaCount)
     DMA2->LIFCR |= DMA_LIFCR_CFEIF2;
     DMA2->LIFCR |= DMA_LIFCR_CTEIF2;
 
-    DMA2_Stream5->CR |= DMA_SxCR_EN;    /* enable DMA */
+    DMA2_Stream1->CR |= DMA_SxCR_EN;    /* enable DMA */
 
-    // Configure TIM1 to clock from ETR
-    TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+    // Configure TIM1 to clock from input capture for channel 1
     TIM_MasterConfigTypeDef sMasterConfig = {0};
+    TIM_IC_InitTypeDef sConfigIC = {0};
 
     htim1.Instance = TIM1;
     htim1.Init.Prescaler = 0;
     htim1.Init.CounterMode = TIM_COUNTERMODE_UP;
-    htim1.Init.Period = 1;
+    htim1.Init.Period = 0;
     htim1.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
     htim1.Init.RepetitionCounter = 0;
     htim1.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
-    if ((status = HAL_TIM_Base_Init(&htim1)) != HAL_OK)
+    if ((status = HAL_TIM_IC_Init(&htim1)) != HAL_OK)
     {
-        printf("TIM_Base_Init failed, status %d\n", status);
+        printf("HAL_TIM_IC_Init failed, status %d\n", status);
         panic();
     }
-    sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_ETRMODE2;
-    sClockSourceConfig.ClockPolarity = TIM_CLOCKPOLARITY_NONINVERTED;
-    sClockSourceConfig.ClockPrescaler = TIM_CLOCKPRESCALER_DIV1;
-    sClockSourceConfig.ClockFilter = 0;
-    if ((status = HAL_TIM_ConfigClockSource(&htim1, &sClockSourceConfig)) != HAL_OK)
-    {
-        printf("HAL_TIM_ConfigClockSource failed, status %d\n", status);
-        panic();
-    }
-    sMasterConfig.MasterOutputTrigger = TIM_TRGO_UPDATE;
+    sMasterConfig.MasterOutputTrigger = TIM_TRGO_OC1;
     sMasterConfig.MasterOutputTrigger2 = TIM_TRGO2_RESET;
     sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
-    if ((status = HAL_TIMEx_MasterConfigSynchronization(&htim1, &sMasterConfig)) != HAL_OK)
+    if (HAL_TIMEx_MasterConfigSynchronization(&htim1, &sMasterConfig) != HAL_OK)
     {
         printf("HAL_TIMEx_MasterConfigSynchronization failed, status %d\n", status);
         panic();
     }
-
-    // Set DMA request on update
-    // TIM1->DIER |= TIM_DIER_TDE;
-    TIM1->DIER |= TIM_DIER_UDE;
-
-    status = HAL_TIM_Base_Start(&htim1);
-    if(status != HAL_OK) {
-        printf("HAL_TIM_Base_Start status %d\n", status);
+    sConfigIC.ICPolarity = TIM_INPUTCHANNELPOLARITY_RISING;
+    sConfigIC.ICSelection = TIM_ICSELECTION_DIRECTTI;
+    sConfigIC.ICPrescaler = TIM_ICPSC_DIV1;
+    sConfigIC.ICFilter = 0;
+    if (HAL_TIM_IC_ConfigChannel(&htim1, &sConfigIC, TIM_CHANNEL_1) != HAL_OK)
+    {
+        printf("HAL_TIM_IC_ConfigChannel failed, status %d\n", status);
         panic();
     }
+
+    // Set DMA request on capture-compare channel 1
+    TIM1->DIER |= TIM_DIER_CC1DE;
 
     lineNumber = 1; // Next up is row 1
     frameNumber = 0; 
@@ -1179,17 +1182,23 @@ void DMAStartScanout(uint32_t dmaCount)
     printf("DMA2->LISR = %08lX\n", DMA2->LISR);
     printf("DMA2->HISR = %08lX\n", DMA2->HISR);
 
-    printf("DMA2_Stream5->CR = %08lX\n", DMA2_Stream5->CR);
-    printf("DMA2_Stream5->NDTR = %08lX\n", DMA2_Stream5->NDTR);
-    printf("DMA2_Stream5->PAR = %08lX\n", DMA2_Stream5->PAR);
-    printf("DMA2_Stream5->M0AR = %08lX\n", DMA2_Stream5->M0AR);
-    printf("DMA2_Stream5->M1AR = %08lX\n", DMA2_Stream5->M1AR);
-    printf("DMA2_Stream5->FCR = %08lX\n", DMA2_Stream5->FCR);
+    printf("DMA2_Stream1->CR = %08lX\n", DMA2_Stream1->CR);
+    printf("DMA2_Stream1->NDTR = %08lX\n", DMA2_Stream1->NDTR);
+    printf("DMA2_Stream1->PAR = %08lX\n", DMA2_Stream1->PAR);
+    printf("DMA2_Stream1->M0AR = %08lX\n", DMA2_Stream1->M0AR);
+    printf("DMA2_Stream1->M1AR = %08lX\n", DMA2_Stream1->M1AR);
+    printf("DMA2_Stream1->FCR = %08lX\n", DMA2_Stream1->FCR);
+
+    status = HAL_TIM_IC_Start(&htim1, TIM_CHANNEL_1);
+    if(status != HAL_OK) {
+        printf("HAL_TIM_IC_Start status %d\n", status);
+        panic();
+    }
 }
 
 void DMAStopScanout()
 {
-    DMA2_Stream5->CR &= ~DMA_SxCR_EN;       /* disable DMA */
+    DMA2_Stream1->CR &= ~DMA_SxCR_EN;       /* disable DMA */
     // TIM1->CR1 &= ~TIM_CR1_CEN;            /* disable the timer... what's the HAL function? */
     HAL_TIM_Base_Stop(&htim1);
 }
