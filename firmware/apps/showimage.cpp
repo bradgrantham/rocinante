@@ -29,14 +29,14 @@ static int whichPalette = 1;
 
 int FindClosestColor(unsigned char palette[][3], int paletteSize, int r, int g, int b)
 {
-    int bestDiff = 200000;  // skosh above the maximum difference, 3 * 65536
+    float bestDiff = 200000;  // skosh above the maximum difference, 3 * 65536
     int c = -1;
 
     for(int i = 0; i < paletteSize; i++) {
-        int pr = (unsigned int)palette[i][0];
-        int pg = (unsigned int)palette[i][1];
-        int pb = (unsigned int)palette[i][2];
-        int diff = (pr - r) * (pr - r) + (pg - g) * (pg - g) + (pb - b) * (pb - b);
+        float pr = (unsigned int)palette[i][0];
+        float pg = (unsigned int)palette[i][1];
+        float pb = (unsigned int)palette[i][2];
+        float diff = (pr - r) * (pr - r) + (pg - g) * (pg - g) + (pb - b) * (pb - b);
         if(diff == 0) {
             return i;
         }
