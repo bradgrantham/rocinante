@@ -1,0 +1,8 @@
+(sym_lib_table
+  (lib (name New_Library)(type Legacy)(uri ${KIPRJMOD}/New_Library.lib)(options "")(descr ""))
+  (lib (name STM32H745IGTx)(type Legacy)(uri ${KIPRJMOD}/STM32H745IGTx.lib)(options "")(descr ""))
+  (lib (name MOBO_SMD_V2-rescue)(type Legacy)(uri ${KIPRJMOD}/MOBO_SMD_V2-rescue.lib)(options "")(descr ""))
+  (lib (name sd_card)(type Legacy)(uri ${KIPRJMOD}/sd_card.lib)(options "")(descr ""))
+  (lib (name RCJ-044)(type Legacy)(uri ${KIPRJMOD}/RCJ-044.lib)(options "")(descr ""))
+  (lib (name ColecoHat2-rescue)(type Legacy)(uri ${KIPRJMOD}/ColecoHat2-rescue.lib)(options "")(descr ""))
+)
