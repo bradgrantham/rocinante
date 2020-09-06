@@ -1,4 +1,4 @@
-Rocinante is Don Quixote's horse in the novel by Miguel de Cervantes. In many ways, Rocinante is not only Don Quixote's horse, but also his double: like Don Quixote, he is awkward, past his prime, and engaged in a task beyond his capacities.:w
+Rocinante is Don Quixote's horse in the novel by Miguel de Cervantes. In many ways, Rocinante is not only Don Quixote's horse, but also his double: like Don Quixote, he is awkward, past his prime, and engaged in a task beyond his capacities.
 
 # README WORK IN PROGRESS
 
