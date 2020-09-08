@@ -1,4 +1,7 @@
 (fp_lib_table
   (lib (name CUI_RCJ-044)(type KiCad)(uri ${KIPRJMOD}/CUI_RCJ-044.pretty)(options "")(descr ""))
   (lib (name Mini_din6)(type KiCad)(uri ${KIPRJMOD}/mini_din.pretty)(options "")(descr ""))
+  (lib (name Connector_FCI)(type KiCad)(uri ${KIPRJMOD}/Connector_Amphenol.pretty)(options "")(descr ""))
+  (lib (name DSUB15HD)(type KiCad)(uri ${KIPRJMOD}/DSUB15HD.pretty)(options "")(descr ""))
+  (lib (name AHDF15A-KG-TAXB)(type KiCad)(uri ${KIPRJMOD}/AHDF15A-KG-TAXB.pretty)(options "")(descr ""))
 )
