@@ -1,42 +1,18 @@
-Measured MCO/5 as HSE at 4.00086MHz on freq counter, so 20MHz is giving me 20.00430 Mhz
+Getting to color - Duplicate other signal timing & voltages as closely as possible, including # of colorbursts
+    VCR, barring that, Apple //e, NES?, DVD?
+    Do they also put colorburst on every line except blanking?  I might be putting CB only on visible lines...
+    Make nice diagrams of a single frame's signal
+    Hm, can CB be per-line?
 
-Drive DMA from 14.8181818MHz oscillator:
-    ./ put oscillator on breadboard, drive from 3.3, measure output on freq counter
-    ./ determine ETR pin on Nucleo :
-        A12 is XXX but is on USB
-        E7 is CN10-20 or CN12-44
-        ./ go with E7 / CN10-20 for easy jumper
-    ./ set TIM1_TRIG from ETR with count 1
-    if it doesn't work right away:
-        see if there's a pin I can put TIM1_TRIG on
-        tight CPU loop putting TIM1 on some GPIO, measure low bit with freq counter
-            "GPIOC->ODR = (GPIOE->IDR & 0x80)" yielded ~12.5MHz on the scope...? :-|
-    counter 611, and repetition 23434 would yield 1.00000055s per timer run, so could pulse clock at 1s from UIF
-        python script for this calculation:
-            for f in range(1,65537):
-             q = (1000000 * 315 // 22 // f)
-             if q < 65537:
-              qs.append((f, q, 1000000 * 315 / 22 / (f * q)))
-            qs2 = sorted(qs, key = lambda foo: foo[2])
-            qs2[0]
-    branch etr-trigger-update-experiment has code that runs at half-speed.  It seems I can't run COUNTER=0 and REPETITION=0.  If I run COUNTER=1, I get 7MHz, of course, 14.31818MHz oscillator divided by 2.
-        So, instead, try "input capture", a la https://www.cnblogs.com/shangdawei/p/4748426.html, and hope that's direct and not through the counter.
-        Need to wire PE9 and hook oscillator to that.
-        In the meantime I've ordered 28.363636MHz oscillators just in case I can't figure that out.
+Measured MCO/5 as HSE at 4.00086MHz on freq counter, so 20MHz crystal is giving me 20.00430 Mhz
 
-State explicitly: Make silicon do as much as possible - as few and as cheap external components as possible
-    So avoid external DAC (expensive)
-    Use internal DAC and opamp if that could be made to work - needs a current
-    and avoid external crystals for, e.g. video output
-    Settle on STM32H745IG for now
-
-Spend only another day on ETR
-Transition to H7
-    * verify where all pins are
-    * solder headers
-    * also do schematic as you transition
-    * verify HSI can be "close enough"
-    * order 25MHz
+Stated explicitly:
+    Make silicon do as much as possible - as few and as cheap external components as possible
+        So avoid external DAC (expensive), use weighted resistor DAC
+        But use external crystal if necessary to get color response from 1084 (and other monitors)
+        Settle on STM32H743II for now
+    App and Driver API should be the one you're most comfortable with (because no one else will use it!)
+        But write something nice enough that someone else *could* use it.
 
 Close on segmented framebuffer
     textured and solid triangles, trapezoids, and segments
@@ -47,18 +23,86 @@ Close on segmented framebuffer
     polytope256 with Enable(CULLFACE):
         max 62 segments in one row
         max 11426 segments in frame
-        max 64728 traps
+        max 64728 trapezoids
+Hooking system
+    struct SystemFunctionHooks {
+        EventGet
+        all video draw functions
+    };
+    Only currently imagined use is for backing-store layer; 
+    is this per-process or systemwide?  Does system get to decide whether to use backing-store memory or the app?
+New Video API
+    Video Subsystem keeps track of window location, size, order in stacking, whether it's fullscreen, and its mode
+    How are text windows created?  rows and columns? - separate API?
+    How are fullscreen-only windows created?  rows and columns? - separate API?
+    Application API exposed by video subsystem:
+        int VideoGetModeCount();
+        enum VideoModeType VideoModeGetType(int n);
+    API that video driver implements:
+        class {
+            bool modeIsFullScreenOnly(int window);
+            bool windowCanBeResizedTo(int window, int w, int h); // mostly for text modes - only succeed for multiples of text size
+            int createWindow();
+            struct ScanlineSpan { int start; int length; }
+            struct WindowSpanList { int start; int count; struct ScanlineSpan *spans };
+            bool allocateForWindow(int window, struct windowspanlist* windowspans);
+                allocates per-scanline or per-window as necessary, keeps track of its own kind of allocation
+                might make a per-window allocation e.g. colormap
+            void commitAllocations();
+            void fill(int rowNumber, enum {NTSC, R3G3R2, R5G6B5, R8G8B8}, unsigned char *rowData, int window, int pixelStart, int pixelCount)
+                // debug version could put rowData somewhere else, check it for corrupting nearby data, then copy it when done
+            // Are drawing routines in here, too? - specific to video mode
+            windowHasColorMode(int window); // NTSC specific
+        }
+    API that video subsystem implements:
+        int allocate(size_t size);
+    re-allocation events: window stacking order changed, window moved, window resized, window fullscreened or windowed
+        for every window
+            make span list
+            call allocate to video mode for window
+            if failed, flash screen, maybe debug overlay, and exit re-allocation
+        CommitAllocations
 windowed mode
+    int WindowCreateWindowed(int width, int height, int left, int top, int mode);
+        -> always produces "RESIZE" and "REDRAW" events
+    int WindowCreateFullscreen(int mode);
+        -> always produces "RESIZE" and "REDRAW" events
+    void WindowClose(int window);
+    int EventGet(void* eventData);
+    void MouseGetPosition(int *x, int *y);
+    void MouseGetButtonsPressed(int *b1, int *b2, int *b2); // 0 = not pressed, 1 = pressed
+    struct Event {
+        enum { MOUSEMOVE, MOUSEBUTTONPRESS, MOUSEBUTTONRELEASE, RAWKEYBOARD, RESIZE, FULLSCREEN, WINDOWED, FRONT, BEHIND, REDRAW } eventType;
+        union {
+            struct MouseMoveEvent {
+                int dx, dy;
+            } mouseMove;
+            struct MouseButtonPressEvent {
+                int button;
+            } mouseButtonPress;
+            struct MouseButtonReleaseEvent {
+                int button;
+            } mouseButtonRelease;
+            struct RawKeyboardEvent {
+                int keycode;
+            } rawKeyboard;
+            struct ResizeEvent {
+                int width, height;
+            } resize;
+            struct RedrawEvent {
+                int left, top, width, height;
+            } redraw;
+        };
+    };
     every window (only front window?) has a 2 or 4-pixel border
-    every scanline effectively needs a list of ranges owned by windows
-    every window needs to be able to allocate only memory for storage for its ranges per row. :-/
-        Or is memory size dictated by video mode and windowing system allocates?
+    every scanline effectively needs a list of pixel ranges owned by windows - this should be in VRAM for DMA decoupling
+    every window needs to be able to allocate only memory for storage for its ranges per row.
 	could memory allocation and populating memory and calling expansion to video stream pixels be decoupled from the video mode?
-            Wolf, DCT, 9918, Text, aren't scanline specific.
-    need a video mode which is a solid color
-    Do video game modes (TMS9918A, Woz, TIA) require full-screen?  Maybe.  Debug overlay says "Game mode" if ALT-space pressed or some such?
-        Wolfenstein, too?
-    base video mode routines need add window annotations
+            Wolf, DCT, 9918, Text, aren't specific to a scan line specific
+    need a video mode which is a solid color for background
+    Some video game modes (TMS9918A, Woz, TIA) require full-screen.
+        Debug overlay says "Game mode" if ALT-space pressed or some such?
+        Wolfenstein, too?  Not clear.
     all video modes can be windowed, but front can be fullscreen
         stop offering out pointers to memory, use Set-style functions for all content
         is fullscreen just a window that's full-screen size?  Or does it mean something else?
@@ -67,22 +111,13 @@ windowed mode
     Because NTSC has BW and Color modes, FRONT window dictates in NTSC whether Colorburst is added
     Win+Up to fullscreen FRONT window, Win+Down to return to previous size
     Click on not-FRONT window brings to FRONT
-    Click on FRONT window passed to FRONT
-    non-FRONT window doesn't get mouse moves
+    Click on FRONT window is passed to app owning FRONT
+    non-FRONT window doesn't get mouse moves?
     Click on border resizes (just outline is shown until button release)
-    need an event queue
-        mouse move events
-        raw keyboard events
-        RESIZE with size
-        FULLSCREEN - going to fullscreen
-        WINDOWED - return to windowed
-        FRONT - frontmost (e.g. cursor to solid, etc?)
-        BEHIND - not frontmost (e.g. cursor to outline, etc)
-        REDRAW with rectangle
     transparent backing-store mode from non-VRAM
         hooks the event functions and the Set-style functions
         catches REDRAW etc events, updates from backing-store when possible
-        passes on to app if necessary (RESIZE, FULLSCREEN)
+        passes on to app if necessary (RESIZE, FULLSCREEN, REDRAW)
 Move Wolf to palette-RGB-style textures (reduce bandwidth to make up lookup & process cost?)
 honor aspect ratio in "show"
 Some things to improve in "show"
@@ -118,28 +153,11 @@ Potential improvements
 DCT video mode - make it so JPG blocks can be the source of the video scanout
 MP3 player - target something simple and straightforward, like 128, 160, and 256 constant bitrate joint-stereo.
 hosted
-    move to OutputPutChar
     No separate console access, e.g. serial port; operate like standalone machine
     CLI/apps in other thread
         queues for output chars...?
         video and audio calls take a lock
         video scanout happens 30 Hz and also takes the lock
-How to wrap up with a bow?
-    board with 415 or 745 and microSD, two DB9s, PS/2 keyboard, NTSC composite out, mono Line-out, USB in for power and programming and stick an FTDI for UART?
-    Be able to demo
-        Wolfenstein
-        ColecoVision
-        microray
-        show
-        3D Spin
-        play sound (in background?)
-    Leave *potential* to hook Channel F 9-pin to DB9s
-        potentially run Channel F
-    Blog post
-    Build docs
-    API docs
-Regularize I/O, get keyboard and serial combined into one queue
-    OutputPutChar(int c);
 Video API notes
     Fundamentally, CCMRAM lacks the memory for more than 1 byte per pixel at more than 250x200
         VideoMode has internals that convert to the display specifics
@@ -238,20 +256,16 @@ video needs a "switching" mode
     old mode -> blank (fillrow does black) -> new mode
 PS/2 mouse?
 "Apps"
-    Threading?
+    Threading? (multitasking, task switching)
         all system functions have to be thread-safe...  Wrap locks around them
         then need scheduler
         if multiple apps can run simultaneously, then pipes would work
-    malloc()/free() and fopen()/fclose() should probably be #defined to SysMalloc() and SysFOpen, etc, to be logged and then cleaned up on thread exit
-    Can rename sections with objcopy (e.g. .data to .lessapp_data)
-        Can single .c's be compiled into apps?
-        then could prefix main() with startup code to copy .data, clear bss, then clean up on return from main
-        could even have a way to receive a signal asynchronously, unwind stack, jump to exit code
-    Should have a POSIX harness for running and testing the apps
-        at least one of all video modes for testing
+    compile all apps with TinyCC
+        run as THUMB in emulator or QEMU in hosted, or
+        run as x86 apps in emulator and have x86-specific thread context
     System APIs that Apps can call
         OS/stdlib calls
-            putchar?  getchar?
+            read/write
             malloc, free, etc
             fopen, fclose, etc
         video mode and config (NTSC vs VGA handled by hard board switch)
@@ -266,6 +280,7 @@ PS/2 mouse?
             VT102 terminal processing (on textport)
                 essentially just init() and putchar()
             graphics routines
+    terminal
     Wolfenstein
     3D viewer
     BASIC
@@ -282,7 +297,6 @@ Additional video modes
     scanline edge rendered mode - make RGB-to-byte as fast as possible
 Channel F emulator, 9pin header adapters (bake into controller for Bart)
     need 16 pins for two controllers!
-Colecovision emulator
 Some kind of 3D uberdemo, realtime scan out, buffer of sorted scanline segments?
 BASIC
     just implement 80x24 text mode for now
@@ -304,7 +318,6 @@ BASIC
     Super Star Trek: https://www.atariarchives.org/basicgames/showpage.php?page=157
     3D Plot: https://www.atariarchives.org/basicgames/showpage.php?page=167
         http://vintage-basic.net/bcg/3dplot.bas
-
 
 4/13
     On a hunch that maybe AHB doesn't do uchar writes directly and
