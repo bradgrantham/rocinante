@@ -377,8 +377,8 @@ void console_queue_init()
 
 #define DAC_VALUE_LIMIT 0xFF
 
-#define MAX_DAC_VOLTAGE 1.22f
-#define MAX_DAC_VOLTAGE_F16 79954
+#define MAX_DAC_VOLTAGE 1.32f
+#define MAX_DAC_VOLTAGE_F16 (132 * 65536 / 100)
 
 unsigned char voltageToDACValue(float voltage)
 {
@@ -1091,6 +1091,7 @@ void DMAStartScanout(uint32_t dmaCount)
     DMA2_Stream1->NDTR = ROW_SAMPLES;
     DMA2_Stream1->M0AR = (uint32_t)row0;        // Source buffer address 0
     DMA2_Stream1->M1AR = (uint32_t)row1;        // Source buffer address 1 
+    // DMA2_Stream1->PAR = (uint32_t)&DAC1->DHR8R1;  // Destination address
     DMA2_Stream1->PAR = (uint32_t)&GPIOC->ODR;  // Destination address
     DMA2_Stream1->FCR = DMA_FIFOMODE_ENABLE |   // Enable FIFO to improve stutter
         DMA_FIFO_THRESHOLD_FULL;        
