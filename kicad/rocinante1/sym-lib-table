@@ -5,4 +5,5 @@
   (lib (name sd_card)(type Legacy)(uri ${KIPRJMOD}/sd_card.lib)(options "")(descr ""))
   (lib (name RCJ-044)(type Legacy)(uri ${KIPRJMOD}/RCJ-044.lib)(options "")(descr ""))
   (lib (name ColecoHat2-rescue)(type Legacy)(uri ${KIPRJMOD}/ColecoHat2-rescue.lib)(options "")(descr ""))
+  (lib (name MD-60SM)(type Legacy)(uri ${KIPRJMOD}/MD-60SM.lib)(options "")(descr ""))
 )
