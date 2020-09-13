@@ -498,9 +498,9 @@ struct TrapezoidSegment
     bool CanAddMorePixels(int nextTrapezoid, const PixelAttributes& nextValues, const PixelAttributes& nextDelta)
     {
         bool sameTrackedSegment = (which == nextTrapezoid);
-        bool colorCloseEnough = nextValues.ColorsCloseEnough(start + delta * (length + 1), .01f);
-        bool gradientCloseEnough = nextDelta.ColorsCloseEnough(delta, .001f);
-        return sameTrackedSegment || (false /* XXX */ && colorCloseEnough && gradientCloseEnough); // XXX fringing, so this logic is wrong or incomplete
+        // bool colorCloseEnough = nextValues.ColorsCloseEnough(start + delta * (length + 1), .01f);
+        // bool gradientCloseEnough = nextDelta.ColorsCloseEnough(delta, .001f);
+        return sameTrackedSegment ; // || (false /* XXX */ && colorCloseEnough && gradientCloseEnough); // XXX fringing, so this logic is wrong or incomplete
     }
 };
 
