@@ -4,14 +4,14 @@
 #include <set>
 #include <unordered_set>
 
-constexpr bool debug = true;
+constexpr bool debug = false;
 
 typedef std::array<float, 3> vec3f;
 typedef std::array<int, 2> vec2i;
 
 struct Window
 {
-    static constexpr int maxWindows = 16;
+    static constexpr int maxWindows = 32;
     vec2i position; // left top
     vec2i size; // width height
     vec3f color;
@@ -28,14 +28,17 @@ constexpr int screenWidth = 704;
 constexpr int screenHeight = 480;
 uint8_t image[screenHeight][screenWidth][3];
 
-void DrawRectangle(const vec2i& leftTop, const vec2i& widthHeight, const vec3f& color)
+void DrawRectangle(const vec2i& leftTop, const vec2i& widthHeight, const vec2i& st, const vec3f& color)
 {
     for(int row = leftTop[1]; row < leftTop[1] + widthHeight[1]; row++) {
         for(int col = leftTop[0]; col < leftTop[0] + widthHeight[0]; col++) {
             if(col >= 0 && col < screenWidth && row >= 0 && row <= screenHeight) {
-                image[row][col][0] = color[0] * 255;
-                image[row][col][1] = color[1] * 255;
-                image[row][col][2] = color[2] * 255;
+                int s = st[0] + col - leftTop[0];
+                int t = st[1] + row - leftTop[1];
+                float shade = (((s / 7 + t / 7) % 2) == 1) ? .5 : 1;
+                image[row][col][0] = shade * color[0] * 255;
+                image[row][col][1] = shade * color[1] * 255;
+                image[row][col][2] = shade * color[2] * 255;
             }
         }
     }
@@ -53,6 +56,86 @@ struct WindowFirstLast {
     int location;
     enum {START = 1, STOPPED = 0} what; // START = begins on this pixel, STOPPED = ended on previous pixel
     int window;
+};
+
+struct WindowSet
+{
+    uint32_t windows;
+    WindowSet() : windows(0) {}
+    void insert(int window)
+    {
+        windows |= (1 << window);
+    }
+    void erase(int window)
+    {
+        windows &= ~(1 << window);
+    }
+    struct iterator
+    {
+        WindowSet& wset;
+        int which;
+        iterator(WindowSet &wset, int which) :
+            wset(wset), which(which)
+        {}
+        int operator*()
+        {
+            return which;
+        }
+        iterator& operator++()
+        {
+            if(which == 32) return *this;
+
+            do {
+                which ++;
+            } while((which < 32) & !(wset.windows & (1 << which)));
+
+            return *this;
+        }
+        bool operator==(const iterator& it) const
+        {
+            return which == it.which;
+        }
+        bool operator!=(const iterator& it) const
+        {
+            return which != it.which;
+        }
+        iterator& operator=(iterator& it)
+        {
+            wset = it.wset;
+            which = it.which;
+            return *this;
+        }
+    };
+    int first()
+    {
+        for(int i = 0; i < 32; i++) {
+            if(windows & (1 << i)) {
+                return i;
+            }
+        }
+        return 32;
+    }
+    int last()
+    {
+        for(int i = 31; i <= 0; i--) {
+            if(windows & (1 << i)) {
+                return i;
+            }
+        }
+        return 32;
+    }
+    iterator begin()
+    {
+        return iterator(*this, first());
+    }
+    iterator end()
+    {
+        if(last() == 32) {
+            return iterator(*this, 32);
+        } else {
+            return iterator(*this, last() + 1);
+        }
+    }
 };
 
 // NB Required that one window is screen sized at 0,0.
@@ -73,7 +156,7 @@ void DrawWindows(const std::vector<Window>& windows)
 
     int currentScanline = 0;
     std::vector<Span> currentSpans { };
-    std::unordered_set<int> activeWindows;
+    WindowSet activeWindows;
 
     auto se = scanlineEventList.begin();
     while(se != scanlineEventList.end()) {
@@ -96,7 +179,7 @@ void DrawWindows(const std::vector<Window>& windows)
         }
         if(debug) {
             printf("current windows at scanline %d:", currentScanline);
-            for(auto w: activeWindows) {
+            for(const auto& w: activeWindows) {
                 printf(" %d", w);
             }
             puts("");
@@ -104,7 +187,7 @@ void DrawWindows(const std::vector<Window>& windows)
 
         std::vector<WindowFirstLast> pixelEventList;
 
-        for(auto w: activeWindows) {
+        for(const auto& w: activeWindows) {
             pixelEventList.push_back({windows[w].position[0], WindowFirstLast::START, w});
             pixelEventList.push_back({windows[w].position[0] + windows[w].size[0], WindowFirstLast::STOPPED, w});
         }
@@ -119,14 +202,14 @@ void DrawWindows(const std::vector<Window>& windows)
             puts("");
         }
 
-        std::set<int> activeWindowsOnThisScanline;
+        WindowSet activeWindowsOnThisScanline;
         int currentPixel = 0;
         currentSpans.clear();
         auto pe = pixelEventList.begin();
         while(pe != pixelEventList.end()) {
             if(currentPixel < pe->location) {
                 int topmostWindow = 0;
-                for(auto w: activeWindowsOnThisScanline) {
+                for(const auto& w: activeWindowsOnThisScanline) {
                     if(windows[w].locationInStack > windows[topmostWindow].locationInStack) {
                         topmostWindow = w;
                     }
@@ -152,7 +235,7 @@ void DrawWindows(const std::vector<Window>& windows)
         for(int i = 0; i < count; i++, scanline++) {
             int pixel = 0;
             for(const auto& span: spans) {
-                DrawRectangle({pixel, scanline}, {span.length, 1}, windows[span.window].color);
+                DrawRectangle({pixel, scanline}, {span.length, 1}, {span.inWindowStart, scanline - windows[span.window].position[1]}, windows[span.window].color);
                 pixel += span.length;
             }
         }
@@ -174,10 +257,10 @@ int main(int argc, char **argv)
     }
 
     // Draw as rectangles in stacking order from bottom up
-    DrawRectangle({0, 0}, {screenWidth, screenHeight}, {0, 0, 0});
+    DrawRectangle({0, 0}, {screenWidth, screenHeight}, {0,0}, {0, 0, 0});
     for(const auto& w: windows) {
         printf("window: %d x %d at %d, %d -> %f, %f, %f\n", w.size[0], w.size[1], w.position[0], w.position[1], w.color[0], w.color[1], w.color[2]);
-        DrawRectangle(w.position, w.size, w.color);
+        DrawRectangle(w.position, w.size, {0,0}, w.color);
     }
     FILE *byRectangle = fopen("window_rect.ppm", "wb");
     fprintf(byRectangle, "P6 %d %d 255\n", screenWidth, screenHeight);
