@@ -35,6 +35,8 @@
 #include "segment_utility.h"
 
 // System driver internal definitions
+#include "ntsc_constants.h"
+#include "dac_constants.h"
 #include "videomodeinternal.h"
 
 TIM_HandleTypeDef htim1;
@@ -373,62 +375,7 @@ void console_queue_init()
 }
 
 //----------------------------------------------------------------------------
-// DAC
-
-#define DAC_VALUE_LIMIT 0xFF
-
-#define MAX_DAC_VOLTAGE 1.32f
-#define MAX_DAC_VOLTAGE_F16 (132 * 65536 / 100)
-
-unsigned char voltageToDACValue(float voltage)
-{
-    if(voltage < 0.0f) {
-        return 0x0;
-    }
-    uint32_t value = (uint32_t)(voltage / MAX_DAC_VOLTAGE * 255);
-    if(value >= DAC_VALUE_LIMIT) {
-        return DAC_VALUE_LIMIT;
-    }
-    return value;
-}
-
-unsigned char voltageToDACValueNoBounds(float voltage)
-{
-    return (uint32_t)(voltage / MAX_DAC_VOLTAGE * 255);
-}
-
-int voltageToDACValueFixed16NoBounds(int voltage)
-{
-    return (uint32_t)(voltage * 65535 / MAX_DAC_VOLTAGE_F16) * 256;
-}
-
-//----------------------------------------------------------------------------
 // NTSC Video goop
-
-// Number of samples we target, 4x colorburst yields 227.5 cycles, or 910 samples at 14.318180MHz
-#define ROW_SAMPLES        910
-
-#define NTSC_COLORBURST_FREQUENCY       3579545
-#define NTSC_EQPULSE_LINES	3
-#define NTSC_VSYNC_LINES	3
-#define NTSC_VBLANK_LINES	11
-#define NTSC_FRAME_LINES	525
-#define NTSC_EQ_PULSE_INTERVAL	.04
-#define NTSC_VSYNC_BLANK_INTERVAL	.43
-#define NTSC_HOR_SYNC_DUR	.075
-#define NTSC_FRAMES		(59.94 / 2)
-#define NTSC_FRONTPORCH		.02
-/* BACKPORCH including COLORBURST */
-#define NTSC_BACKPORCH		.075
-#define NTSC_COLORBURST_CYCLES  14 /* 12 */
-
-#define NTSC_SYNC_TIP_VOLTAGE   0.0f
-#define NTSC_SYNC_PORCH_VOLTAGE   .285f
-#define NTSC_SYNC_BLACK_VOLTAGE   .339f
-#define NTSC_SYNC_WHITE_VOLTAGE   1.0f  /* VCR had .912v */
-
-#define NTSC_SYNC_BLACK_VOLTAGE_F16   22217
-#define NTSC_SYNC_WHITE_VOLTAGE_F16   65536
 
 int SECTION_CCMRAM markHandlerInSamples = 0;
 
@@ -451,17 +398,13 @@ unsigned char SECTION_CCMRAM NTSCSyncTip;
 unsigned char SECTION_CCMRAM NTSCSyncPorch;
 unsigned char SECTION_CCMRAM NTSCBlack;
 unsigned char SECTION_CCMRAM NTSCWhite;
-unsigned char SECTION_CCMRAM NTSCMaxAllowed;
 
 int NTSCEqPulseClocks;
 int NTSCVSyncClocks;
 int NTSCHSyncClocks;
 int NTSCLineClocks;
-int NTSCFrameClocks;
 int NTSCFrontPorchClocks;
 int NTSCBackPorchClocks;
-
-typedef uint32_t ntsc_wave_t;
 
 // Essentially the remainder of CCMRAM, will need to be shrunk if more goes into CCM
 #define VRAM_SIZE  51725
@@ -482,59 +425,6 @@ unsigned char __attribute__((section (".sram2"))) row1[ROW_SAMPLES];
 unsigned char __attribute__((section (".sram2"))) audio0[512];
 unsigned char __attribute__((section (".sram2"))) audio1[512];
 
-unsigned char NTSCYIQToDAC(float y, float i, float q, float tcycles)
-{
-// This is transcribed from the NTSC spec, double-checked.
-    float wt = tcycles * M_PI * 2;
-    float sine = sinf(wt + 33.0f / 180.0f * M_PI);
-    float cosine = cosf(wt + 33.0f / 180.0f * M_PI);
-    float signal = y + q * sine + i * cosine;
-// end of transcription
-
-    return voltageToDACValue(NTSC_SYNC_BLACK_VOLTAGE + signal * (NTSC_SYNC_WHITE_VOLTAGE - NTSC_SYNC_BLACK_VOLTAGE));
-}
-
-unsigned char NTSCYIQDegreesToDAC(float y, float i, float q, int degrees)
-{
-    float sine, cosine;
-    if(degrees == 0) {
-        sine = 0.544638f;
-        cosine = 0.838670f;
-    } else if(degrees == 90) {
-        sine = 0.838670f;
-        cosine = -0.544638f;
-    } else if(degrees == 1160) {
-        sine = -0.544638f;
-        cosine = -0.838670f;
-    } else if(degrees == 270) {
-        sine = -0.838670f;
-        cosine = 0.544638f;
-    } else {
-        sine = 0;
-        cosine = 0;
-    }
-    float signal = y + q * sine + i * cosine;
-
-    return voltageToDACValueNoBounds(NTSC_SYNC_BLACK_VOLTAGE + signal * (NTSC_SYNC_WHITE_VOLTAGE - NTSC_SYNC_BLACK_VOLTAGE));
-}
-
-ntsc_wave_t NTSCYIQToWave(float y, float i, float q)
-{
-    unsigned char b0 = NTSCYIQToDAC(y, i, q,  .0f);
-    unsigned char b1 = NTSCYIQToDAC(y, i, q, .25f);
-    unsigned char b2 = NTSCYIQToDAC(y, i, q, .50f);
-    unsigned char b3 = NTSCYIQToDAC(y, i, q, .75f);
-
-    return (b0 << 0) | (b1 << 8) | (b2 << 16) | (b3 << 24);
-}
-
-ntsc_wave_t NTSCRGBToWave(float r, float g, float b)
-{
-    float y, i, q;
-    RGBToYIQ(r, g, b, &y, &i, &q);
-    return NTSCYIQToWave(y, i, q);
-}
-
 unsigned char NTSCColorburst0;
 unsigned char NTSCColorburst90;
 unsigned char NTSCColorburst180;
@@ -543,10 +433,9 @@ unsigned char NTSCColorburst270;
 void NTSCCalculateParameters(float clock)
 {
     // Calculate values for a scanline
-    NTSCFrameClocks = floorf(clock * 1000000.0 / NTSC_FRAMES + 0.5);
-    // NTSCLineClocks = floorf((double)NTSCFrameClocks / NTSC_FRAME_LINES + 0.5);
     NTSCLineClocks = ROW_SAMPLES;
     NTSCHSyncClocks = floorf(NTSCLineClocks * NTSC_HOR_SYNC_DUR + 0.5);
+
     NTSCFrontPorchClocks = NTSCLineClocks * NTSC_FRONTPORCH;
     NTSCBackPorchClocks = NTSCLineClocks * NTSC_BACKPORCH;
     NTSCEqPulseClocks = NTSCLineClocks * NTSC_EQ_PULSE_INTERVAL;
@@ -556,7 +445,6 @@ void NTSCCalculateParameters(float clock)
     NTSCSyncPorch = voltageToDACValue(NTSC_SYNC_PORCH_VOLTAGE);
     NTSCBlack = voltageToDACValue(NTSC_SYNC_BLACK_VOLTAGE);
     NTSCWhite = voltageToDACValue(NTSC_SYNC_WHITE_VOLTAGE);
-    NTSCMaxAllowed = 255;
 
     // Calculate the four values for the colorburst that we'll repeat to make a wave
     // The waveform is defined as sine in the FCC broadcast doc, but for
