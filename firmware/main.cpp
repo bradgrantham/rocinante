@@ -34,11 +34,6 @@
 #include "commandline.h"
 #include "segment_utility.h"
 
-// System driver internal definitions
-#include "ntsc_constants.h"
-#include "dac_constants.h"
-#include "videomodeinternal.h"
-
 TIM_HandleTypeDef htim1;
 
 static int gDumpKeyboardData = 0;
@@ -375,7 +370,98 @@ void console_queue_init()
 }
 
 //----------------------------------------------------------------------------
+// Audio experiment goop
+
+#if 0
+// init time
+    // AUDIO
+    for(unsigned int i = 0; i < sizeof(audioBuffer); i++) {
+        audioBuffer[i] = 128;
+    }
+
+    {
+        // Set PA4 to ANALOG
+        GPIO_InitTypeDef  GPIO_InitStruct;
+
+        GPIO_InitStruct.Pin = GPIO_PIN_4;
+        GPIO_InitStruct.Mode = GPIO_MODE_ANALOG;
+        GPIO_InitStruct.Pull = GPIO_NOPULL;
+        GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_MEDIUM;
+        HAL_GPIO_Init(GPIOA, &GPIO_InitStruct); 
+    }
+    DAC->CR |= DAC_CR_EN1;
+    DAC->CR |= DAC_CR_BOFF1;
+#endif
+
+#if 0
+// per-line, 15KHz
+    DAC1->DHR8R1 = audioBuffer[audioBufferPosition];
+    audioBufferPosition = (audioBufferPosition + 1) % sizeof(audioBuffer);
+#endif
+
+#if 0
+// XXX audio experiment
+// In this mode we would have a sampling rate of 15.6998 KHz
+unsigned char SECTION_CCMRAM audioBuffer[256];
+volatile size_t audioBufferPosition = 0;
+
+int doPlay(int argc, char **argv)
+{
+    size_t bufferHalfSize = sizeof(audioBuffer) / 2;
+
+    char *filename = argv[1];
+    FIL file;
+    FRESULT result = f_open (&file, filename, FA_READ | FA_OPEN_EXISTING);
+    if(result) {
+        logprintf(DEBUG_ERRORS, "ERROR: couldn't open \"%s\" for reading, FatFS result %d\n", filename, result);
+        return 1;
+    }
+
+    int where = 0;
+
+    UINT wasread;
+    int quit = 0;
+    do {
+        // Wait for audio to get past the buffer we read
+        while((audioBufferPosition - where + sizeof(audioBuffer)) % sizeof(audioBuffer) < bufferHalfSize);
+        result = f_read(&file, audioBuffer + where, bufferHalfSize, &wasread);
+        if(result) {
+            logprintf(DEBUG_ERRORS, "ERROR: couldn't read block of audio from \"%s\", result %d\n", filename, result);
+            memset(audioBuffer, 128, sizeof(audioBuffer));
+            return COMMAND_FAILED;
+        }
+        where = (where + bufferHalfSize) % sizeof(audioBuffer);
+        LED_beat_heart();
+        quit = (InputGetChar() != -1);
+    } while(!quit && (wasread == bufferHalfSize));
+
+    f_close(&file);
+
+    while((audioBufferPosition - where + sizeof(audioBuffer)) % sizeof(audioBuffer) < bufferHalfSize);
+    memset(audioBuffer, 128, sizeof(audioBuffer));
+
+    return COMMAND_CONTINUE;
+}
+
+static void RegisterCommandPlay(void) __attribute__((constructor));
+static void RegisterCommandPlay(void)
+{
+    RegisterApp("play", 2, doPlay, "filename",
+        "play 15.7KHz u8 mono audio stream"
+        );
+}
+#endif
+
+
+
+//----------------------------------------------------------------------------
 // NTSC Video goop
+
+// System driver internal definitions
+#include "ntsc_constants.h"
+#include "dac_constants.h"
+#include "videomodeinternal.h"
+
 
 int SECTION_CCMRAM markHandlerInSamples = 0;
 
@@ -483,7 +569,7 @@ void NTSCFillVSyncLine(unsigned char *rowBuffer)
 // Haven't accelerated because not yet done in scan ISR
 void NTSCAddColorburst(unsigned char *rowBuffer)
 {
-    static const int startOfColorburstClocks = 80 - 3 * 4; // XXX magic number for current clock
+    static const int startOfColorburstClocks = 72; // 80 - 3 * 4; // XXX magic number for current clock
 
     for(int col = startOfColorburstClocks; col < startOfColorburstClocks + NTSC_COLORBURST_CYCLES * 4; col++) {
         switch((col - startOfColorburstClocks) % 4) {
@@ -787,81 +873,6 @@ void fillRowDebugOverlay(int frameNumber, int lineNumber, unsigned char* nextRow
 volatile int SECTION_CCMRAM lineNumber = 0;
 volatile int SECTION_CCMRAM frameNumber = 0;
 
-// unused at the present, was no faster than memcpy
-void MemoryCopyDMA(unsigned char* dst, unsigned char* src, size_t size)
-{
-    // XXX wait on previous DMA
-    // Configure DMA to copy tmp row
-    DMA2_Stream1->CR &= ~DMA_SxCR_EN;       /* disable DMA2_1 */
-    DMA2->LIFCR = 0xF00;                        /* clear flags */
-    DMA2_Stream1->NDTR = size / 4;
-    DMA2_Stream1->PAR = (uint32_t)src;        // Source buffer address 0 in Memory-to-Memory mode
-    DMA2_Stream1->M0AR = (uint32_t)dst;        // Dest buffer address in Memory-to-Memory mode
-    DMA2_Stream1->FCR = DMA_FIFOMODE_ENABLE |   // Enable FIFO to improve stutter
-        DMA_FIFO_THRESHOLD_FULL;        
-    DMA2_Stream1->CR =
-        DMA_CHANNEL_1 |                         
-        DMA_MEMORY_TO_MEMORY |                  // Memory to Memory
-        DMA_PDATAALIGN_WORD | // DMA_PBURST_INC4 |
-        DMA_MDATAALIGN_WORD | // DMA_MBURST_INC4 |
-        DMA_PRIORITY_LOW |
-        DMA_PINC_ENABLE |                       // Increment memory address
-        DMA_MINC_ENABLE |                       // Increment memory address
-        0;
-    DMA2_Stream1->CR |= DMA_SxCR_EN;    /* enable DMA */
-} 
-
-// XXX audio experiment
-// In this mode we would have a sampling rate of 15.6998 KHz
-unsigned char SECTION_CCMRAM audioBuffer[256];
-volatile size_t audioBufferPosition = 0;
-
-int doPlay(int argc, char **argv)
-{
-    size_t bufferHalfSize = sizeof(audioBuffer) / 2;
-
-    char *filename = argv[1];
-    FIL file;
-    FRESULT result = f_open (&file, filename, FA_READ | FA_OPEN_EXISTING);
-    if(result) {
-        logprintf(DEBUG_ERRORS, "ERROR: couldn't open \"%s\" for reading, FatFS result %d\n", filename, result);
-        return 1;
-    }
-
-    int where = 0;
-
-    UINT wasread;
-    int quit = 0;
-    do {
-        // Wait for audio to get past the buffer we read
-        while((audioBufferPosition - where + sizeof(audioBuffer)) % sizeof(audioBuffer) < bufferHalfSize);
-        result = f_read(&file, audioBuffer + where, bufferHalfSize, &wasread);
-        if(result) {
-            logprintf(DEBUG_ERRORS, "ERROR: couldn't read block of audio from \"%s\", result %d\n", filename, result);
-            memset(audioBuffer, 128, sizeof(audioBuffer));
-            return COMMAND_FAILED;
-        }
-        where = (where + bufferHalfSize) % sizeof(audioBuffer);
-        LED_beat_heart();
-        quit = (InputGetChar() != -1);
-    } while(!quit && (wasread == bufferHalfSize));
-
-    f_close(&file);
-
-    while((audioBufferPosition - where + sizeof(audioBuffer)) % sizeof(audioBuffer) < bufferHalfSize);
-    memset(audioBuffer, 128, sizeof(audioBuffer));
-
-    return COMMAND_CONTINUE;
-}
-
-static void RegisterCommandPlay(void) __attribute__((constructor));
-static void RegisterCommandPlay(void)
-{
-    RegisterApp("play", 2, doPlay, "filename",
-        "play 15.7KHz u8 mono audio stream"
-        );
-}
-
 #ifdef __cplusplus
 extern "C" {
 #endif /* __cplusplus */
@@ -902,10 +913,6 @@ void DMA2_Stream1_IRQHandler(void)
         oldLISR = DMA2->LISR;
         DMA2->LIFCR = 0xFFFF;
     }
-
-    // XXX audio experiment
-    DAC1->DHR8R1 = audioBuffer[audioBufferPosition];
-    audioBufferPosition = (audioBufferPosition + 1) % sizeof(audioBuffer);
 
     int whichIsScanning = (DMA2_Stream1->CR & DMA_SxCR_CT) ? 1 : 0;
 
@@ -951,7 +958,7 @@ void DMA2_Stream1_IRQHandler(void)
 #endif /* __cplusplus */
 
 
-void DMAStartScanout(uint32_t dmaCount)
+void NTSCVideoStart()
 {
     HAL_StatusTypeDef status;
 
@@ -1085,7 +1092,7 @@ void DMAStartScanout(uint32_t dmaCount)
     }
 }
 
-void DMAStopScanout()
+void NTSCVideoStop()
 {
     DMA2_Stream1->CR &= ~DMA_SxCR_EN;       /* disable DMA */
     // TIM1->CR1 &= ~TIM_CR1_CEN;            /* disable the timer... what's the HAL function? */
@@ -1418,6 +1425,86 @@ void TextportPlain40x24FillRow(int frameNumber, int lineNumber, unsigned char *r
     }
 }
 
+
+// ----------------------------------------
+// 175 x 230 8-bit pixmap display
+// to be /4, 164, 864, 27, 257
+
+#define Color175x230Left 164
+#define Color175x230WidthSamples 700
+#define Color175x230WidthPixels (Color175x230WidthSamples / 4)
+#define Color175x230PixelRowBytes Color175x230WidthPixels
+#define Color175x230Top 27
+#define Color175x230Height 230
+
+#if VRAM_PIXMAP_AVAIL < Color175x230PixelRowBytes * Color175x230Height
+#error Available VRAM has become too small for Color175x230 mode.
+#endif
+
+// Pixmap video mode structs
+const static VideoPixmapInfo Color175x230Info = {
+    Color175x230WidthSamples / 4, Color175x230Height,
+    VideoPixmapFormat::PALETTE_8BIT,
+    256,
+    1,
+    1,
+    900, 520,
+};
+
+void Color175x230Setup(const VideoModeEntry *modeEntry)
+{
+    /* const VideoTextportInfo *info = (VideoTextportInfo*)info_; */
+    NTSCFillBlankLine(NTSCBlankLine, 1);
+    MakeDefaultPalette(0, 256);
+    for(int y = 0; y < Color175x230Height; y++) {
+        NTSCGetPaletteForRowPointer()[y] = 0;
+    }
+}
+
+void Color175x230GetParameters(const VideoModeEntry *modeEntry, void *params_)
+{
+    const VideoPixmapInfo *info = (VideoPixmapInfo*)modeEntry->info;
+    VideoPixmapParameters *params = (VideoPixmapParameters*)params_;
+    params->base = VRAM;
+    params->rowSize = info->width;
+}
+
+int Color175x230SetPaletteEntry(const VideoModeEntry* modeEntry, int palette, int which, float r, float g, float b)
+{
+    if(which >= 256) {
+        return 1;
+    }
+    SetPaletteEntry(palette, which, r, g, b);
+    return 0;
+}
+
+void Color175x230FillRow(int frameNumber, int lineNumber, unsigned char *rowBuffer)
+{
+    int rowWithin = (lineNumber % 263) - Color175x230Top;
+
+    if((rowWithin >= 0) && (rowWithin < Color175x230Height)) {
+
+        // Clear pixels outside of text area 
+        memset(rowBuffer + NTSCHSyncClocks + NTSCBackPorchClocks, NTSCBlack, Color175x230WidthSamples - NTSCHSyncClocks - NTSCBackPorchClocks);
+        int clocksToRightEdge = Color175x230Left + Color175x230WidthSamples;
+        memset(rowBuffer + clocksToRightEdge, NTSCBlack, ROW_SAMPLES - clocksToRightEdge - NTSCFrontPorchClocks);
+
+        unsigned char *srcPixels = VRAM + rowWithin * (Color175x230WidthSamples / 4);
+        unsigned char *dstBytes = rowBuffer + Color175x230Left;
+
+        ntsc_wave_t *palette = NTSCGetPaletteForRow(rowWithin);
+
+        for(int i = 0; i < Color175x230WidthSamples; i += 4) {
+            int p = srcPixels[i / 4];
+            ntsc_wave_t word = palette[p];
+            *(ntsc_wave_t*)(dstBytes + i) = word;
+        }
+    } else {
+        memset(rowBuffer + NTSCHSyncClocks + NTSCBackPorchClocks, NTSCBlack, ROW_SAMPLES - NTSCHSyncClocks - NTSCBackPorchClocks - NTSCFrontPorchClocks);
+    }
+}
+
+#if 0
 // ----------------------------------------
 // plain 80x24 white-on-black textport
 
@@ -1495,6 +1582,9 @@ void TextportPlain80x24FillRow(int frameNumber, int lineNumber, unsigned char *r
     }
 }
 
+#endif
+
+#if 0
 // ----------------------------------------
 // highest-horizontal-resolution 8-bit framebuffer
 
@@ -1577,85 +1667,9 @@ void ColorMaxResFillRow(int frameNumber, int lineNumber, unsigned char *rowBuffe
     }
 }
 
-
-// ----------------------------------------
-// 175 x 230 8-bit pixmap display
-// to be /4, 164, 864, 27, 257
-
-#define Color175x230Left 164
-#define Color175x230WidthSamples 700
-#define Color175x230WidthPixels (Color175x230WidthSamples / 4)
-#define Color175x230PixelRowBytes Color175x230WidthPixels
-#define Color175x230Top 27
-#define Color175x230Height 230
-
-#if VRAM_PIXMAP_AVAIL < Color175x230PixelRowBytes * Color175x230Height
-#error Available VRAM has become too small for Color175x230 mode.
 #endif
 
-// Pixmap video mode structs
-const static VideoPixmapInfo Color175x230Info = {
-    Color175x230WidthSamples / 4, Color175x230Height,
-    VideoPixmapFormat::PALETTE_8BIT,
-    256,
-    1,
-    1,
-    900, 520,
-};
-
-void Color175x230Setup(const VideoModeEntry *modeEntry)
-{
-    /* const VideoTextportInfo *info = (VideoTextportInfo*)info_; */
-    NTSCFillBlankLine(NTSCBlankLine, 1);
-    MakeDefaultPalette(0, 256);
-    for(int y = 0; y < Color175x230Height; y++) {
-        NTSCGetPaletteForRowPointer()[y] = 0;
-    }
-}
-
-void Color175x230GetParameters(const VideoModeEntry *modeEntry, void *params_)
-{
-    const VideoPixmapInfo *info = (VideoPixmapInfo*)modeEntry->info;
-    VideoPixmapParameters *params = (VideoPixmapParameters*)params_;
-    params->base = VRAM;
-    params->rowSize = info->width;
-}
-
-int Color175x230SetPaletteEntry(const VideoModeEntry* modeEntry, int palette, int which, float r, float g, float b)
-{
-    if(which >= 256) {
-        return 1;
-    }
-    SetPaletteEntry(palette, which, r, g, b);
-    return 0;
-}
-
-void Color175x230FillRow(int frameNumber, int lineNumber, unsigned char *rowBuffer)
-{
-    int rowWithin = (lineNumber % 263) - Color175x230Top;
-
-    if((rowWithin >= 0) && (rowWithin < Color175x230Height)) {
-
-        // Clear pixels outside of text area 
-        memset(rowBuffer + NTSCHSyncClocks + NTSCBackPorchClocks, NTSCBlack, Color175x230WidthSamples - NTSCHSyncClocks - NTSCBackPorchClocks);
-        int clocksToRightEdge = Color175x230Left + Color175x230WidthSamples;
-        memset(rowBuffer + clocksToRightEdge, NTSCBlack, ROW_SAMPLES - clocksToRightEdge - NTSCFrontPorchClocks);
-
-        unsigned char *srcPixels = VRAM + rowWithin * (Color175x230WidthSamples / 4);
-        unsigned char *dstBytes = rowBuffer + Color175x230Left;
-
-        ntsc_wave_t *palette = NTSCGetPaletteForRow(rowWithin);
-
-        for(int i = 0; i < Color175x230WidthSamples; i += 4) {
-            int p = srcPixels[i / 4];
-            ntsc_wave_t word = palette[p];
-            *(ntsc_wave_t*)(dstBytes + i) = word;
-        }
-    } else {
-        memset(rowBuffer + NTSCHSyncClocks + NTSCBackPorchClocks, NTSCBlack, ROW_SAMPLES - NTSCHSyncClocks - NTSCBackPorchClocks - NTSCFrontPorchClocks);
-    }
-}
-
+#if 0
 // ----------------------------------------
 // 160 x 192 8-bit bitmap display
 // 196, 832, 44, 236
@@ -1733,6 +1747,10 @@ void Color160x192FillRow(int frameNumber, int lineNumber, unsigned char *rowBuff
         memset(rowBuffer + NTSCHSyncClocks + NTSCBackPorchClocks, NTSCBlack, ROW_SAMPLES - NTSCHSyncClocks - NTSCBackPorchClocks - NTSCFrontPorchClocks);
     }
 }
+
+#endif
+
+#if 0
 
 // ----------------------------------------
 // 350 x 230 4-bit bitmap display
@@ -1820,6 +1838,9 @@ void Color350x230FillRow(int frameNumber, int lineNumber, unsigned char *rowBuff
     }
 }
 
+#endif
+
+#if 0
 // ----------------------------------------
 // 320 x 192 4-bit bitmap display
 // 196, 832, 44, 236
@@ -1906,6 +1927,10 @@ void Color320x192FillRow(int frameNumber, int lineNumber, unsigned char *rowBuff
     }
 }
 
+#endif
+
+#if 0
+
 // ----------------------------------------
 // 704 x 230 4-gray pixmap display
 // to be /8, 164, 868, 27, 257
@@ -1974,6 +1999,10 @@ void Grayscale704x230FillRow(int frameNumber, int lineNumber, unsigned char *row
         memset(rowBuffer + NTSCHSyncClocks + NTSCBackPorchClocks, NTSCBlack, ROW_SAMPLES - NTSCHSyncClocks - NTSCBackPorchClocks - NTSCFrontPorchClocks);
     }
 }
+
+#endif
+
+#if 0
 
 // ----------------------------------------
 // 704 x 230 monochrome bitmap display
@@ -2063,6 +2092,10 @@ void Bitmap704x230FillRow(int frameNumber, int lineNumber, unsigned char *rowBuf
     }
 }
 
+#endif
+
+#if 0
+
 // ----------------------------------------
 // 640 x 192 monochrome bitmap display
 // 196, 832, 44, 236
@@ -2131,6 +2164,10 @@ void Bitmap640x192FillRow(int frameNumber, int lineNumber, unsigned char *rowBuf
         memset(rowBuffer + NTSCHSyncClocks + NTSCBackPorchClocks, NTSCBlack, ROW_SAMPLES - NTSCHSyncClocks - NTSCBackPorchClocks - NTSCFrontPorchClocks);
     }
 }
+
+#endif
+
+#if 0
 
 //--------------------------------------------------------------------------
 // Mode where scanlines are composed of sequential segments
@@ -2372,6 +2409,9 @@ __attribute__((hot,flatten)) void SegmentedFillRow(int frameNumber, int lineNumb
     }
 }
 
+#endif
+
+#if 0
 
 // ----------------------------------------
 // Wolfenstein-style renderer
@@ -2531,6 +2571,8 @@ void WolfensteinFillRow(int frameNumber, int lineNumber, unsigned char *rowBuffe
     }
 }
 
+#endif
+
 
 // ----------------------------------------
 // Video mode table
@@ -2547,6 +2589,7 @@ const static VideoModeEntry NTSCModes[] =
         SetRowPalette,
         NULL,
     },
+#if 0
     {
         VIDEO_MODE_TEXTPORT,
         &TextportPlain80x24Info,
@@ -2557,6 +2600,8 @@ const static VideoModeEntry NTSCModes[] =
         SetRowPalette,
         NULL,
     },
+#endif
+#if 0
     {
         VIDEO_MODE_PIXMAP,
         &Bitmap640x192Info,
@@ -2567,6 +2612,8 @@ const static VideoModeEntry NTSCModes[] =
         SetRowPalette,
         NULL,
     },
+#endif
+#if 0
     {
         VIDEO_MODE_PIXMAP,
         &Color320x192Info,
@@ -2577,6 +2624,8 @@ const static VideoModeEntry NTSCModes[] =
         SetRowPalette,
         NULL,
     },
+#endif
+#if 0
     {
         VIDEO_MODE_PIXMAP,
         &Color160x192Info,
@@ -2587,6 +2636,8 @@ const static VideoModeEntry NTSCModes[] =
         SetRowPalette,
         NULL,
     },
+#endif
+#if 0
     {
         VIDEO_MODE_PIXMAP,
         &Bitmap704x230Info,
@@ -2597,6 +2648,8 @@ const static VideoModeEntry NTSCModes[] =
         SetRowPalette,
         NULL,
     },
+#endif
+#if 0
     {
         VIDEO_MODE_PIXMAP,
         &Color350x230Info,
@@ -2607,6 +2660,7 @@ const static VideoModeEntry NTSCModes[] =
         SetRowPalette,
         NULL,
     },
+#endif
     {
         VIDEO_MODE_PIXMAP,
         &Color175x230Info,
@@ -2617,6 +2671,7 @@ const static VideoModeEntry NTSCModes[] =
         SetRowPalette,
         NULL,
     },
+#if 0
     {
         VIDEO_MODE_PIXMAP,
         &ColorMaxResInfo,
@@ -2627,6 +2682,8 @@ const static VideoModeEntry NTSCModes[] =
         SetRowPalette,
         NULL,
     },
+#endif
+#if 0
     {
         VIDEO_MODE_PIXMAP,
         &Grayscale704x230Info,
@@ -2637,6 +2694,8 @@ const static VideoModeEntry NTSCModes[] =
         SetRowPalette,
         NULL,
     },
+#endif
+#if 0
     {
         VIDEO_MODE_WOLFENSTEIN,
         &WolfensteinInfo,
@@ -2647,6 +2706,8 @@ const static VideoModeEntry NTSCModes[] =
         SetRowPalette,
         NULL,
     },
+#endif
+#if 0
     {
         VIDEO_MODE_SEGMENTS,
         &SegmentedInfo,
@@ -2657,6 +2718,7 @@ const static VideoModeEntry NTSCModes[] =
         SetRowPalette,
         NULL,
     },
+#endif
 };
 
 // Generic videomode functions
@@ -2747,6 +2809,7 @@ void VideoModeWaitFrame()
     // NTSC won't actually go lineNumber >= 525...
     while(!(lineNumber > 257 && lineNumber < 262) || (lineNumber > 520 && lineNumber < NTSC_FRAME_LINES)); // Wait for VBLANK; should do something smarter
 }
+
 
 //----------------------------------------------------------------------------
 // Text command interface
@@ -3478,33 +3541,16 @@ int main()
     LED_beat_heart();
 #endif
 
-    // AUDIO
-    for(unsigned int i = 0; i < sizeof(audioBuffer); i++) {
-        audioBuffer[i] = 128;
-    }
-
-    {
-        // Set PA4 to ANALOG
-        GPIO_InitTypeDef  GPIO_InitStruct;
-
-        GPIO_InitStruct.Pin = GPIO_PIN_4;
-        GPIO_InitStruct.Mode = GPIO_MODE_ANALOG;
-        GPIO_InitStruct.Pull = GPIO_NOPULL;
-        GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_MEDIUM;
-        HAL_GPIO_Init(GPIOA, &GPIO_InitStruct); 
-    }
-    DAC->CR |= DAC_CR_EN1;
-    DAC->CR |= DAC_CR_BOFF1;
-
     NTSCGenerateLineBuffers();
     NTSCFillRowBuffer(0, 0, row0);
     
     float colorBurstInCoreClocks = SystemCoreClock / 14318180.0;
     uint32_t DMACountAt14MHz = (colorBurstInCoreClocks + .5);
-    // printf("DMACountAt14MHz = %lu, expected %d\n", DMACountAt14MHz, clockConfigs[whichConfig].DMA_TIM_CLOCKS);
-    DMACountAt14MHz = clockConfigs[whichConfig].DMA_TIM_CLOCKS; // (colorBurstInCoreClocks + .5);
+    if(false) {
+        printf("DMACountAt14MHz = %lu, expected %lu\n", DMACountAt14MHz, clockConfigs[whichConfig].DMA_TIM_CLOCKS);
+    }
 
-    DMAStartScanout(DMACountAt14MHz);
+    NTSCVideoStart();
 
     // Wait for a click to progress to the next clock config
     { 
@@ -3538,7 +3584,7 @@ int main()
 
             whichConfig = counter;
 
-            DMAStopScanout();
+            NTSCVideoStop();
 
             // Probably will break UART and SD and GPIOs:
             DeInitRCCAndPLL();
@@ -3560,10 +3606,11 @@ int main()
             float colorBurstInCoreClocks = SystemCoreClock / 14318180.0;
             // need main clock as close as possible to @ 171.816
             uint32_t DMACountAt14MHz = (colorBurstInCoreClocks + .5);
-            // printf("DMACountAt14MHz = %lu, expected %d\n", DMACountAt14MHz, clockConfigs[whichConfig].DMA_TIM_CLOCKS);
-            DMACountAt14MHz = clockConfigs[whichConfig].DMA_TIM_CLOCKS; // (colorBurstInCoreClocks + .5);
+            if(false) {
+                printf("DMACountAt14MHz = %lu, expected %lu\n", DMACountAt14MHz, clockConfigs[whichConfig].DMA_TIM_CLOCKS);
+            }
 
-            DMAStartScanout(DMACountAt14MHz);
+            NTSCVideoStart();
 
             debugOverlayEnabled = 1;
             memset(debugDisplay, 0, debugDisplayWidth * debugDisplayHeight);

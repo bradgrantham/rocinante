@@ -123,7 +123,7 @@ typedef struct VideoPixmapInfo
     int paletteSize; /* for convenience, matches pixelFormat, -1 if a bitmap */
     int color;          /* for convenience, matches pixelFormat */
     int overscan;       /* true if pixels can be offscreen */
-    int aspectX, aspectY;       // X:Y aspect ratio, e.g., on Orion for 1-clock pixel, 225 / 520
+    int aspectX, aspectY;       // X:Y aspect ratio, e.g., on Orion for 1-clock pixel, 225 / 520 (did I mean 520 / 450 here?)
 } VideoPixmapInfo;
 
 typedef struct VideoPixmapParameters

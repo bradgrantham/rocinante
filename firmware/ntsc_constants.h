@@ -22,7 +22,7 @@
 /* BACKPORCH including COLORBURST */
 #define NTSC_BACKPORCH		.075
 
-#define NTSC_COLORBURST_CYCLES  14 /* 12 */
+#define NTSC_COLORBURST_CYCLES  9
 
 #define NTSC_FRAMES		(59.94 / 2)
 
