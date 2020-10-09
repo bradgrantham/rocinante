@@ -15,8 +15,6 @@ Stated explicitly:
 -----------------------------
 
 Getting to video working
-    comment out all apps except "modes" and "show"
-    move all old code to ${filename}_old.cpp
     Get the following API calls working
 
     what files exist and what is their purpose?
@@ -57,13 +55,6 @@ Modularizing video
 New Video API
     Video Subsystem keeps track of window location, size, order in stacking, whether it's fullscreen, and its mode
     Application API exposed by video subsystem:
-        struct ModeInformation {
-            VideoModeType type;
-        };
-        Status VideoModeGetInfo(int n, ModeInformation* info) to determine if it meets needs (or skip this)
-            What does this actually do in the new API?
-            pixel aspect ratio
-            pixmap: isMonochrome, paletteSize, pixmapFormat
         enum WindowParameter { END = 0, PREFERRED_SIZE = 1 /* w, h */, GET_SIZE_OR_FAIL = 2, FULLSCREEN_OVERSCAN = 3, FULLSCREEN_UNDERSCAN = 4};
         int WindowCreate(int mode, int *parameters);
             -> always produces "RESIZE" and "REDRAW" events - get width and height that way

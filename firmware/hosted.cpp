@@ -6,6 +6,7 @@
 #include <deque>
 #include <iostream>
 #include <mutex>
+#include <algorithm>
 #include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
@@ -33,6 +34,8 @@
 #include "videomode.h"
 #include "commandline.h"
 #include "segment_utility.h"
+#include "dac_constants.h"
+#include "ntsc_constants.h"
 
 // c++ -g -I. -std=c++17 apps/showimage.cpp utility.cpp graphics.cpp hosted.cpp apps/spin.cpp segment_utility.c -o hosted
 
@@ -129,7 +132,7 @@ int PaintSegments(const VideoSegmentedScanlineSegment *segs, unsigned char (*pix
 constexpr int ScreenWidth = 704;
 constexpr int ScreenHeight = 460;
 constexpr int ScreenScale = 1;
-uint8_t ScreenPixmap[ScreenHeight][ScreenWidth];
+uint8_t NTSCScanlines[ScreenHeight][ScreenWidth];
 uint8_t ScreenImage[ScreenHeight][ScreenWidth][3];
 std::mutex VideoExclusionMutex;
 
@@ -181,39 +184,6 @@ int SegmentedSetScanlines(int scanlineCount, VideoSegmentedScanline *scanlines)
     return 0;
 }
 
-void VideoModeFillGLTexture()
-{
-#if 0
-    // invoke fillrow for active driver
-    switch(CurrentVideoMode) {
-        case VIDEO_MODE_PIXMAP_512_512:  {
-            for(int y = 0; y < ScreenHeight; y++) {
-                for(int x = 0; x < ScreenWidth; x++) {
-                    int value = ScreenPixmap[y][x];
-                    ScreenImage[y][x][0] = palettes[rowPalettes[y]][value][0];
-                    ScreenImage[y][x][1] = palettes[rowPalettes[y]][value][1];
-                    ScreenImage[y][x][2] = palettes[rowPalettes[y]][value][2];
-                }
-            }
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, ScreenWidth, ScreenHeight, 0, GL_RGB, GL_UNSIGNED_BYTE, ScreenImage);
-            break;
-        }
-        case VIDEO_MODE_SEGMENTS_512_512:  {
-            {
-                std::scoped_lock<std::mutex> lk(VideoExclusionMutex);
-                int row = 0;
-                for(auto const& segments : SegmentsCopy) {
-                    PaintSegments(segments.data(), ScreenImage[row], ScreenWidth);
-                    row++;
-                }
-            }
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, ScreenWidth, ScreenHeight, 0, GL_RGB, GL_UNSIGNED_BYTE, ScreenImage);
-            break;
-        }
-    }
-#endif
-}
-
 #if 0
 void VideoSetMode(int n)
 {
@@ -261,6 +231,9 @@ int VideoModeSetPaletteEntry(int palette, int entry, float r, float g, float b)
 #include <videomodeinternal.h>
 #include "ntsc_constants.h"
 #include "dac_constants.h"
+
+ntsc_wave_t backgroundColorWave;
+bool addColorburst;
 
 class BinarySemaphore
 {
@@ -336,6 +309,7 @@ void NTSCCalculateParameters()
 {
     NTSCBlack = voltageToDACValue(NTSC_SYNC_BLACK_VOLTAGE);
     NTSCWhite = voltageToDACValue(NTSC_SYNC_WHITE_VOLTAGE);
+    addColorburst = false; // Will set or clear at beginning of frame depending on top window
 }
 
 void fillRowDebugOverlay(int frameNumber, int lineNumber, unsigned char* nextRowBuffer)
@@ -391,19 +365,28 @@ struct NTSCVideoSubsystem : VideoSubsystemDriver
 {
     virtual void start();
     virtual void stop();
+    virtual void setBackgroundColor(float r, float g, float b);
     virtual void setDebugRow(int row, const char *rowText);
-    virtual int getModeCount();
-    virtual VideoModeDriver* getModeDriver(int n);
+    virtual int getModeCount() const;
+    virtual VideoModeDriver* getModeDriver(int n) const;
     virtual void waitFrame();
 };
 
-int NTSCVideoSubsystem::getModeCount()
+void NTSCVideoSubsystem::setBackgroundColor(float r, float g, float b)
+{
+    backgroundColorWave = NTSCRGBToWave(r, g, b);
+}
+
+int NTSCVideoSubsystem::getModeCount() const
 {
     return driverCount;
 }
 
-VideoModeDriver* NTSCVideoSubsystem::getModeDriver(int n)
+VideoModeDriver* NTSCVideoSubsystem::getModeDriver(int n) const
 {
+    if(n >= driverCount) {
+        return nullptr;
+    }
     return drivers[n];
 }
 
@@ -435,6 +418,42 @@ static NTSCVideoSubsystem NTSCVideo;
 VideoSubsystemDriver* GetNTSCVideoSubsystem()
 {
     return &NTSCVideo;
+}
+
+void ConvertNTSCDACRow(uint8_t *dacRow, uint8_t (*screenRow)[3], int width, bool color)
+{
+    if(color) {
+    // XXX later try to extract hue and saturation from chroma
+    } else {
+        for(int x = 0; x < width; x++) {
+            uint8_t dacByte = dacRow[x];
+            float dacVoltage = dacByte / 255.0 * MAX_DAC_VOLTAGE;
+            float luma = (dacVoltage - NTSC_SYNC_BLACK_VOLTAGE) / (NTSC_SYNC_WHITE_VOLTAGE - NTSC_SYNC_BLACK_VOLTAGE);
+            float clamped = std::clamp(luma, 0.0f, 1.0f);
+            uint8_t pixel = clamped * 255.999;
+            screenRow[x][0] = pixel;
+            screenRow[x][1] = pixel;
+            screenRow[x][2] = pixel;
+        }
+    }
+}
+
+void VideoModeFillGLTexture()
+{
+    for(int y = 0; y < ScreenHeight; y++) {
+        uint8_t *row = NTSCScanlines[y];
+
+        // Fill with background color
+        uint32_t *rowWords = (uint32_t*)row;
+        for(int x = 0; x < ScreenWidth / 4; x++) {
+            rowWords[x] = backgroundColorWave;
+        }
+
+        // Call video mode drivers to fill the rest of the row 
+
+        ConvertNTSCDACRow(row, ScreenImage[y], ScreenWidth, addColorburst);
+    }
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, ScreenWidth, ScreenHeight, 0, GL_RGB, GL_UNSIGNED_BYTE, ScreenImage);
 }
 
 #if 0
@@ -1071,7 +1090,6 @@ int setcooked()
     return 1;
 }
 
-
 int main(int argc, char **argv)
 {
     initialize_ui();
@@ -1079,6 +1097,7 @@ int main(int argc, char **argv)
     setraw();
 
     VideoSetSubsystem(GetNTSCVideoSubsystem());
+    VideoModeSetBackgroundColor(1, 0, 0);
 
     auto commandThread = std::thread{[&] {
         if(argc > 1) {

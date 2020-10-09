@@ -162,6 +162,7 @@ Status VideoGetModeCount(int *count);
 Status VideoModeGetType(int modeIndex, VideoModeType *type);
 Status VideoModeGetInfo(int modeIndex, void *infobase, size_t infoSize); // infoSize is for error-checking and for clearing memory
 void VideoModeWaitFrame();      // Wait until end of last visible line in a frame
+void VideoModeSetBackgroundColor(float r, float g, float b);
 
 #ifdef __cplusplus
 };

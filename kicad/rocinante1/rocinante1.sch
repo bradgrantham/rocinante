@@ -128,7 +128,7 @@ F 4 "Bel Fuse Inc." H 13075 -100 60  0001 C CNN "Manufacturer"
 F 5 "0ZCH0050FF2G" H 13075 -100 60  0001 C CNN "Manufacturer PN"
 F 6 "Digikey" H 13075 -100 60  0001 C CNN "Distributor"
 F 7 "507-1786-1-ND" H 13075 -100 60  0001 C CNN "Distributor PN"
-F 8 "fuse" H 15025 2850 50  0001 C CNN "Description"
+F 8 "fuse, 16V, 100A Max, 500mA hold, 1A 100ms trip" H 15025 2850 50  0001 C CNN "Description"
 F 9 "1210" H 15025 2850 50  0001 C CNN "Package"
 F 10 "SMD" H 15025 2850 50  0001 C CNN "Type"
 	1    15025 2850
@@ -203,7 +203,7 @@ F 4 "Keystone Electronics" H 7275 1200 50  0001 C CNN "Manufacturer"
 F 5 "3001" H 7275 1200 50  0001 C CNN "Manufacturer PN"
 F 6 "do not place" H 7275 1200 50  0001 C CNN "Do Not Place"
 F 7 "PTH" H 7275 1200 50  0001 C CNN "Type"
-F 8 "resistor 1225 ohms" H 7275 1200 50  0001 C CNN "Description"
+F 8 "1225 coin cell battery holder" H 7275 1200 50  0001 C CNN "Description"
 	1    7275 1200
 	1    0    0    -1  
 $EndComp
@@ -2163,7 +2163,7 @@ F 0 "C5" V 800 1975 50  0000 C CNN
 F 1 "2.2µF" V 800 2200 50  0000 C CNN
 F 2 "Capacitor_SMD:C_0603_1608Metric" H 850 2050 50  0001 C CNN
 F 3 "~" H 850 2050 50  0001 C CNN
-F 4 "100 mΩ ESR, 20% tolerance" V 850 2050 50  0001 C CNN "Description"
+F 4 "2.2µF, 100 mΩ ESR, 20% tolerance" V 850 2050 50  0001 C CNN "Description"
 F 5 "0603" H 12150 1900 60  0001 L CNN "Package"
 F 6 "SMD" H 850 2050 50  0001 C CNN "Type"
 	1    850  2050
@@ -2177,7 +2177,7 @@ F 0 "C3" V 975 1975 50  0000 C CNN
 F 1 "2.2µF" V 975 2200 50  0000 C CNN
 F 2 "Capacitor_SMD:C_0603_1608Metric" H 1025 2050 50  0001 C CNN
 F 3 "~" H 1025 2050 50  0001 C CNN
-F 4 "100 mΩ ESR, 20% tolerance" V 1025 2050 50  0001 C CNN "Description"
+F 4 "2.2µF, 100 mΩ ESR, 20% tolerance" V 1025 2050 50  0001 C CNN "Description"
 F 5 "0603" H 12150 1900 60  0001 L CNN "Package"
 F 6 "SMD" H 1025 2050 50  0001 C CNN "Type"
 	1    1025 2050
@@ -2959,7 +2959,7 @@ F 0 "R9" V 5850 10300 50  0000 C CNN
 F 1 "3.4k" V 5925 10300 50  0000 C CNN
 F 2 "Resistor_SMD:R_0603_1608Metric" V 5855 10300 50  0001 C CNN
 F 3 "" H 5925 10300 50  0001 C CNN
-F 4 "Resistor 4.3Kohms 5%" V 5925 10300 50  0001 C CNN "Description"
+F 4 "Resistor 3.4Kohms 5%" V 5925 10300 50  0001 C CNN "Description"
 F 5 "0603" H 5925 10300 50  0001 C CNN "Package"
 F 6 "SMD" H 5925 10300 50  0001 C CNN "Type"
 	1    5925 10300

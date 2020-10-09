@@ -1,0 +1,2390 @@
+// System driver internal definitions
+#include "ntsc_constants.h"
+#include "dac_constants.h"
+#include "videomodeinternal.h"
+
+
+//----------------------------------------------------------------------------
+// NTSC Video goop
+
+int SECTION_CCMRAM markHandlerInSamples = 0;
+
+volatile int16_t SECTION_CCMRAM rowDMARemained[NTSC_FRAME_LINES];
+volatile uint32_t SECTION_CCMRAM DMAFIFOUnderruns = 0;
+volatile uint32_t SECTION_CCMRAM DMATransferErrors = 0;
+typedef enum { NTSC_SOLID_FILL, NTSC_COLOR_TEST, NTSC_SCAN_TEST, NTSC_DISPLAY_BLACK, NTSC_USE_VIDEO_MODE } VideoMode;
+volatile VideoMode SECTION_CCMRAM NTSCMode = NTSC_COLOR_TEST;
+volatile int SECTION_CCMRAM videoScanTestLeft = 200;
+volatile int SECTION_CCMRAM videoScanTestRight = 700;
+volatile int SECTION_CCMRAM videoScanTestTop = 50;
+volatile int SECTION_CCMRAM videoScanTestBottom = 200;
+
+// These are in CCM to reduce contention with SRAM1 during DMA 
+unsigned char SECTION_CCMRAM NTSCEqSyncPulseLine[ROW_SAMPLES];
+unsigned char SECTION_CCMRAM NTSCVSyncLine[ROW_SAMPLES];
+unsigned char SECTION_CCMRAM NTSCBlankLine[ROW_SAMPLES];
+
+unsigned char SECTION_CCMRAM NTSCSyncTip;
+unsigned char SECTION_CCMRAM NTSCSyncPorch;
+unsigned char SECTION_CCMRAM NTSCBlack;
+unsigned char SECTION_CCMRAM NTSCWhite;
+
+int NTSCEqPulseClocks;
+int NTSCVSyncClocks;
+int NTSCHSyncClocks;
+int NTSCLineClocks;
+int NTSCFrontPorchClocks;
+int NTSCBackPorchClocks;
+
+// Essentially the remainder of CCMRAM, will need to be shrunk if more goes into CCM
+#define VRAM_SIZE  51725
+
+// (Following was copied from paper chicken scratches)
+// On Orion TV, one 14MHz clock is .0225 inches, one 240p row is .052 inches.
+// So to find a close value for width, width = sqrt(4 / 3 * .052 / .0225 * VRAM_SIZE)
+// Then, height should be no more than width * 3 * .0225 / (4 / .052)
+// So for 53248, a reasonable 4:3 framebuffer is 400x128
+// 4:3 aspect would be 1.333
+// 400 wide would be 9 inches, and 128 high would be 6.656 inches, and that's 1.352, so it's not too bad
+
+unsigned char SECTION_CCMRAM VRAM[VRAM_SIZE];
+
+// XXX these are in SRAM2 to reduce contention with SRAM1 during DMA
+unsigned char __attribute__((section (".sram2"))) row0[ROW_SAMPLES];
+unsigned char __attribute__((section (".sram2"))) row1[ROW_SAMPLES];
+unsigned char __attribute__((section (".sram2"))) audio0[512];
+unsigned char __attribute__((section (".sram2"))) audio1[512];
+
+unsigned char NTSCColorburst0;
+unsigned char NTSCColorburst90;
+unsigned char NTSCColorburst180;
+unsigned char NTSCColorburst270;
+
+void NTSCCalculateParameters(float clock)
+{
+    // Calculate values for a scanline
+    NTSCLineClocks = ROW_SAMPLES;
+    NTSCHSyncClocks = floorf(NTSCLineClocks * NTSC_HOR_SYNC_DUR + 0.5);
+
+    NTSCFrontPorchClocks = NTSCLineClocks * NTSC_FRONTPORCH;
+    NTSCBackPorchClocks = NTSCLineClocks * NTSC_BACKPORCH;
+    NTSCEqPulseClocks = NTSCLineClocks * NTSC_EQ_PULSE_INTERVAL;
+    NTSCVSyncClocks = NTSCLineClocks * NTSC_VSYNC_BLANK_INTERVAL;
+
+    NTSCSyncTip = voltageToDACValue(NTSC_SYNC_TIP_VOLTAGE);
+    NTSCSyncPorch = voltageToDACValue(NTSC_SYNC_PORCH_VOLTAGE);
+    NTSCBlack = voltageToDACValue(NTSC_SYNC_BLACK_VOLTAGE);
+    NTSCWhite = voltageToDACValue(NTSC_SYNC_WHITE_VOLTAGE);
+
+    // Calculate the four values for the colorburst that we'll repeat to make a wave
+    // The waveform is defined as sine in the FCC broadcast doc, but for
+    // composite the voltages are reversed, so the waveform becomes -sine.
+    NTSCColorburst0 = NTSCSyncPorch;
+    NTSCColorburst90 = NTSCSyncPorch - .6 * NTSCSyncPorch;
+    NTSCColorburst180 = NTSCSyncPorch;
+    NTSCColorburst270 = NTSCSyncPorch + .6 * NTSCSyncPorch;
+
+    memset(row0, NTSCSyncPorch, sizeof(row0));
+    memset(row1, NTSCSyncPorch, sizeof(row1));
+}
+
+void NTSCFillEqPulseLine(unsigned char *rowBuffer)
+{
+    for (int col = 0; col < NTSCLineClocks; col++) {
+        if (col < NTSCEqPulseClocks || (col > NTSCLineClocks/2 && col < NTSCLineClocks/2 + NTSCEqPulseClocks)) {
+            rowBuffer[col] = NTSCSyncTip;
+        } else {
+            rowBuffer[col] = NTSCSyncPorch;
+        }
+    }
+}
+
+void NTSCFillVSyncLine(unsigned char *rowBuffer)
+{
+    for (int col = 0; col < NTSCLineClocks; col++) {
+        if (col < NTSCVSyncClocks || (col > NTSCLineClocks/2 && col < NTSCLineClocks/2 + NTSCVSyncClocks)) {
+            rowBuffer[col] = NTSCSyncTip;
+        } else {
+            rowBuffer[col] = NTSCSyncPorch;
+        }
+    }
+}
+
+// Haven't accelerated because not yet done in scan ISR
+void NTSCAddColorburst(unsigned char *rowBuffer)
+{
+    static const int startOfColorburstClocks = 80 - 3 * 4; // XXX magic number for current clock
+
+    for(int col = startOfColorburstClocks; col < startOfColorburstClocks + NTSC_COLORBURST_CYCLES * 4; col++) {
+        switch((col - startOfColorburstClocks) % 4) {
+            case 0: rowBuffer[col] = NTSCColorburst0; break;
+            case 1: rowBuffer[col] = NTSCColorburst90; break;
+            case 2: rowBuffer[col] = NTSCColorburst180; break;
+            case 3: rowBuffer[col] = NTSCColorburst270; break;
+        }
+    }
+}
+
+void NTSCFillBlankLine(unsigned char *rowBuffer, int withColorburst)
+{
+    for (int col = 0; col < NTSCLineClocks; col++) {
+        if (col < NTSCHSyncClocks) {
+            rowBuffer[col] = NTSCSyncTip;
+        } else {
+            rowBuffer[col] = NTSCSyncPorch;
+        }
+    }
+    if(withColorburst) {
+        NTSCAddColorburst(rowBuffer);
+    }
+}
+
+void NTSCGenerateLineBuffers()
+{
+    // one line = (1 / 3579545) * (455/2)
+
+    // front porch is (.165) * (1 / 15734) / (1 / 3579545) = 37.53812921062726565701 cycles (37.5)
+    //     74 cycles at double clock
+    // pixels is (1 - .165) * (1 / 15734) / (1 / 3579545) = 189.96568418711380557696 cycles (190)
+    //     280 cycles at double clock
+
+    NTSCFillEqPulseLine(NTSCEqSyncPulseLine);
+    NTSCFillVSyncLine(NTSCVSyncLine);
+    NTSCFillBlankLine(NTSCBlankLine, 1);
+}
+
+#define NTSC_NUM_PALETTES 2
+#define NTSC_WAVE_SIZE 4
+#define NTSC_PALETTE_INDEX_SIZE 1
+
+// #define VRAM_PIXMAP_AVAIL (VRAM_SIZE - NTSC_NUM_PALETTES * sizeof(uint32_t) * 256 - sizeof(unsigned char) * NTSC_FRAME_LINES)
+#define VRAM_PIXMAP_AVAIL (VRAM_SIZE - NTSC_NUM_PALETTES * NTSC_WAVE_SIZE * 256 - NTSC_PALETTE_INDEX_SIZE * NTSC_FRAME_LINES)
+
+ntsc_wave_t *NTSCGetPalettePointer(int palette)
+{
+    return (ntsc_wave_t*)(VRAM + VRAM_SIZE - palette * NTSC_WAVE_SIZE * 256);
+}
+
+unsigned char *NTSCGetPaletteForRowPointer()
+{
+    return (unsigned char*)(VRAM + VRAM_SIZE - NTSC_NUM_PALETTES * NTSC_WAVE_SIZE * 256 - NTSC_PALETTE_INDEX_SIZE * NTSC_FRAME_LINES);
+}
+
+ntsc_wave_t *NTSCGetPaletteForRow(int row)
+{
+    int palette = NTSCGetPaletteForRowPointer()[row];
+    return NTSCGetPalettePointer(palette);
+}
+
+ntsc_wave_t NTSCGetPaletteEntry(int palette, int which)
+{
+    return NTSCGetPalettePointer(palette)[which];
+}
+
+ntsc_wave_t NTSCGetPaletteEntryForRow(int row, int which)
+{
+    return NTSCGetPaletteForRow(row)[which];
+}
+
+int NTSCSetPaletteEntry(int palette, int which, float r, float g, float b)
+{
+    if(palette < 0) {
+        return 2; // palette number invalid
+    }
+    if(palette > 1) {
+        return 1; // palette number out of range
+    }
+    ntsc_wave_t *paletteToWave = NTSCGetPalettePointer(palette);
+    paletteToWave[which] = NTSCRGBToWave(r, g, b);
+    return 0;
+}
+
+int NTSCSetPaletteForRow(int row, int palette)
+{
+    unsigned char *palettesByRow = NTSCGetPaletteForRowPointer();
+    palettesByRow[row] = palette;
+    return 0;
+}
+
+VideoFillRowFunc SECTION_CCMRAM VideoCurrentFillRow;
+ntsc_wave_t SECTION_CCMRAM solidFillWave;
+
+void NTSCFillRowBuffer(int frameNumber, int lineNumber, unsigned char *rowBuffer)
+{
+    // XXX could optimize these by having one branch be lines < 21
+    /*
+     * Rows 0 through 8 are equalizing pulse, then vsync, then equalizing pulse
+     */
+    if(lineNumber < NTSC_EQPULSE_LINES) {
+
+        memcpy(rowBuffer, NTSCEqSyncPulseLine, sizeof(NTSCEqSyncPulseLine));
+
+    } else if(lineNumber - NTSC_EQPULSE_LINES < NTSC_VSYNC_LINES) {
+
+        memcpy(rowBuffer, NTSCVSyncLine, sizeof(NTSCVSyncLine));
+
+    } else if(lineNumber - (NTSC_EQPULSE_LINES + NTSC_VSYNC_LINES) < NTSC_EQPULSE_LINES) {
+
+        memcpy(rowBuffer, NTSCEqSyncPulseLine, sizeof(NTSCEqSyncPulseLine));
+
+    } else if(lineNumber - (NTSC_EQPULSE_LINES + NTSC_VSYNC_LINES + NTSC_EQPULSE_LINES) < NTSC_VBLANK_LINES) {
+
+        /*
+         * Rows 9 through 2X are other part of vertical blank
+         */
+
+        // XXX should just change DMA source address, then this needs to be in SRAM2
+        memcpy(rowBuffer, NTSCBlankLine, sizeof(NTSCBlankLine));
+
+    } else if(lineNumber >= 263 && lineNumber <= 271) {
+        // Interlacing handling weird lines
+        if(lineNumber <= 264) {
+            //lines 263, 264 - last 405 of eq pulse then first 405 of eq pulse
+            memcpy(rowBuffer, NTSCEqSyncPulseLine + ROW_SAMPLES / 2, ROW_SAMPLES / 2);
+            memcpy(rowBuffer + ROW_SAMPLES / 2, NTSCEqSyncPulseLine, ROW_SAMPLES / 2);
+        } else if(lineNumber == 265) {
+            //line 265 - last 405 of eq pulse then first 405 of vsync
+            memcpy(rowBuffer, NTSCEqSyncPulseLine + ROW_SAMPLES / 2, ROW_SAMPLES / 2);
+            memcpy(rowBuffer + ROW_SAMPLES / 2, NTSCVSyncLine, ROW_SAMPLES / 2);
+        } else if(lineNumber <= 267) {
+            //lines 266, 267 - last 405 of vsync then first 405 of vsync
+            memcpy(rowBuffer, NTSCVSyncLine + ROW_SAMPLES / 2, ROW_SAMPLES / 2);
+            memcpy(rowBuffer + ROW_SAMPLES / 2, NTSCVSyncLine, ROW_SAMPLES / 2);
+        } else if(lineNumber == 268) {
+            //lines 268 - last 405 of vsync then first 405 of eq pulse
+            memcpy(rowBuffer, NTSCVSyncLine + ROW_SAMPLES / 2, ROW_SAMPLES / 2);
+            memcpy(rowBuffer + ROW_SAMPLES / 2, NTSCEqSyncPulseLine, ROW_SAMPLES / 2);
+        } else if(lineNumber <= 270) {
+            //lines 269, 270 - last 405 of eq pulse then first 405 of eq pulse
+            memcpy(rowBuffer, NTSCEqSyncPulseLine + ROW_SAMPLES / 2, ROW_SAMPLES / 2);
+            memcpy(rowBuffer + ROW_SAMPLES / 2, NTSCEqSyncPulseLine, ROW_SAMPLES / 2);
+        } else if(lineNumber == 271) {
+            //line 271 - last 405 of eq pulse then 405 of SyncPorch
+            memcpy(rowBuffer, NTSCEqSyncPulseLine + ROW_SAMPLES / 2, ROW_SAMPLES / 2);
+            memset(rowBuffer + ROW_SAMPLES / 2, NTSCSyncPorch, ROW_SAMPLES / 2);
+        }
+
+    } else if((lineNumber >= 272) && (lineNumber <= 281)) { // XXX half line at 282
+
+        /*
+         * Rows 272 through 2XX are other part of vertical blank
+         */
+
+        // XXX should just change DMA source address, then this needs to be in SRAM2
+        memcpy(rowBuffer, NTSCBlankLine, sizeof(NTSCBlankLine));
+
+    } else {
+
+        // Don't need to do these because did both buffers at some point during vertical blank?
+        memcpy(rowBuffer, NTSCBlankLine, NTSCHSyncClocks + NTSCBackPorchClocks);
+        memcpy(rowBuffer + ROW_SAMPLES - NTSCFrontPorchClocks, NTSCBlankLine + ROW_SAMPLES - NTSCFrontPorchClocks, NTSCFrontPorchClocks);
+
+        // 244 lines
+        // 189 columns @ 4 per pixel
+        int y = lineNumber - (NTSC_EQPULSE_LINES + NTSC_VSYNC_LINES + NTSC_EQPULSE_LINES + NTSC_VBLANK_LINES);
+
+        switch(NTSCMode) {
+            case NTSC_COLOR_TEST: {
+                if((y > 20 && y < 230) || (y > 283 && y < 493)) {
+                    
+                    // Clear pixels outside of text area 
+                    memset(rowBuffer + NTSCHSyncClocks + NTSCBackPorchClocks, NTSCBlack, 80);
+                    int clocksToRightEdge = 169 * 4;
+                    memset(rowBuffer + clocksToRightEdge, NTSCBlack, ROW_SAMPLES - clocksToRightEdge - NTSCFrontPorchClocks);
+
+                    unsigned char *rowOut = rowBuffer + (NTSCHSyncClocks + NTSCBackPorchClocks + 3) / 4 * 4 + 20 * 4;
+                    ntsc_wave_t* rowWords = (ntsc_wave_t*)rowOut;
+                    unsigned char v = NTSCBlack + (NTSCWhite - NTSCBlack) / 2;
+                    unsigned char a = NTSCWhite;
+                    unsigned char c = NTSCBlack;
+                    ntsc_wave_t colorWord = (v << 0) | (v << 8) | (v << 16) | (v << 24); // little endian
+                    for(int col = 20; col < 50; col++) {
+                        *rowWords++ = colorWord;
+                    }
+                    colorWord = (v << 0) | (a << 8) | (v << 16) | (c << 24); // little endian
+                    for(int col = 50; col < 169; col++) {
+                        *rowWords++ = colorWord;
+                    }
+                }
+                break;
+            }
+            case NTSC_SOLID_FILL: {
+                if((y % 263) > 20 && (y % 263) < 230) {
+                    unsigned char *rowOut = rowBuffer + (NTSCHSyncClocks + NTSCBackPorchClocks + 3) / 4 * 4 + 20 * 4;
+                    ntsc_wave_t* rowWords = (ntsc_wave_t*)rowOut;
+                    for(int col = 20; col < 169; col++) {
+                        *rowWords++ = solidFillWave;
+                    }
+                }
+                break;
+            }
+            case NTSC_SCAN_TEST: {
+                if((lineNumber % 263) >= videoScanTestTop && (lineNumber % 263) <= videoScanTestBottom) {
+                    for(int row = videoScanTestLeft; row < videoScanTestRight; row++) {
+                        rowBuffer[row] = 200;
+                    }
+                }
+                break;
+            }
+            case NTSC_DISPLAY_BLACK: {
+                memcpy(rowBuffer, NTSCBlankLine, ROW_SAMPLES);
+                break;
+            }
+            case NTSC_USE_VIDEO_MODE: {
+                VideoCurrentFillRow(frameNumber, lineNumber, rowBuffer);
+                break;
+            }
+        }
+        if(lineNumber == 262) {
+            //line 262 - overwrite last 405 samples with first 405 samples of EQ pulse
+            memcpy(rowBuffer + ROW_SAMPLES / 2, NTSCEqSyncPulseLine, ROW_SAMPLES / 2);
+        } else if(lineNumber == 282) {
+            //special line 282 - write SyncPorch from BackPorch to middle of line after mode's fillRow()
+            memset(rowBuffer + NTSCHSyncClocks + NTSCBackPorchClocks, NTSCSyncPorch, ROW_SAMPLES / 2 - (NTSCHSyncClocks + NTSCBackPorchClocks));
+        }
+    }
+    // if(lineNumber == 0) { rowBuffer[0] = 255;}
+}
+
+// debug overlay scanout
+
+int SECTION_CCMRAM debugOverlayEnabled = 0;
+
+#define debugDisplayWidth 19
+#define debugDisplayHeight 13
+#define debugDisplayLeftTick (NTSCHSyncClocks + NTSCBackPorchClocks + 48)
+#define debugDisplayTopTick (NTSC_EQPULSE_LINES + NTSC_VSYNC_LINES + NTSC_EQPULSE_LINES + NTSC_VBLANK_LINES + 20)
+/* debugFontWidthScale != 4 looks terrible in a color field because of adjacent color columns; probably need to ensure 0s around any 1 text column */
+#define debugFontWidthScale 4
+#define debugCharGapPixels 1
+#define debugFontHeightScale 1
+
+char SECTION_CCMRAM debugDisplay[debugDisplayHeight][debugDisplayWidth];
+
+#include "8x16.h"
+// static int font8x16Width = 8, font8x16Height = 16;
+// static unsigned char font8x16Bits[] = /* was a bracket here */
+
+void fillRowDebugOverlay(int frameNumber, int lineNumber, unsigned char* nextRowBuffer)
+{
+    ntsc_wave_t NTSCWhiteLong =
+        (NTSCWhite <<  0) |
+        (NTSCWhite <<  8) |
+        (NTSCWhite << 16) |
+        (NTSCWhite << 24);
+    int debugFontScanlineHeight = font8x16Height * debugFontHeightScale;
+
+    int rowWithinDebugArea = (lineNumber % 263) - debugDisplayTopTick;
+    int charRow = rowWithinDebugArea / debugFontScanlineHeight;
+    int charPixelY = (rowWithinDebugArea % debugFontScanlineHeight) / debugFontHeightScale;
+
+// XXX this code assumes font width <= 8 and each row padded out to a byte
+    if((rowWithinDebugArea >= 0) && (charRow < debugDisplayHeight)) {
+        for(int charCol = 0; charCol < debugDisplayWidth; charCol++) {
+            unsigned char debugChar = debugDisplay[charRow][charCol];
+            if(debugChar != 0) {
+                unsigned char charRowBits = font8x16Bits[debugChar * font8x16Height + charPixelY];
+#if debugFontWidthScale == 4 && font8x16Width == 8
+                unsigned char *charPixels = nextRowBuffer + debugDisplayLeftTick + (charCol * (font8x16Width + debugCharGapPixels)) * debugFontWidthScale;
+                if(charRowBits & 0x80) { ((ntsc_wave_t*)charPixels)[0] = NTSCWhiteLong; } 
+                if(charRowBits & 0x40) { ((ntsc_wave_t*)charPixels)[1] = NTSCWhiteLong; }
+                if(charRowBits & 0x20) { ((ntsc_wave_t*)charPixels)[2] = NTSCWhiteLong; }
+                if(charRowBits & 0x10) { ((ntsc_wave_t*)charPixels)[3] = NTSCWhiteLong; }
+                if(charRowBits & 0x08) { ((ntsc_wave_t*)charPixels)[4] = NTSCWhiteLong; }
+                if(charRowBits & 0x04) { ((ntsc_wave_t*)charPixels)[5] = NTSCWhiteLong; }
+                if(charRowBits & 0x02) { ((ntsc_wave_t*)charPixels)[6] = NTSCWhiteLong; }
+                if(charRowBits & 0x01) { ((ntsc_wave_t*)charPixels)[7] = NTSCWhiteLong; }
+#else
+                for(int charPixelX = 0; charPixelX < font8x16Width; charPixelX++) {
+                    int pixel = charRowBits & (0x80 >> charPixelX);
+                    if(pixel) {
+                        unsigned char *charPixels = nextRowBuffer + debugDisplayLeftTick + (charCol * (font8x16Width + debugCharGapPixels) + charPixelX) * debugFontWidthScale;
+#if debugFontWidthScale == 4
+                        *(ntsc_wave_t *)charPixels = NTSCWhiteLong; 
+#else
+                        for(int col = 0; col < debugFontWidthScale; col++) {
+                            charPixels[col] = NTSCWhite;
+                        }
+#endif
+                    }
+                }
+#endif
+            }
+        }
+    }
+}
+
+volatile int SECTION_CCMRAM lineNumber = 0;
+volatile int SECTION_CCMRAM frameNumber = 0;
+
+#ifdef __cplusplus
+extern "C" {
+#endif /* __cplusplus */
+
+uint32_t oldLISR = 0;
+
+void DMA2_Stream1_IRQHandler(void)
+{
+    // Configure timer TIM2 for performance measurement
+    TIM9->CNT = 0;
+    TIM9->CR1 = TIM_CR1_CEN;            /* enable the timer */
+
+    // Clear interrupt flag
+    DMA2->LIFCR |= DMA_LIFCR_CTCIF1; // XXX this bit (and other LISR/LIFCR HISR/HIFCR) are dependent on the stream 
+
+    if(markHandlerInSamples) {
+        for(int i = 0; i < 28; i++) { GPIOC->ODR = (GPIOC->ODR & 0xFFFFFF00) | 0xFFFFFFF8; }
+    } else {
+        // Do a little loop here since FIFO may have starved a little on interrupt
+        // And hope we're early enough in the line that values aren't changing
+        //uint32_t GPIOJ_ODR = GPIOJ->ODR;
+        //for(int i = 0; i < 15; i++) { GPIOJ->ODR = GPIOJ_ODR; }
+    }
+
+    if(DMA2->LISR & DMA_FLAG_FEIF1_5) { // XXX 1_5 is "1 or 5"
+        DMA2->LIFCR |= DMA_LIFCR_CFEIF1;
+        DMAFIFOUnderruns++;
+    }
+    if(DMA2->LISR & DMA_FLAG_TEIF1_5) {
+        DMA2->LIFCR |= DMA_LIFCR_CTEIF1;
+        DMATransferErrors++;
+    }
+    if(DMA2->LISR & DMA_FLAG_HTIF1_5) {
+        DMA2->LIFCR |= DMA_LIFCR_CHTIF1;
+    }
+
+    if(DMA2->LISR) {
+        oldLISR = DMA2->LISR;
+        DMA2->LIFCR = 0xFFFF;
+    }
+
+    int whichIsScanning = (DMA2_Stream1->CR & DMA_SxCR_CT) ? 1 : 0;
+
+    unsigned char *nextRowBuffer = (whichIsScanning == 1) ? row0 : row1;
+
+    NTSCFillRowBuffer(frameNumber, lineNumber, nextRowBuffer);
+    if(debugOverlayEnabled) {
+        fillRowDebugOverlay(frameNumber, lineNumber, nextRowBuffer);
+    }
+
+    int thisLineNumber = lineNumber;
+    lineNumber = lineNumber + 1;
+    if(lineNumber == NTSC_FRAME_LINES) {
+        lineNumber = 0;
+        frameNumber++;
+    }
+
+    // A little pulse so we know where we are on the line when we finished
+    if(markHandlerInSamples) {
+        for(int i = 0; i < 28; i++) { GPIOC->ODR = (GPIOC->ODR & 0xFFFFFF00) | 0xFFFFFFE8; }
+    }
+
+    if(0) {
+        int withinVisiblePartOfEvenFrame = (lineNumber > 27) && (lineNumber < 257);
+        int withinVisiblePartOfOddFrame = (lineNumber > (262 + 27)) && (lineNumber < (262 + 257));
+
+        if(withinVisiblePartOfEvenFrame || withinVisiblePartOfOddFrame) {
+            while(DMA2_Stream1->NDTR > 100);
+        }
+    }
+
+#if 1
+    TIM9->CR1 = 0;            /* stop the timer */
+    // rowCyclesSpent[lineNumber] = TIM9->CNT;     // TIM9 CK_INT is RCC on 415xxx, APB1 on 746xxx
+    rowDMARemained[thisLineNumber] = 912 - TIM9->CNT / 7;
+#else
+    rowDMARemained[thisLineNumber] = *(uint16_t*)&DMA2_Stream1->NDTR;
+#endif
+}
+
+#ifdef __cplusplus
+};
+#endif /* __cplusplus */
+
+
+void NTSCVideoStart()
+{
+    HAL_StatusTypeDef status;
+
+    // Configure DAC
+    GPIO_InitTypeDef  GPIO_InitStruct = {0};
+    GPIO_InitStruct.Pull = GPIO_NOPULL;
+    GPIO_InitStruct.Pin = 0xFF;
+    GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
+    HAL_GPIO_Init(GPIOC, &GPIO_InitStruct); 
+
+    // Configure E9 as TI1_CH1 
+    GPIO_InitStruct.Pin = GPIO_PIN_9;
+    GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+    GPIO_InitStruct.Pull = GPIO_PULLDOWN;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
+    GPIO_InitStruct.Alternate = GPIO_AF1_TIM1;
+    HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
+
+    // Enable DMA interrupt handler
+    HAL_NVIC_SetPriority(DMA2_Stream1_IRQn, 0, 1);
+    HAL_NVIC_EnableIRQ(DMA2_Stream1_IRQn);
+
+    // Configure DMA
+    DMA2_Stream1->NDTR = ROW_SAMPLES;
+    DMA2_Stream1->M0AR = (uint32_t)row0;        // Source buffer address 0
+    DMA2_Stream1->M1AR = (uint32_t)row1;        // Source buffer address 1 
+    // DMA2_Stream1->PAR = (uint32_t)&DAC1->DHR8R1;  // Destination address
+    DMA2_Stream1->PAR = (uint32_t)&GPIOC->ODR;  // Destination address
+    DMA2_Stream1->FCR = DMA_FIFOMODE_ENABLE |   // Enable FIFO to improve stutter
+        DMA_FIFO_THRESHOLD_FULL;        
+    DMA2_Stream1->CR =
+        DMA_CHANNEL_6 |                         // which channel is driven by which timer to which peripheral is limited
+        DMA_MEMORY_TO_PERIPH |                  // Memory to Peripheral
+        DMA_PDATAALIGN_BYTE |                   // BYTES to peripheral
+        DMA_MDATAALIGN_HALFWORD |
+        DMA_SxCR_DBM |                          // double buffer
+        DMA_PRIORITY_VERY_HIGH |                // Video data must be highest priority, can't stutter
+        DMA_MINC_ENABLE |                       // Increment memory address
+        DMA_IT_TC |                             // Interrupt on transfer complete of each buffer
+        // DMA_IT_HT |                          // Interrupt on transfer complete of half a buffer 
+        // DMA_IT_TE |                             // XXX Interrupt on transfer error
+        // DMA_IT_DME |                             // XXX Interrupt on DMA error
+        0;
+
+    // Clear FIFO and transfer error flags
+    DMA2->LIFCR |= DMA_LIFCR_CFEIF2;
+    DMA2->LIFCR |= DMA_LIFCR_CTEIF2;
+
+    DMA2_Stream1->CR |= DMA_SxCR_EN;    /* enable DMA */
+
+    // Configure TIM1 to clock from input capture for channel 1
+    TIM_MasterConfigTypeDef sMasterConfig = {0};
+    TIM_IC_InitTypeDef sConfigIC = {0};
+
+    htim1.Instance = TIM1;
+    htim1.Init.Prescaler = 0;
+    htim1.Init.CounterMode = TIM_COUNTERMODE_UP;
+    htim1.Init.Period = 0;
+    htim1.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+    htim1.Init.RepetitionCounter = 0;
+    htim1.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+    if ((status = HAL_TIM_IC_Init(&htim1)) != HAL_OK)
+    {
+        printf("HAL_TIM_IC_Init failed, status %d\n", status);
+        panic();
+    }
+    sMasterConfig.MasterOutputTrigger = TIM_TRGO_OC1;
+    sMasterConfig.MasterOutputTrigger2 = TIM_TRGO2_RESET;
+    sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+    if (HAL_TIMEx_MasterConfigSynchronization(&htim1, &sMasterConfig) != HAL_OK)
+    {
+        printf("HAL_TIMEx_MasterConfigSynchronization failed, status %d\n", status);
+        panic();
+    }
+    sConfigIC.ICPolarity = TIM_INPUTCHANNELPOLARITY_RISING;
+    sConfigIC.ICSelection = TIM_ICSELECTION_DIRECTTI;
+    sConfigIC.ICPrescaler = TIM_ICPSC_DIV1;
+    sConfigIC.ICFilter = 0;
+    if (HAL_TIM_IC_ConfigChannel(&htim1, &sConfigIC, TIM_CHANNEL_1) != HAL_OK)
+    {
+        printf("HAL_TIM_IC_ConfigChannel failed, status %d\n", status);
+        panic();
+    }
+
+    // Set DMA request on capture-compare channel 1
+    TIM1->DIER |= TIM_DIER_CC1DE;
+
+    lineNumber = 1; // Next up is row 1
+    frameNumber = 0; 
+
+    printf("TIM1->CR1 = %08lX\n", TIM1->CR1);
+    printf("TIM1->CR2 = %08lX\n", TIM1->CR2);
+    printf("TIM1->SMCR = %08lX\n", TIM1->SMCR);
+    printf("TIM1->DIER = %08lX\n", TIM1->DIER);
+    printf("TIM1->SR = %08lX\n", TIM1->SR);
+    printf("TIM1->EGR = %08lX\n", TIM1->EGR);
+    printf("TIM1->CCMR1 = %08lX\n", TIM1->CCMR1);
+    printf("TIM1->CCMR2 = %08lX\n", TIM1->CCMR2);
+    printf("TIM1->CCER = %08lX\n", TIM1->CCER);
+    printf("TIM1->CNT = %08lX\n", TIM1->CNT);
+    printf("TIM1->PSC = %08lX\n", TIM1->PSC);
+    printf("TIM1->ARR = %08lX\n", TIM1->ARR);
+    printf("TIM1->RCR = %08lX\n", TIM1->RCR);
+    printf("TIM1->CCR1 = %08lX\n", TIM1->CCR1);
+    printf("TIM1->CCR2 = %08lX\n", TIM1->CCR2);
+    printf("TIM1->CCR3 = %08lX\n", TIM1->CCR3);
+    printf("TIM1->CCR4 = %08lX\n", TIM1->CCR4);
+    printf("TIM1->BDTR = %08lX\n", TIM1->BDTR);
+    printf("TIM1->DCR = %08lX\n", TIM1->DCR);
+    printf("TIM1->DMAR = %08lX\n", TIM1->DMAR);
+    printf("TIM1->OR = %08lX\n", TIM1->OR);
+    printf("TIM1->CCMR3 = %08lX\n", TIM1->CCMR3);
+    printf("TIM1->CCR5 = %08lX\n", TIM1->CCR5);
+    printf("TIM1->CCR6 = %08lX\n", TIM1->CCR6);
+
+    printf("DMA2->LISR = %08lX\n", DMA2->LISR);
+    printf("DMA2->HISR = %08lX\n", DMA2->HISR);
+
+    printf("DMA2_Stream1->CR = %08lX\n", DMA2_Stream1->CR);
+    printf("DMA2_Stream1->NDTR = %08lX\n", DMA2_Stream1->NDTR);
+    printf("DMA2_Stream1->PAR = %08lX\n", DMA2_Stream1->PAR);
+    printf("DMA2_Stream1->M0AR = %08lX\n", DMA2_Stream1->M0AR);
+    printf("DMA2_Stream1->M1AR = %08lX\n", DMA2_Stream1->M1AR);
+    printf("DMA2_Stream1->FCR = %08lX\n", DMA2_Stream1->FCR);
+
+    status = HAL_TIM_IC_Start(&htim1, TIM_CHANNEL_1);
+    if(status != HAL_OK) {
+        printf("HAL_TIM_IC_Start status %d\n", status);
+        panic();
+    }
+}
+
+void NTSCVideoStop()
+{
+    DMA2_Stream1->CR &= ~DMA_SxCR_EN;       /* disable DMA */
+    // TIM1->CR1 &= ~TIM_CR1_CEN;            /* disable the timer... what's the HAL function? */
+    HAL_TIM_Base_Stop(&htim1);
+}
+
+//----------------------------------------------------------------------------
+// Video modes 
+
+#define font8x8Width 8
+#define font8x8Height 8
+
+unsigned char SECTION_CCMRAM font8x8Bits[] = {
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0C, 0x12, 0x10,
+    0x7C, 0x10, 0x12, 0x7C, 0x00, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08,
+    0x08, 0x00, 0x04, 0x08, 0x3C, 0x42, 0x7E, 0x40, 0x3C, 0x00, 0x24,
+    0x00, 0x42, 0x42, 0x42, 0x42, 0x3C, 0x00, 0x08, 0x14, 0x08, 0x14,
+    0x22, 0x3E, 0x22, 0x00, 0x00, 0x00, 0x00, 0x7E, 0x02, 0x02, 0x00,
+    0x00, 0x14, 0x00, 0x1C, 0x22, 0x22, 0x22, 0x1C, 0x00, 0x1D, 0x22,
+    0x26, 0x2A, 0x32, 0x22, 0x5C, 0x00, 0x10, 0x08, 0x42, 0x42, 0x42,
+    0x46, 0x3A, 0x00, 0x32, 0x4C, 0x00, 0x2C, 0x32, 0x22, 0x22, 0x00,
+    0x08, 0x04, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x38, 0x00, 0x38,
+    0x04, 0x3C, 0x44, 0x3A, 0x00, 0x3E, 0x7A, 0x44, 0x44, 0x78, 0x48,
+    0x44, 0x00, 0x14, 0x00, 0x08, 0x14, 0x22, 0x3E, 0x22, 0x00, 0x32,
+    0x4C, 0x08, 0x14, 0x22, 0x3E, 0x22, 0x00, 0x32, 0x4C, 0x22, 0x32,
+    0x2A, 0x26, 0x22, 0x00, 0x00, 0x14, 0x1C, 0x22, 0x22, 0x22, 0x1C,
+    0x00, 0x09, 0x16, 0x26, 0x2A, 0x32, 0x34, 0x48, 0x00, 0x32, 0x4C,
+    0x00, 0x3C, 0x42, 0x42, 0x3C, 0x00, 0x3C, 0x22, 0x22, 0x3C, 0x22,
+    0x22, 0x7C, 0x00, 0x24, 0x00, 0x42, 0x42, 0x42, 0x46, 0x3A, 0x00,
+    0x32, 0x4C, 0x00, 0x18, 0x24, 0x24, 0x18, 0x00, 0x1C, 0x2A, 0x0A,
+    0x1C, 0x28, 0x2A, 0x1C, 0x00, 0x28, 0x00, 0x38, 0x04, 0x3C, 0x44,
+    0x3A, 0x00, 0x20, 0x10, 0x38, 0x04, 0x3C, 0x44, 0x3A, 0x00, 0x10,
+    0x00, 0x38, 0x04, 0x3C, 0x44, 0x3A, 0x00, 0x3C, 0x40, 0x7C, 0x42,
+    0x3E, 0x02, 0x3C, 0x00, 0x04, 0x08, 0x3E, 0x20, 0x3E, 0x20, 0x3E,
+    0x00, 0x08, 0x1E, 0x24, 0x26, 0x3C, 0x24, 0x26, 0x00, 0x1C, 0x22,
+    0x20, 0x20, 0x22, 0x1C, 0x08, 0x10, 0x00, 0x00, 0x32, 0x4C, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x08, 0x08, 0x08, 0x08, 0x08, 0x00, 0x08, 0x00, 0x24, 0x24, 0x24,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x24, 0x24, 0x7E, 0x24, 0x7E, 0x24,
+    0x24, 0x00, 0x08, 0x1E, 0x28, 0x1C, 0x0A, 0x3C, 0x08, 0x00, 0x00,
+    0x62, 0x64, 0x08, 0x10, 0x26, 0x46, 0x00, 0x30, 0x48, 0x48, 0x30,
+    0x4A, 0x44, 0x3A, 0x00, 0x04, 0x08, 0x10, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x04, 0x08, 0x10, 0x10, 0x10, 0x08, 0x04, 0x00, 0x20, 0x10,
+    0x08, 0x08, 0x08, 0x10, 0x20, 0x00, 0x08, 0x2A, 0x1C, 0x3E, 0x1C,
+    0x2A, 0x08, 0x00, 0x00, 0x08, 0x08, 0x3E, 0x08, 0x08, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x08, 0x08, 0x10, 0x00, 0x00, 0x00,
+    0x7E, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x08, 0x00, 0x00, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x00, 0x3C,
+    0x42, 0x46, 0x5A, 0x62, 0x42, 0x3C, 0x00, 0x08, 0x18, 0x28, 0x08,
+    0x08, 0x08, 0x3E, 0x00, 0x3C, 0x42, 0x02, 0x0C, 0x30, 0x40, 0x7E,
+    0x00, 0x3C, 0x42, 0x02, 0x1C, 0x02, 0x42, 0x3C, 0x00, 0x04, 0x0C,
+    0x14, 0x24, 0x7E, 0x04, 0x04, 0x00, 0x7E, 0x40, 0x78, 0x04, 0x02,
+    0x44, 0x38, 0x00, 0x1C, 0x20, 0x40, 0x7C, 0x42, 0x42, 0x3C, 0x00,
+    0x7E, 0x42, 0x04, 0x08, 0x10, 0x10, 0x10, 0x00, 0x3C, 0x42, 0x42,
+    0x3C, 0x42, 0x42, 0x3C, 0x00, 0x3C, 0x42, 0x42, 0x3E, 0x02, 0x04,
+    0x38, 0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00,
+    0x00, 0x08, 0x00, 0x00, 0x08, 0x08, 0x10, 0x06, 0x0C, 0x18, 0x30,
+    0x18, 0x0C, 0x06, 0x00, 0x00, 0x00, 0x7E, 0x00, 0x7E, 0x00, 0x00,
+    0x00, 0x60, 0x30, 0x18, 0x0C, 0x18, 0x30, 0x60, 0x00, 0x3C, 0x42,
+    0x02, 0x0C, 0x10, 0x00, 0x10, 0x00, 0x1C, 0x22, 0x4A, 0x56, 0x4C,
+    0x20, 0x1E, 0x00, 0x18, 0x24, 0x42, 0x7E, 0x42, 0x42, 0x42, 0x00,
+    0x7C, 0x22, 0x22, 0x3C, 0x22, 0x22, 0x7C, 0x00, 0x1C, 0x22, 0x40,
+    0x40, 0x40, 0x22, 0x1C, 0x00, 0x78, 0x24, 0x22, 0x22, 0x22, 0x24,
+    0x78, 0x00, 0x7E, 0x40, 0x40, 0x78, 0x40, 0x40, 0x7E, 0x00, 0x7E,
+    0x40, 0x40, 0x78, 0x40, 0x40, 0x40, 0x00, 0x1C, 0x22, 0x40, 0x4E,
+    0x42, 0x22, 0x1C, 0x00, 0x42, 0x42, 0x42, 0x7E, 0x42, 0x42, 0x42,
+    0x00, 0x1C, 0x08, 0x08, 0x08, 0x08, 0x08, 0x1C, 0x00, 0x0E, 0x04,
+    0x04, 0x04, 0x04, 0x44, 0x38, 0x00, 0x42, 0x44, 0x48, 0x70, 0x48,
+    0x44, 0x42, 0x00, 0x40, 0x40, 0x40, 0x40, 0x40, 0x40, 0x7E, 0x00,
+    0x42, 0x66, 0x5A, 0x5A, 0x42, 0x42, 0x42, 0x00, 0x42, 0x62, 0x52,
+    0x4A, 0x46, 0x42, 0x42, 0x00, 0x3C, 0x42, 0x42, 0x42, 0x42, 0x42,
+    0x3C, 0x00, 0x7C, 0x42, 0x42, 0x7C, 0x40, 0x40, 0x40, 0x00, 0x3C,
+    0x42, 0x42, 0x42, 0x4A, 0x44, 0x3A, 0x00, 0x7C, 0x42, 0x42, 0x7C,
+    0x48, 0x44, 0x42, 0x00, 0x3C, 0x42, 0x40, 0x3C, 0x02, 0x42, 0x3C,
+    0x00, 0x3E, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08, 0x00, 0x42, 0x42,
+    0x42, 0x42, 0x42, 0x42, 0x3C, 0x00, 0x42, 0x42, 0x42, 0x24, 0x24,
+    0x18, 0x18, 0x00, 0x42, 0x42, 0x42, 0x5A, 0x5A, 0x66, 0x42, 0x00,
+    0x42, 0x42, 0x24, 0x18, 0x24, 0x42, 0x42, 0x00, 0x22, 0x22, 0x22,
+    0x1C, 0x08, 0x08, 0x08, 0x00, 0x7E, 0x02, 0x04, 0x18, 0x20, 0x40,
+    0x7E, 0x00, 0x3C, 0x20, 0x20, 0x20, 0x20, 0x20, 0x3C, 0x00, 0x00,
+    0x40, 0x20, 0x10, 0x08, 0x04, 0x02, 0x00, 0x3C, 0x04, 0x04, 0x04,
+    0x04, 0x04, 0x3C, 0x00, 0x08, 0x14, 0x22, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0x10, 0x08,
+    0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x38, 0x04, 0x3C,
+    0x44, 0x3A, 0x00, 0x40, 0x40, 0x5C, 0x62, 0x42, 0x62, 0x5C, 0x00,
+    0x00, 0x00, 0x3C, 0x42, 0x40, 0x42, 0x3C, 0x00, 0x02, 0x02, 0x3A,
+    0x46, 0x42, 0x46, 0x3A, 0x00, 0x00, 0x00, 0x3C, 0x42, 0x7E, 0x40,
+    0x3C, 0x00, 0x0C, 0x12, 0x10, 0x7C, 0x10, 0x10, 0x10, 0x00, 0x00,
+    0x00, 0x3A, 0x46, 0x46, 0x3A, 0x02, 0x3C, 0x40, 0x40, 0x5C, 0x62,
+    0x42, 0x42, 0x42, 0x00, 0x08, 0x00, 0x18, 0x08, 0x08, 0x08, 0x1C,
+    0x00, 0x04, 0x00, 0x0C, 0x04, 0x04, 0x04, 0x44, 0x38, 0x40, 0x40,
+    0x44, 0x48, 0x50, 0x68, 0x44, 0x00, 0x18, 0x08, 0x08, 0x08, 0x08,
+    0x08, 0x1C, 0x00, 0x00, 0x00, 0x76, 0x49, 0x49, 0x49, 0x49, 0x00,
+    0x00, 0x00, 0x5C, 0x62, 0x42, 0x42, 0x42, 0x00, 0x00, 0x00, 0x3C,
+    0x42, 0x42, 0x42, 0x3C, 0x00, 0x00, 0x00, 0x5C, 0x62, 0x62, 0x5C,
+    0x40, 0x40, 0x00, 0x00, 0x3A, 0x46, 0x46, 0x3A, 0x02, 0x02, 0x00,
+    0x00, 0x5C, 0x62, 0x40, 0x40, 0x40, 0x00, 0x00, 0x00, 0x3E, 0x40,
+    0x3C, 0x02, 0x7C, 0x00, 0x10, 0x10, 0x7C, 0x10, 0x10, 0x12, 0x0C,
+    0x00, 0x00, 0x00, 0x42, 0x42, 0x42, 0x46, 0x3A, 0x00, 0x00, 0x00,
+    0x42, 0x42, 0x42, 0x24, 0x18, 0x00, 0x00, 0x00, 0x41, 0x49, 0x49,
+    0x49, 0x36, 0x00, 0x00, 0x00, 0x42, 0x24, 0x18, 0x24, 0x42, 0x00,
+    0x00, 0x00, 0x42, 0x42, 0x46, 0x3A, 0x02, 0x3C, 0x00, 0x00, 0x7E,
+    0x04, 0x18, 0x20, 0x7E, 0x00, 0x0C, 0x10, 0x10, 0x20, 0x10, 0x10,
+    0x0C, 0x00, 0x08, 0x08, 0x08, 0x00, 0x08, 0x08, 0x08, 0x00, 0x30,
+    0x08, 0x08, 0x04, 0x08, 0x08, 0x30, 0x00, 0x30, 0x49, 0x06, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x08, 0x08, 0x3E, 0x08, 0x08, 0x00, 0x3E,
+    0x00, 0x08, 0x1C, 0x3E, 0x7F, 0x7F, 0x3E, 0x08, 0x08, 0x00, 0x36,
+    0x7F, 0x7F, 0x3E, 0x1C, 0x08, 0x00, 0x08, 0x1C, 0x3E, 0x7F, 0x3E,
+    0x1C, 0x08, 0x00, 0x1C, 0x1C, 0x08, 0x6B, 0x7F, 0x6B, 0x08, 0x1C,
+    0x3C, 0x42, 0xA5, 0x81, 0xA5, 0x99, 0x42, 0x3C, 0x3C, 0x42, 0xA5,
+    0x81, 0x99, 0xA5, 0x42, 0x3C, 0x04, 0x08, 0x10, 0x20, 0x10, 0x08,
+    0x04, 0x3C, 0x20, 0x10, 0x08, 0x04, 0x08, 0x10, 0x20, 0x3C, 0x00,
+    0x00, 0x39, 0x46, 0x46, 0x39, 0x00, 0x00, 0x3C, 0x22, 0x3C, 0x22,
+    0x22, 0x3C, 0x20, 0x40, 0x61, 0x12, 0x14, 0x18, 0x10, 0x30, 0x30,
+    0x00, 0x0C, 0x12, 0x10, 0x0C, 0x0A, 0x12, 0x0C, 0x00, 0x06, 0x08,
+    0x10, 0x3E, 0x10, 0x08, 0x06, 0x00, 0x16, 0x06, 0x08, 0x10, 0x1C,
+    0x02, 0x0C, 0x00, 0x2C, 0x52, 0x12, 0x12, 0x02, 0x02, 0x02, 0x00,
+    0x08, 0x14, 0x22, 0x3E, 0x22, 0x14, 0x08, 0x00, 0x00, 0x20, 0x20,
+    0x20, 0x22, 0x22, 0x1C, 0x00, 0x40, 0x48, 0x50, 0x60, 0x50, 0x4A,
+    0x44, 0x00, 0x20, 0x10, 0x10, 0x10, 0x18, 0x24, 0x42, 0x00, 0x24,
+    0x24, 0x24, 0x24, 0x3A, 0x20, 0x20, 0x00, 0x00, 0x00, 0x32, 0x12,
+    0x14, 0x18, 0x10, 0x00, 0x08, 0x1C, 0x20, 0x18, 0x20, 0x1C, 0x02,
+    0x0C, 0x00, 0x18, 0x24, 0x42, 0x42, 0x24, 0x18, 0x00, 0x00, 0x00,
+    0x3E, 0x54, 0x14, 0x14, 0x14, 0x00, 0x00, 0x18, 0x24, 0x24, 0x38,
+    0x20, 0x20, 0x00, 0x00, 0x00, 0x3E, 0x48, 0x48, 0x30, 0x00, 0x00,
+    0x00, 0x00, 0x3E, 0x48, 0x08, 0x08, 0x08, 0x08, 0x00, 0x02, 0x64,
+    0x24, 0x24, 0x24, 0x18, 0x00, 0x08, 0x1C, 0x2A, 0x2A, 0x2A, 0x1C,
+    0x08, 0x00, 0x00, 0x00, 0x62, 0x14, 0x08, 0x14, 0x23, 0x00, 0x49,
+    0x2A, 0x2A, 0x1C, 0x08, 0x08, 0x08, 0x00, 0x00, 0x00, 0x22, 0x41,
+    0x49, 0x49, 0x36, 0x00, 0x1C, 0x22, 0x41, 0x41, 0x63, 0x22, 0x63,
+    0x00, 0x1E, 0x10, 0x10, 0x10, 0x50, 0x30, 0x10, 0x00, 0x00, 0x08,
+    0x00, 0x3E, 0x00, 0x08, 0x00, 0x00, 0x7E, 0x20, 0x10, 0x0C, 0x10,
+    0x20, 0x7E, 0x00, 0x00, 0x32, 0x4C, 0x00, 0x32, 0x4C, 0x00, 0x00,
+    0x00, 0x00, 0x08, 0x14, 0x22, 0x7F, 0x00, 0x00, 0x04, 0x08, 0x10,
+    0x10, 0x08, 0x08, 0x10, 0x20, 0x01, 0x02, 0x7F, 0x08, 0x7F, 0x20,
+    0x40, 0x00, 0x10, 0x08, 0x04, 0x3E, 0x10, 0x08, 0x04, 0x00, 0x3F,
+    0x52, 0x24, 0x08, 0x12, 0x25, 0x42, 0x00, 0x1C, 0x22, 0x41, 0x41,
+    0x7F, 0x22, 0x22, 0x63, 0x00, 0x00, 0x36, 0x49, 0x49, 0x36, 0x00,
+    0x00, 0x00, 0x02, 0x04, 0x48, 0x50, 0x60, 0x40, 0x00, 0x1E, 0x20,
+    0x1C, 0x22, 0x1C, 0x02, 0x3C, 0x00, 0x22, 0x55, 0x2A, 0x14, 0x2A,
+    0x55, 0x22, 0x00, 0x3C, 0x42, 0x9D, 0xA1, 0xA1, 0x9D, 0x42, 0x3C,
+    0x42, 0x24, 0x18, 0x24, 0x18, 0x24, 0x42, 0x00, 0x3E, 0x4A, 0x4A,
+    0x3A, 0x0A, 0x0A, 0x0A, 0x0A, 0x08, 0x1C, 0x2A, 0x28, 0x2A, 0x1C,
+    0x08, 0x00, 0x3C, 0x7A, 0xA5, 0xA5, 0xB9, 0xA9, 0x66, 0x3C, 0x5F,
+    0x60, 0x63, 0x62, 0x64, 0x7B, 0x60, 0x5F, 0xFF, 0x04, 0x03, 0xFC,
+    0x02, 0xFC, 0x04, 0xF8, 0xFC, 0x02, 0xFC, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x78, 0x44, 0x44, 0x78, 0x4A, 0x44, 0x4B, 0x00, 0x61, 0x82,
+    0x84, 0x68, 0x16, 0x29, 0x49, 0x86, 0x0E, 0x06, 0x0A, 0x70, 0x90,
+    0x90, 0x60, 0x00, 0x1C, 0x22, 0x22, 0x22, 0x1C, 0x08, 0x1C, 0x08,
+    0x0E, 0x08, 0x08, 0x0E, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xE3, 0xDD,
+    0xF3, 0xF7, 0xFF, 0xF7, 0xFF, 0x08, 0x14, 0x08, 0x1C, 0x2A, 0x08,
+    0x14, 0x22, 0x08, 0x14, 0x08, 0x1C, 0x2A, 0x14, 0x3E, 0x14, 0x08,
+    0x14, 0x22, 0x22, 0x22, 0x2A, 0x36, 0x22, 0x22, 0x14, 0x08, 0x3E,
+    0x08, 0x3E, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x20, 0x50, 0x20,
+    0x00, 0x1C, 0x10, 0x10, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x04, 0x04, 0x04, 0x1C, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x20, 0x10, 0x00, 0x00, 0x00, 0x00, 0x18, 0x18, 0x00, 0x00, 0x00,
+    0x00, 0x7E, 0x02, 0x7E, 0x02, 0x04, 0x08, 0x00, 0x00, 0x00, 0x3E,
+    0x02, 0x0C, 0x08, 0x10, 0x00, 0x00, 0x00, 0x02, 0x04, 0x0C, 0x14,
+    0x04, 0x00, 0x00, 0x00, 0x08, 0x3E, 0x22, 0x04, 0x08, 0x00, 0x00,
+    0x00, 0x00, 0x3E, 0x08, 0x08, 0x3E, 0x00, 0x00, 0x00, 0x04, 0x3E,
+    0x0C, 0x14, 0x24, 0x00, 0x00, 0x00, 0x10, 0x3E, 0x12, 0x14, 0x10,
+    0x00, 0x00, 0x00, 0x00, 0x1C, 0x04, 0x04, 0x3E, 0x00, 0x00, 0x00,
+    0x3C, 0x04, 0x1C, 0x04, 0x3C, 0x00, 0x00, 0x00, 0x00, 0x2A, 0x2A,
+    0x02, 0x0C, 0x00, 0x00, 0x00, 0x00, 0x3E, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x7E, 0x02, 0x16, 0x18, 0x10, 0x20, 0x00, 0x02, 0x04, 0x08,
+    0x18, 0x28, 0x48, 0x08, 0x00, 0x10, 0x7E, 0x42, 0x02, 0x02, 0x04,
+    0x08, 0x00, 0x00, 0x3E, 0x08, 0x08, 0x08, 0x08, 0x3E, 0x00, 0x04,
+    0x7E, 0x0C, 0x14, 0x24, 0x44, 0x04, 0x00, 0x10, 0x7E, 0x12, 0x12,
+    0x12, 0x22, 0x44, 0x00, 0x08, 0x7F, 0x08, 0x7F, 0x08, 0x08, 0x08,
+    0x00, 0x20, 0x3E, 0x22, 0x42, 0x04, 0x08, 0x10, 0x00, 0x20, 0x3E,
+    0x48, 0x08, 0x08, 0x08, 0x10, 0x00, 0x00, 0x7E, 0x02, 0x02, 0x02,
+    0x02, 0x7E, 0x00, 0x24, 0x7E, 0x24, 0x24, 0x04, 0x08, 0x10, 0x00,
+    0x00, 0x60, 0x02, 0x62, 0x02, 0x04, 0x38, 0x00, 0x00, 0x3E, 0x02,
+    0x04, 0x08, 0x14, 0x22, 0x00, 0x10, 0x7E, 0x11, 0x12, 0x10, 0x10,
+    0x0E, 0x00, 0x00, 0x42, 0x22, 0x02, 0x04, 0x08, 0x10, 0x00, 0x20,
+    0x3E, 0x22, 0x52, 0x0C, 0x08, 0x10, 0x00, 0x04, 0x38, 0x08, 0x7E,
+    0x08, 0x08, 0x10, 0x00, 0x00, 0x52, 0x52, 0x52, 0x02, 0x04, 0x08,
+    0x00, 0x00, 0x3C, 0x00, 0x7E, 0x08, 0x08, 0x10, 0x00, 0x10, 0x10,
+    0x10, 0x18, 0x14, 0x12, 0x10, 0x00, 0x08, 0x08, 0x7E, 0x08, 0x08,
+    0x08, 0x10, 0x00, 0x00, 0x3C, 0x00, 0x00, 0x00, 0x00, 0x7E, 0x00,
+    0x00, 0x3E, 0x02, 0x14, 0x08, 0x14, 0x22, 0x00, 0x10, 0x7E, 0x04,
+    0x08, 0x14, 0x32, 0x50, 0x00, 0x08, 0x08, 0x08, 0x08, 0x08, 0x10,
+    0x20, 0x00, 0x00, 0x10, 0x08, 0x44, 0x42, 0x42, 0x42, 0x00, 0x40,
+    0x40, 0x7E, 0x40, 0x40, 0x40, 0x3E, 0x00, 0x7E, 0x02, 0x02, 0x02,
+    0x02, 0x04, 0x18, 0x00, 0x00, 0x10, 0x28, 0x44, 0x02, 0x01, 0x01,
+    0x00, 0x08, 0x7F, 0x08, 0x08, 0x49, 0x49, 0x08, 0x00, 0x7E, 0x02,
+    0x02, 0x24, 0x18, 0x08, 0x04, 0x00, 0x40, 0x3C, 0x00, 0x3C, 0x00,
+    0x7C, 0x02, 0x00, 0x08, 0x10, 0x20, 0x40, 0x42, 0x7E, 0x02, 0x00,
+    0x02, 0x02, 0x14, 0x08, 0x14, 0x20, 0x40, 0x00, 0x00, 0x7E, 0x10,
+    0x7E, 0x10, 0x10, 0x0E, 0x00, 0x10, 0x10, 0x7E, 0x12, 0x14, 0x10,
+    0x10, 0x00, 0x00, 0x3C, 0x04, 0x04, 0x04, 0x04, 0x7F, 0x00, 0x3E,
+    0x02, 0x02, 0x3E, 0x02, 0x02, 0x3E, 0x00, 0x3C, 0x00, 0x7E, 0x02,
+    0x02, 0x04, 0x08, 0x00, 0x44, 0x44, 0x44, 0x44, 0x04, 0x08, 0x10,
+    0x00, 0x10, 0x50, 0x50, 0x50, 0x52, 0x54, 0x58, 0x00, 0x40, 0x40,
+    0x40, 0x44, 0x48, 0x50, 0x60, 0x00, 0x00, 0x7E, 0x42, 0x42, 0x42,
+    0x42, 0x7E, 0x00, 0x00, 0x7E, 0x42, 0x42, 0x02, 0x04, 0x08, 0x00,
+    0x00, 0x60, 0x00, 0x02, 0x02, 0x04, 0x78, 0x00, 0x10, 0x48, 0x20,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x20, 0x50, 0x20, 0x00, 0x00, 0x00,
+    0x00, 0x00,
+};
+
+// Video mode specifics follow
+
+int SetPaletteEntryAlwaysFails(const VideoModeEntry* modeEntry, int palette, int which, float r, float g, float b)
+{
+    return 0;
+}
+
+void SetPaletteEntry(int palette, int which, float r, float g, float b)
+{
+    NTSCSetPaletteEntry(palette, which, r, g, b);
+}
+
+int SetRowPalette(const struct VideoModeEntry* modeEntry, int row, int palette)
+{
+    return NTSCSetPaletteForRow(row, palette);
+}
+
+const static float HSVFor4BitPalette[][3] = {
+    { M_PI / 3 * 0, 1.0, 1.0 },
+    { M_PI / 3 * 1, 1.0, 1.0 },
+    { M_PI / 3 * 2, 1.0, 1.0 },
+    { M_PI / 3 * 3, 1.0, 1.0 },
+    { M_PI / 3 * 4, 1.0, 1.0 },
+    { M_PI / 3 * 5, 1.0, 1.0 },
+    { M_PI / 3 * 0, 0.25, 0.5 },
+    { M_PI / 3 * 1, 0.25, 0.5 },
+    { M_PI / 3 * 2, 0.25, 0.5 },
+    { M_PI / 3 * 3, 0.25, 0.5 },
+    { M_PI / 3 * 4, 0.25, 0.5 },
+    { M_PI / 3 * 5, 0.25, 0.5 },
+    { 0.0, 0.0, 1.0},
+    { 0.0, 0.0, .66},
+    { 0.0, 0.0, .33},
+    { 0.0, 0.0, .0},
+};
+
+static void MakeDefaultPalette(int whichPalette, int paletteSize)
+{
+    switch(paletteSize) {
+        case -1: break; /* no palette */
+        case 16:  {
+            for(int entry = 0; entry < 16; entry++) {
+                const float *hsv = HSVFor4BitPalette[entry];
+                float r, g, b;
+                HSVToRGB3f(hsv[0], hsv[1], hsv[2], &r, &g, &b);
+                SetPaletteEntry(whichPalette, entry, r, g, b);
+            }
+            break;
+        }
+        case 256: {
+            // H3S2V3
+            for(unsigned int entry = 0; entry < 256; entry++) {
+                float h = ((entry >> 5) & 7) / 7.0f * M_PI * 2;
+                float s = ((entry >> 3) & 3) / 3.0f;
+                float v = ((entry >> 0) & 7) / 7.0f;
+                float r, g, b;
+                HSVToRGB3f(h, s, v, &r, &g, &b);
+                SetPaletteEntry(whichPalette, entry, r, g, b);
+            }
+        }
+    }
+}
+
+
+// ----------------------------------------
+// plain 40x24 black-on-white textport
+
+#define TextportPlain40x24Width 40
+#define TextportPlain40x24Height 24
+#define TextportPlain40x24TopTick 44
+#define TextportPlain40x24LeftTick 196
+
+int TextportPlain40x24CursorX = 0;
+int TextportPlain40x24CursorY = 0;
+int TextportPlain40x24CursorFlash = 1;
+
+// Textport video mode structs
+const static VideoTextportInfo TextportPlain40x24Info = {
+    TextportPlain40x24Width, TextportPlain40x24Height,
+    TEXT_8BIT_BLACK_ON_WHITE,
+};
+
+void TextportPlain40x24Setup(const VideoModeEntry *modeEntry)
+{
+    /* const VideoTextportInfo *info = (VideoTextportInfo*)info_; */
+    NTSCFillBlankLine(NTSCBlankLine, 0);        /* monochrome text */
+}
+
+void TextportPlain40x24GetParameters(const VideoModeEntry *modeEntry, void *params_)
+{
+    const VideoTextportInfo *info = (VideoTextportInfo*)modeEntry->info;
+    VideoTextportParameters *params = (VideoTextportParameters*)params_;
+    params->base = VRAM;
+    params->cursorX = &TextportPlain40x24CursorX;
+    params->cursorY = &TextportPlain40x24CursorY;
+    params->rowSize = info->width;
+}
+
+void TextportPlain40x24FillRow(int frameNumber, int lineNumber, unsigned char *rowBuffer)
+{
+    int rowWithinArea = (lineNumber % 263) - TextportPlain40x24TopTick;
+    int charRow = rowWithinArea / font8x8Height;
+    int charPixelY = (rowWithinArea % font8x8Height);
+
+    int invert = (TextportPlain40x24CursorFlash == 0) || (frameNumber / 15 % 2 == 0);
+
+// XXX this code assumes font width <= 8 and each row padded out to a byte
+    if((rowWithinArea >= 0) && (charRow < TextportPlain40x24Height)) {
+
+        // Clear pixels outside of text area 
+        memset(rowBuffer + NTSCHSyncClocks + NTSCBackPorchClocks, NTSCWhite, TextportPlain40x24LeftTick - NTSCHSyncClocks - NTSCBackPorchClocks);
+        int clocksToRightTextEdge = TextportPlain40x24LeftTick + TextportPlain40x24Width * font8x8Width * 2;
+        memset(rowBuffer + clocksToRightTextEdge, NTSCWhite, ROW_SAMPLES - clocksToRightTextEdge - NTSCFrontPorchClocks);
+
+        for(int charCol = 0; charCol < TextportPlain40x24Width; charCol++) {
+            unsigned char whichChar = VRAM[charRow * TextportPlain40x24Width + charCol];
+            unsigned char charRowBits = font8x8Bits[whichChar * font8x8Height + charPixelY];
+            unsigned char *charPixels = rowBuffer + TextportPlain40x24LeftTick + charCol * font8x8Width * 2;
+            int invertThis = (charCol == TextportPlain40x24CursorX && charRow == TextportPlain40x24CursorY && invert);
+            for(int charPixelX = 0; charPixelX < font8x8Width; charPixelX++) {
+                int pixel = (charRowBits & (0x80 >> charPixelX)) ^ invertThis;
+                charPixels[charPixelX * 2 + 0] = pixel ? NTSCBlack : NTSCWhite;
+                charPixels[charPixelX * 2 + 1] = pixel ? NTSCBlack : NTSCWhite;
+            }
+        }
+    } else {
+        memset(rowBuffer + NTSCHSyncClocks + NTSCBackPorchClocks, NTSCWhite, ROW_SAMPLES - NTSCHSyncClocks - NTSCBackPorchClocks - NTSCFrontPorchClocks);
+    }
+}
+
+// ----------------------------------------
+// plain 80x24 white-on-black textport
+
+// 196, 832, 44, 236
+#define TextportPlain80x24Width 80
+#define TextportPlain80x24Height 24
+#define TextportPlain80x24TopTick 44
+#define TextportPlain80x24LeftTick 196
+
+int TextportPlain80x24CursorX = 0;
+int TextportPlain80x24CursorY = 0;
+int TextportPlain80x24CursorFlash = 0;
+
+// Textport video mode structs
+const static VideoTextportInfo TextportPlain80x24Info = {
+    TextportPlain80x24Width, TextportPlain80x24Height,
+    TEXT_8BIT_WHITE_ON_BLACK,
+};
+
+void TextportPlain80x24Setup(const VideoModeEntry *modeEntry)
+{
+    /* const VideoTextportInfo *info = (VideoTextportInfo*)info_; */
+    NTSCFillBlankLine(NTSCBlankLine, 0);        /* monochrome text */
+}
+
+void TextportPlain80x24GetParameters(const VideoModeEntry *modeEntry, void *params_)
+{
+    const VideoTextportInfo *info = (VideoTextportInfo*)modeEntry->info;
+    VideoTextportParameters *params = (VideoTextportParameters*)params_;
+    params->base = VRAM;
+    params->cursorX = &TextportPlain80x24CursorX;
+    params->cursorY = &TextportPlain80x24CursorY;
+    params->rowSize = info->width;
+}
+
+int TextportPlain80x24SetPaletteEntry(const VideoModeEntry* modeEntry, int palette, int which, float r, float g, float b)
+{
+    return 0;
+}
+
+void TextportPlain80x24FillRow(int frameNumber, int lineNumber, unsigned char *rowBuffer)
+{
+    int rowWithinArea = (lineNumber % 263) - TextportPlain80x24TopTick;
+    int charRow = rowWithinArea / font8x8Height;
+    int charPixelY = (rowWithinArea % font8x8Height);
+
+    int invert = (TextportPlain80x24CursorFlash == 0) || (frameNumber / 15 % 2 == 0);
+
+// XXX this code assumes font width <= 8 and each row padded out to a byte
+    if((rowWithinArea >= 0) && (charRow < TextportPlain80x24Height)) {
+        // Clear pixels outside of text area 
+        memset(rowBuffer + NTSCHSyncClocks + NTSCBackPorchClocks, NTSCBlack, TextportPlain80x24LeftTick - NTSCHSyncClocks - NTSCBackPorchClocks);
+        int clocksToRightTextEdge = TextportPlain80x24LeftTick + TextportPlain80x24Width * font8x8Width;
+        memset(rowBuffer + clocksToRightTextEdge, NTSCBlack, ROW_SAMPLES - clocksToRightTextEdge - NTSCFrontPorchClocks);
+
+        for(int charCol = 0; charCol < TextportPlain80x24Width; charCol++) {
+            unsigned char whichChar = VRAM[charRow * TextportPlain80x24Width + charCol];
+            unsigned char charRowBits = font8x8Bits[whichChar * font8x8Height + charPixelY];
+            unsigned char *charPixels = rowBuffer + TextportPlain80x24LeftTick + charCol * font8x8Width;
+            int invertThis = (charCol == TextportPlain80x24CursorX && charRow == TextportPlain80x24CursorY && invert);
+            if(invertThis) {
+                for(int charPixelX = 0; charPixelX < font8x8Width; charPixelX++) {
+                    int pixel = charRowBits & (0x80 >> charPixelX);
+                    charPixels[charPixelX] = pixel ? NTSCBlack : NTSCWhite;
+                }
+            } else {
+                for(int charPixelX = 0; charPixelX < font8x8Width; charPixelX++) {
+                    int pixel = charRowBits & (0x80 >> charPixelX);
+                    charPixels[charPixelX] = pixel ? NTSCWhite : NTSCBlack;
+                }
+            }
+        }
+    } else {
+        memset(rowBuffer + NTSCHSyncClocks + NTSCBackPorchClocks, NTSCBlack, ROW_SAMPLES - NTSCHSyncClocks - NTSCBackPorchClocks - NTSCFrontPorchClocks);
+    }
+}
+
+// ----------------------------------------
+// highest-horizontal-resolution 8-bit framebuffer
+
+#define MAX_RES_MODE_WIDTH 384
+#define MAX_RES_MODE_HEIGHT 128
+
+#if VRAM_PIXMAP_AVAIL < MAX_RES_MODE_WIDTH * MAX_RES_MODE_HEIGHT
+#error Available VRAM has become too small for MaxRes mode.
+#endif
+
+// Pixmap video mode structs
+const static VideoPixmapInfo ColorMaxResInfo = {
+    MAX_RES_MODE_WIDTH, MAX_RES_MODE_HEIGHT,
+    VideoPixmapFormat::PALETTE_8BIT,
+    256,
+    1,
+    1,
+    225, 225 / 4 * 3 * MAX_RES_MODE_WIDTH / MAX_RES_MODE_HEIGHT,
+};
+
+void ColorMaxResSetup(const VideoModeEntry *modeEntry)
+{
+    /* const VideoTextportInfo *info = (VideoTextportInfo*)info_; */
+    NTSCFillBlankLine(NTSCBlankLine, 1);
+    MakeDefaultPalette(0, 256);
+    for(int y = 0; y < MAX_RES_MODE_HEIGHT; y++) {
+        NTSCGetPaletteForRowPointer()[y] = 0;
+    }
+}
+
+void ColorMaxResGetParameters(const VideoModeEntry *modeEntry, void *params_)
+{
+    const VideoPixmapInfo *info = (VideoPixmapInfo*)modeEntry->info;
+    VideoPixmapParameters *params = (VideoPixmapParameters*)params_;
+    params->base = VRAM;
+    params->rowSize = info->width;
+}
+
+// 510 and 142 are magic numbers measured for middle of screen
+#define ColorMaxResLeft (512 - MAX_RES_MODE_WIDTH / 2) 
+#define ColorMaxResWidth MAX_RES_MODE_WIDTH
+#define ColorMaxResTop (142 - MAX_RES_MODE_HEIGHT / 2)
+#define ColorMaxResHeight MAX_RES_MODE_HEIGHT
+
+int ColorMaxResSetPaletteEntry(const VideoModeEntry* modeEntry, int palette, int which, float r, float g, float b)
+{
+    if(which >= 256) {
+        return 1;
+    }
+    SetPaletteEntry(palette, which, r, g, b);
+    return 0;
+}
+
+// XXX assumes ColorMaxResLeft is /4 and ColorMaxResWidth /4
+void ColorMaxResFillRow(int frameNumber, int lineNumber, unsigned char *rowBuffer)
+{
+    int rowWithin = (lineNumber % 263) - ColorMaxResTop;
+
+    if((rowWithin >= 0) && (rowWithin < ColorMaxResHeight)) {
+
+        // Clear pixels outside of text area 
+        memset(rowBuffer + NTSCHSyncClocks + NTSCBackPorchClocks, NTSCBlack, ColorMaxResLeft - NTSCHSyncClocks - NTSCBackPorchClocks);
+        int clocksToRightEdge = ColorMaxResLeft + ColorMaxResWidth;
+        memset(rowBuffer + clocksToRightEdge, NTSCBlack, ROW_SAMPLES - clocksToRightEdge - NTSCFrontPorchClocks);
+
+        unsigned char *srcPixels = VRAM + rowWithin * ColorMaxResWidth;
+        ntsc_wave_t *dstWords = (ntsc_wave_t*)(rowBuffer + ColorMaxResLeft);
+
+        ntsc_wave_t *palette = NTSCGetPaletteForRow(rowWithin);
+
+        for(int i = 0; i < ColorMaxResWidth; i += 4) {
+            uint32_t waveformPart0 = palette[srcPixels[i + 0]] & 0x000000FF;
+            uint32_t waveformPart1 = palette[srcPixels[i + 1]] & 0x0000FF00;
+            uint32_t waveformPart2 = palette[srcPixels[i + 2]] & 0x00FF0000;
+            uint32_t waveformPart3 = palette[srcPixels[i + 3]] & 0xFF000000;
+            *dstWords++ = waveformPart0 | waveformPart1 | waveformPart2 | waveformPart3;
+        }
+    } else {
+        memset(rowBuffer + NTSCHSyncClocks + NTSCBackPorchClocks, NTSCBlack, ROW_SAMPLES - NTSCHSyncClocks - NTSCBackPorchClocks - NTSCFrontPorchClocks);
+    }
+}
+
+
+// ----------------------------------------
+// 175 x 230 8-bit pixmap display
+// to be /4, 164, 864, 27, 257
+
+#define Color175x230Left 164
+#define Color175x230WidthSamples 700
+#define Color175x230WidthPixels (Color175x230WidthSamples / 4)
+#define Color175x230PixelRowBytes Color175x230WidthPixels
+#define Color175x230Top 27
+#define Color175x230Height 230
+
+#if VRAM_PIXMAP_AVAIL < Color175x230PixelRowBytes * Color175x230Height
+#error Available VRAM has become too small for Color175x230 mode.
+#endif
+
+// Pixmap video mode structs
+const static VideoPixmapInfo Color175x230Info = {
+    Color175x230WidthSamples / 4, Color175x230Height,
+    VideoPixmapFormat::PALETTE_8BIT,
+    256,
+    1,
+    1,
+    900, 520,
+};
+
+void Color175x230Setup(const VideoModeEntry *modeEntry)
+{
+    /* const VideoTextportInfo *info = (VideoTextportInfo*)info_; */
+    NTSCFillBlankLine(NTSCBlankLine, 1);
+    MakeDefaultPalette(0, 256);
+    for(int y = 0; y < Color175x230Height; y++) {
+        NTSCGetPaletteForRowPointer()[y] = 0;
+    }
+}
+
+void Color175x230GetParameters(const VideoModeEntry *modeEntry, void *params_)
+{
+    const VideoPixmapInfo *info = (VideoPixmapInfo*)modeEntry->info;
+    VideoPixmapParameters *params = (VideoPixmapParameters*)params_;
+    params->base = VRAM;
+    params->rowSize = info->width;
+}
+
+int Color175x230SetPaletteEntry(const VideoModeEntry* modeEntry, int palette, int which, float r, float g, float b)
+{
+    if(which >= 256) {
+        return 1;
+    }
+    SetPaletteEntry(palette, which, r, g, b);
+    return 0;
+}
+
+void Color175x230FillRow(int frameNumber, int lineNumber, unsigned char *rowBuffer)
+{
+    int rowWithin = (lineNumber % 263) - Color175x230Top;
+
+    if((rowWithin >= 0) && (rowWithin < Color175x230Height)) {
+
+        // Clear pixels outside of text area 
+        memset(rowBuffer + NTSCHSyncClocks + NTSCBackPorchClocks, NTSCBlack, Color175x230WidthSamples - NTSCHSyncClocks - NTSCBackPorchClocks);
+        int clocksToRightEdge = Color175x230Left + Color175x230WidthSamples;
+        memset(rowBuffer + clocksToRightEdge, NTSCBlack, ROW_SAMPLES - clocksToRightEdge - NTSCFrontPorchClocks);
+
+        unsigned char *srcPixels = VRAM + rowWithin * (Color175x230WidthSamples / 4);
+        unsigned char *dstBytes = rowBuffer + Color175x230Left;
+
+        ntsc_wave_t *palette = NTSCGetPaletteForRow(rowWithin);
+
+        for(int i = 0; i < Color175x230WidthSamples; i += 4) {
+            int p = srcPixels[i / 4];
+            ntsc_wave_t word = palette[p];
+            *(ntsc_wave_t*)(dstBytes + i) = word;
+        }
+    } else {
+        memset(rowBuffer + NTSCHSyncClocks + NTSCBackPorchClocks, NTSCBlack, ROW_SAMPLES - NTSCHSyncClocks - NTSCBackPorchClocks - NTSCFrontPorchClocks);
+    }
+}
+
+// ----------------------------------------
+// 160 x 192 8-bit bitmap display
+// 196, 832, 44, 236
+
+#define Color160x192Left 196
+#define Color160x192WidthSamples 640
+#define Color160x192WidthPixels (Color160x192WidthSamples / 4)
+#define Color160x192PixelRowBytes Color160x192WidthPixels
+#define Color160x192Top 44
+#define Color160x192Height 192
+
+#if VRAM_PIXMAP_AVAIL < Color160x192PixelRowBytes * Color160x192Height
+#error Available VRAM has become too small for Color160x192 mode.
+#endif
+
+// Pixmap video mode structs
+const static VideoPixmapInfo Color160x192Info = {
+    Color160x192WidthSamples / 4, Color160x192Height,
+    VideoPixmapFormat::PALETTE_8BIT,
+    256,
+    1,
+    0,
+    900, 520,
+};
+
+void Color160x192Setup(const VideoModeEntry *modeEntry)
+{
+    /* const VideoTextportInfo *info = (VideoTextportInfo*)info_; */
+    NTSCFillBlankLine(NTSCBlankLine, 1);
+    MakeDefaultPalette(0, 256);
+    for(int y = 0; y < Color160x192Height; y++) {
+        NTSCGetPaletteForRowPointer()[y] = 0;
+    }
+}
+
+void Color160x192GetParameters(const VideoModeEntry *modeEntry, void *params_)
+{
+    const VideoPixmapInfo *info = (VideoPixmapInfo*)modeEntry->info;
+    VideoPixmapParameters *params = (VideoPixmapParameters*)params_;
+    params->base = VRAM;
+    params->rowSize = info->width;
+}
+
+int Color160x192SetPaletteEntry(const VideoModeEntry* modeEntry, int palette, int which, float r, float g, float b)
+{
+    if(which >= 256) {
+        return 1;
+    }
+    SetPaletteEntry(palette, which, r, g, b);
+    return 0;
+}
+
+void Color160x192FillRow(int frameNumber, int lineNumber, unsigned char *rowBuffer)
+{
+    int rowWithin = (lineNumber % 263) - Color160x192Top;
+
+    if((rowWithin >= 0) && (rowWithin < Color160x192Height)) {
+
+        // Clear pixels outside of text area 
+        memset(rowBuffer + NTSCHSyncClocks + NTSCBackPorchClocks, NTSCBlack, Color160x192WidthSamples - NTSCHSyncClocks - NTSCBackPorchClocks);
+        int clocksToRightEdge = Color160x192Left + Color160x192WidthSamples;
+        memset(rowBuffer + clocksToRightEdge, NTSCBlack, ROW_SAMPLES - clocksToRightEdge - NTSCFrontPorchClocks);
+
+        unsigned char *srcPixels = VRAM + rowWithin * (Color160x192WidthSamples / 4);
+        unsigned char *dstBytes = rowBuffer + Color160x192Left;
+
+        ntsc_wave_t *palette = NTSCGetPaletteForRow(rowWithin);
+
+        for(int i = 0; i < Color160x192WidthSamples; i += 4) {
+            int p = srcPixels[i / 4];
+            ntsc_wave_t word = palette[p];
+            *(ntsc_wave_t*)(dstBytes + i) = word;
+        }
+    } else {
+        memset(rowBuffer + NTSCHSyncClocks + NTSCBackPorchClocks, NTSCBlack, ROW_SAMPLES - NTSCHSyncClocks - NTSCBackPorchClocks - NTSCFrontPorchClocks);
+    }
+}
+
+// ----------------------------------------
+// 350 x 230 4-bit bitmap display
+// to be /4, 164, 864, 27, 257
+
+#define Color350x230Left 164
+#define Color350x230WidthSamples 700
+#define Color350x230WidthPixels (Color350x230WidthSamples / 2)
+#define Color350x230PixelRowBytes (Color350x230WidthPixels / 2)
+#define Color350x230Top 27
+#define Color350x230Height 230
+
+#if VRAM_PIXMAP_AVAIL < Color350x230PixelRowBytes * Color350x230Height
+#error Available VRAM has become too small for Color350x230 mode.
+#endif
+
+// Pixmap video mode structs
+const static VideoPixmapInfo Color350x230Info = {
+    Color350x230WidthSamples / 2, Color350x230Height,
+    VideoPixmapFormat::PALETTE_4BIT,
+    16,
+    1,
+    1,
+    450, 520,
+};
+
+void Color350x230Setup(const VideoModeEntry *modeEntry)
+{
+    /* const VideoTextportInfo *info = (VideoTextportInfo*)info_; */
+    NTSCFillBlankLine(NTSCBlankLine, 1);
+    MakeDefaultPalette(0, 16);
+    for(int y = 0; y < Color350x230Height; y++) {
+        NTSCGetPaletteForRowPointer()[y] = 0;
+    }
+}
+
+void Color350x230GetParameters(const VideoModeEntry *modeEntry, void *params_)
+{
+    const VideoPixmapInfo *info = (VideoPixmapInfo*)modeEntry->info;
+    VideoPixmapParameters *params = (VideoPixmapParameters*)params_;
+    params->base = VRAM;
+    params->rowSize = info->width / 2;
+}
+
+int Color350x230SetPaletteEntry(const VideoModeEntry* modeEntry, int palette, int which, float r, float g, float b)
+{
+    if(which >= 16) {
+        return 1;
+    }
+    SetPaletteEntry(palette, which, r, g, b);
+    return 0;
+}
+
+void Color350x230FillRow(int frameNumber, int lineNumber, unsigned char *rowBuffer)
+{
+    int rowWithin = (lineNumber % 263) - Color350x230Top;
+
+    if((rowWithin >= 0) && (rowWithin < Color350x230Height)) {
+
+        // Clear pixels outside of text area 
+        memset(rowBuffer + NTSCHSyncClocks + NTSCBackPorchClocks, NTSCBlack, Color350x230WidthSamples - NTSCHSyncClocks - NTSCBackPorchClocks);
+        int clocksToRightEdge = Color350x230Left + Color350x230WidthSamples;
+        memset(rowBuffer + clocksToRightEdge, NTSCBlack, ROW_SAMPLES - clocksToRightEdge - NTSCFrontPorchClocks);
+
+        unsigned char *srcPixels = VRAM + rowWithin * (Color350x230WidthSamples / 4);
+        unsigned char *dstBytes = rowBuffer + Color350x230Left;
+
+        ntsc_wave_t *palette = NTSCGetPaletteForRow(rowWithin);
+
+        for(int i = 0; i < Color350x230WidthSamples / 2; i++) { /* loop over pixels */
+
+            int colWithin = i;
+            int whichByte = colWithin / 2;
+            int whichNybble = colWithin % 2;
+            int p = (srcPixels[whichByte] >> (whichNybble * 4)) & 0xF;
+
+            ntsc_wave_t word = palette[p];
+            uint32_t waveWordShift = whichNybble * 16;
+
+            *dstBytes++ = (word >> (waveWordShift + 0)) & 0xFF;
+            *dstBytes++ = (word >> (waveWordShift + 8)) & 0xFF;
+        }
+    } else {
+        memset(rowBuffer + NTSCHSyncClocks + NTSCBackPorchClocks, NTSCBlack, ROW_SAMPLES - NTSCHSyncClocks - NTSCBackPorchClocks - NTSCFrontPorchClocks);
+    }
+}
+
+// ----------------------------------------
+// 320 x 192 4-bit bitmap display
+// 196, 832, 44, 236
+
+#define Color320x192Left 196
+#define Color320x192WidthSamples 640
+#define Color320x192WidthPixels (Color320x192WidthSamples / 2)
+#define Color320x192PixelRowBytes (Color320x192WidthPixels / 2)
+#define Color320x192Top 44
+#define Color320x192Height 192
+
+#if VRAM_PIXMAP_AVAIL < Color320x192PixelRowBytes * Color320x192Height
+#error Available VRAM has become too small for Color320x192 mode.
+#endif
+
+// Pixmap video mode structs
+const static VideoPixmapInfo Color320x192Info = {
+    Color320x192WidthSamples / 2, Color320x192Height,
+    VideoPixmapFormat::PALETTE_4BIT,
+    16,
+    1,
+    0,
+    450, 520,
+};
+
+void Color320x192Setup(const VideoModeEntry *modeEntry)
+{
+    /* const VideoTextportInfo *info = (VideoTextportInfo*)info_; */
+    NTSCFillBlankLine(NTSCBlankLine, 1);
+    MakeDefaultPalette(0, 16);
+    for(int y = 0; y < Color320x192Height; y++) {
+        NTSCGetPaletteForRowPointer()[y] = 0;
+    }
+}
+
+void Color320x192GetParameters(const VideoModeEntry *modeEntry, void *params_)
+{
+    const VideoPixmapInfo *info = (VideoPixmapInfo*)modeEntry->info;
+    VideoPixmapParameters *params = (VideoPixmapParameters*)params_;
+    params->base = VRAM;
+    params->rowSize = info->width / 2;
+}
+
+int Color320x192SetPaletteEntry(const VideoModeEntry* modeEntry, int palette, int which, float r, float g, float b)
+{
+    if(which >= 16) {
+        return 1;
+    }
+    SetPaletteEntry(palette, which, r, g, b);
+    return 0;
+}
+
+void Color320x192FillRow(int frameNumber, int lineNumber, unsigned char *rowBuffer)
+{
+    int rowWithin = (lineNumber % 263) - Color320x192Top;
+
+    if((rowWithin >= 0) && (rowWithin < Color320x192Height)) {
+
+        // Clear pixels outside of text area 
+        memset(rowBuffer + NTSCHSyncClocks + NTSCBackPorchClocks, NTSCBlack, Color320x192WidthSamples - NTSCHSyncClocks - NTSCBackPorchClocks);
+        int clocksToRightEdge = Color320x192Left + Color320x192WidthSamples;
+        memset(rowBuffer + clocksToRightEdge, NTSCBlack, ROW_SAMPLES - clocksToRightEdge - NTSCFrontPorchClocks);
+
+        unsigned char *srcPixels = VRAM + rowWithin * (Color320x192WidthSamples / 4);
+        unsigned char *dstBytes = rowBuffer + Color320x192Left;
+
+        ntsc_wave_t *palette = NTSCGetPaletteForRow(rowWithin);
+
+        for(int i = 0; i < Color320x192WidthSamples / 2; i++) { /* loop over pixels */
+
+            int colWithin = i;
+            int whichByte = colWithin / 2;
+            int whichNybble = colWithin % 2;
+            int p = (srcPixels[whichByte] >> (whichNybble * 4)) & 0xF;
+
+            ntsc_wave_t word = palette[p];
+            uint32_t waveWordShift = whichNybble * 16;
+
+            *dstBytes++ = (word >> (waveWordShift + 0)) & 0xFF;
+            *dstBytes++ = (word >> (waveWordShift + 8)) & 0xFF;
+        }
+    } else {
+        memset(rowBuffer + NTSCHSyncClocks + NTSCBackPorchClocks, NTSCBlack, ROW_SAMPLES - NTSCHSyncClocks - NTSCBackPorchClocks - NTSCFrontPorchClocks);
+    }
+}
+
+// ----------------------------------------
+// 704 x 230 4-gray pixmap display
+// to be /8, 164, 868, 27, 257
+
+#define Grayscale704x230Left 164
+#define Grayscale704x230WidthSamples 704
+#define Grayscale704x230WidthPixels Grayscale704x230WidthSamples
+#define Grayscale704x230PixelRowBytes (Grayscale704x230WidthPixels / 4)
+#define Grayscale704x230Top 27
+#define Grayscale704x230Height 230
+
+#if VRAM_SIZE < Grayscale704x230PixelRowBytes * Grayscale704x230Height
+#error Available VRAM has become too small for Grayscale704x230 mode.
+#endif
+
+// Pixmap video mode structs
+const static VideoPixmapInfo Grayscale704x230Info = {
+    Grayscale704x230WidthSamples, Grayscale704x230Height,
+    VideoPixmapFormat::GRAY_2BIT,
+    -1,
+    0,
+    1,
+    225, 520,
+};
+
+void Grayscale704x230Setup(const VideoModeEntry *modeEntry)
+{
+    /* const VideoTextportInfo *info = (VideoTextportInfo*)info_; */
+    NTSCFillBlankLine(NTSCBlankLine, 0);        /* grayscale mode */
+}
+
+void Grayscale704x230GetParameters(const VideoModeEntry *modeEntry, void *params_)
+{
+    const VideoPixmapInfo *info = (VideoPixmapInfo*)modeEntry->info;
+    VideoPixmapParameters *params = (VideoPixmapParameters*)params_;
+    params->base = VRAM;
+    params->rowSize = info->width / 4;
+}
+
+void Grayscale704x230FillRow(int frameNumber, int lineNumber, unsigned char *rowBuffer)
+{
+    int rowWithin = (lineNumber % 263) - Grayscale704x230Top;
+
+    if((rowWithin >= 0) && (rowWithin < Grayscale704x230Height)) {
+
+        // Clear pixels outside of text area 
+        memset(rowBuffer + NTSCHSyncClocks + NTSCBackPorchClocks, NTSCBlack, Grayscale704x230WidthSamples - NTSCHSyncClocks - NTSCBackPorchClocks);
+        int clocksToRightEdge = Grayscale704x230Left + Grayscale704x230WidthSamples;
+        memset(rowBuffer + clocksToRightEdge, NTSCBlack, ROW_SAMPLES - clocksToRightEdge - NTSCFrontPorchClocks);
+
+        unsigned char *bitmapRow = VRAM + rowWithin * (Grayscale704x230WidthSamples / 4);
+        ntsc_wave_t *dstWords = (ntsc_wave_t*)(rowBuffer + Grayscale704x230Left);
+
+        /* 1 byte is 4 pixels and each pixel is one samples wide so 1 byte yields 4 samples */
+        for(int i = 0; i < Grayscale704x230WidthSamples / 4; i++) {
+            unsigned char byte = *bitmapRow++;
+
+            unsigned char sample0 = NTSCBlack + (NTSCWhite - NTSCBlack) * ((byte >> 0) & 0x03) / 0x03;
+            unsigned char sample1 = NTSCBlack + (NTSCWhite - NTSCBlack) * ((byte >> 2) & 0x03) / 0x03;
+            unsigned char sample2 = NTSCBlack + (NTSCWhite - NTSCBlack) * ((byte >> 4) & 0x03) / 0x03;
+            unsigned char sample3 = NTSCBlack + (NTSCWhite - NTSCBlack) * ((byte >> 6) & 0x03) / 0x03;
+
+            *dstWords++ = (sample3 << 24) | (sample2 << 16) | (sample1 << 8) | sample0;
+        }
+    } else {
+        memset(rowBuffer + NTSCHSyncClocks + NTSCBackPorchClocks, NTSCBlack, ROW_SAMPLES - NTSCHSyncClocks - NTSCBackPorchClocks - NTSCFrontPorchClocks);
+    }
+}
+
+// ----------------------------------------
+// 704 x 230 monochrome bitmap display
+// to be /8, 164, 868, 27, 257
+
+#define Bitmap704x230Left 164
+#define Bitmap704x230WidthSamples 704
+#define Bitmap704x230WidthPixels Bitmap704x230WidthSamples
+#define Bitmap704x230PixelRowBytes (Bitmap704x230WidthPixels / 8)
+#define Bitmap704x230Top 27
+#define Bitmap704x230Height 230
+
+#if VRAM_SIZE < Bitmap704x230PixelRowBytes * Bitmap704x230Height
+#error Available VRAM has become too small for Bitmap704x230 mode.
+#endif
+
+// Pixmap video mode structs
+const static VideoPixmapInfo Bitmap704x230Info = {
+    Bitmap704x230WidthSamples, Bitmap704x230Height,
+    VideoPixmapFormat::BITMAP,
+    -1,
+    0,
+    1,
+    225, 520,
+};
+
+void Bitmap704x230Setup(const VideoModeEntry *modeEntry)
+{
+    /* const VideoTextportInfo *info = (VideoTextportInfo*)info_; */
+    NTSCFillBlankLine(NTSCBlankLine, 0);        /* monochrome text */
+}
+
+void Bitmap704x230GetParameters(const VideoModeEntry *modeEntry, void *params_)
+{
+    const VideoPixmapInfo *info = (VideoPixmapInfo*)modeEntry->info;
+    VideoPixmapParameters *params = (VideoPixmapParameters*)params_;
+    params->base = VRAM;
+    params->rowSize = info->width / 8;
+}
+
+uint32_t SECTION_CCMRAM NybblesToMasks[16] = {
+    0x00000000,
+    0x000000FF,
+    0x0000FF00,
+    0x0000FFFF,
+    0x00FF0000,
+    0x00FF00FF,
+    0x00FFFF00,
+    0x00FFFFFF,
+    0xFF000000,
+    0xFF0000FF,
+    0xFF00FF00,
+    0xFF00FFFF,
+    0xFFFF0000,
+    0xFFFF00FF,
+    0xFFFFFF00,
+    0xFFFFFFFF,
+};
+
+void Bitmap704x230FillRow(int frameNumber, int lineNumber, unsigned char *rowBuffer)
+{
+    int rowWithin = (lineNumber % 263) - Bitmap704x230Top;
+
+    if((rowWithin >= 0) && (rowWithin < Bitmap704x230Height)) {
+
+        // Clear pixels outside of text area 
+        memset(rowBuffer + NTSCHSyncClocks + NTSCBackPorchClocks, NTSCBlack, Bitmap704x230WidthSamples - NTSCHSyncClocks - NTSCBackPorchClocks);
+        int clocksToRightEdge = Bitmap704x230Left + Bitmap704x230WidthSamples;
+        memset(rowBuffer + clocksToRightEdge, NTSCBlack, ROW_SAMPLES - clocksToRightEdge - NTSCFrontPorchClocks);
+
+        unsigned char *bitmapRow = VRAM + rowWithin * (Bitmap704x230WidthSamples / 8);
+        ntsc_wave_t *dstWords = (ntsc_wave_t*)(rowBuffer + Bitmap704x230Left);
+
+        ntsc_wave_t whiteLong = (NTSCWhite << 24) | (NTSCWhite << 16) | (NTSCWhite << 8) | (NTSCWhite << 0);
+        ntsc_wave_t blackLong = (NTSCBlack << 24) | (NTSCBlack << 16) | (NTSCBlack << 8) | (NTSCBlack << 0);
+
+        for(int i = 0; i < Bitmap704x230WidthSamples; i += 8) {
+            int whiteMask = 0;
+            unsigned char byte = bitmapRow[i / 8];
+            whiteMask = NybblesToMasks[byte & 0xF];
+            *dstWords++ = (whiteLong & whiteMask) | (blackLong & ~whiteMask);
+            whiteMask = NybblesToMasks[(byte >> 4) & 0xF];
+            *dstWords++ = (whiteLong & whiteMask) | (blackLong & ~whiteMask);
+        }
+    } else {
+        memset(rowBuffer + NTSCHSyncClocks + NTSCBackPorchClocks, NTSCBlack, ROW_SAMPLES - NTSCHSyncClocks - NTSCBackPorchClocks - NTSCFrontPorchClocks);
+    }
+}
+
+// ----------------------------------------
+// 640 x 192 monochrome bitmap display
+// 196, 832, 44, 236
+
+#define Bitmap640x192Left 196
+#define Bitmap640x192WidthSamples 640
+#define Bitmap640x192WidthPixels Bitmap640x192WidthSamples
+#define Bitmap640x192PixelRowBytes (Bitmap640x192WidthPixels / 8)
+#define Bitmap640x192Top 44
+#define Bitmap640x192Height 192
+
+#if VRAM_SIZE < Bitmap640x192PixelRowBytes * Bitmap640x192Height
+#error Available VRAM has become too small for Bitmap640x192 mode.
+#endif
+
+// Pixmap video mode structs
+const static VideoPixmapInfo Bitmap640x192Info = {
+    Bitmap640x192WidthSamples, Bitmap640x192Height,
+    VideoPixmapFormat::BITMAP,
+    -1,
+    0,
+    0,
+    225, 520,
+};
+
+void Bitmap640x192Setup(const VideoModeEntry *modeEntry)
+{
+    /* const VideoTextportInfo *info = (VideoTextportInfo*)info_; */
+    NTSCFillBlankLine(NTSCBlankLine, 0);        /* monochrome text */
+}
+
+void Bitmap640x192GetParameters(const VideoModeEntry *modeEntry, void *params_)
+{
+    const VideoPixmapInfo *info = (VideoPixmapInfo*)modeEntry->info;
+    VideoPixmapParameters *params = (VideoPixmapParameters*)params_;
+    params->base = VRAM;
+    params->rowSize = info->width / 8;
+}
+
+void Bitmap640x192FillRow(int frameNumber, int lineNumber, unsigned char *rowBuffer)
+{
+    int rowWithin = (lineNumber % 263) - Bitmap640x192Top;
+
+    if((rowWithin >= 0) && (rowWithin < Bitmap640x192Height)) {
+
+        // Clear pixels outside of text area 
+        memset(rowBuffer + NTSCHSyncClocks + NTSCBackPorchClocks, NTSCBlack, Bitmap640x192WidthSamples - NTSCHSyncClocks - NTSCBackPorchClocks);
+        int clocksToRightEdge = Bitmap640x192Left + Bitmap640x192WidthSamples;
+        memset(rowBuffer + clocksToRightEdge, NTSCBlack, ROW_SAMPLES - clocksToRightEdge - NTSCFrontPorchClocks);
+
+        unsigned char *bitmapRow = VRAM + rowWithin * (Bitmap640x192WidthSamples / 8);
+        ntsc_wave_t *dstWords = (ntsc_wave_t*)(rowBuffer + Bitmap640x192Left);
+
+        ntsc_wave_t whiteLong = (NTSCWhite << 24) | (NTSCWhite << 16) | (NTSCWhite << 8) | (NTSCWhite << 0);
+        ntsc_wave_t blackLong = (NTSCBlack << 24) | (NTSCBlack << 16) | (NTSCBlack << 8) | (NTSCBlack << 0);
+
+        for(int i = 0; i < Bitmap640x192WidthSamples; i += 8) {
+            int whiteMask = 0;
+            unsigned char byte = bitmapRow[i / 8];
+            whiteMask = NybblesToMasks[byte & 0xF];
+            *dstWords++ = (whiteLong & whiteMask) | (blackLong & ~whiteMask);
+            whiteMask = NybblesToMasks[(byte >> 4) & 0xF];
+            *dstWords++ = (whiteLong & whiteMask) | (blackLong & ~whiteMask);
+        }
+    } else {
+        memset(rowBuffer + NTSCHSyncClocks + NTSCBackPorchClocks, NTSCBlack, ROW_SAMPLES - NTSCHSyncClocks - NTSCBackPorchClocks - NTSCFrontPorchClocks);
+    }
+}
+
+//--------------------------------------------------------------------------
+// Mode where scanlines are composed of sequential segments
+
+// WidthSamples *and* Left are Expected to be multiple of 4 by FillRow
+#define SegmentedVideoWidthSamples 704
+#define SegmentedVideoLeft (512 - SegmentedVideoWidthSamples / 2)
+#define SegmentedVideoTop (27 * 2)
+#define SegmentedVideoHeight (230 * 2)
+
+#define SegmentedVideoEvenTop (SegmentedVideoTop / 2)
+#define SegmentedVideoEvenBottom (SegmentedVideoTop / 2 + SegmentedVideoHeight / 2)
+#define SegmentedVideoOddTop (NTSC_FRAME_LINES / 2 + SegmentedVideoTop / 2 + 1)
+#define SegmentedVideoOddBottom (NTSC_FRAME_LINES / 2 + SegmentedVideoTop / 2 + SegmentedVideoHeight / 2 + 1)
+
+// Pixmap video mode structs
+const static VideoSegmentedInfo SegmentedInfo = {
+    SegmentedVideoWidthSamples,
+    SegmentedVideoHeight,
+    SegmentedVideoWidthSamples,
+    SegmentedVideoHeight,
+};
+
+int SegmentedSetScanlines(int scanlineCount, VideoSegmentedScanline *scanlines);
+
+void SegmentedGetParameters(const VideoModeEntry *modeEntry, void *params_)
+{
+    VideoSegmentedParameters *params = (VideoSegmentedParameters*)params_;
+    params->setScanlines = SegmentedSetScanlines;
+}
+
+#pragma pack(push, 2)
+typedef struct SegmentedSegmentPrivate {
+    uint16_t pixelCount;
+    uint16_t y0, i0, q0;        // Fixed 12
+    uint16_t dy, di, dq;        // Fixed 12
+} SegmentedSegmentPrivate;
+#pragma pack(pop)
+
+int16_t FloatToFixed12(float f)
+{
+    return f * 4096;
+}
+
+float Fixed12ToFloat(int16_t u)
+{
+    return u / 4096.0f;
+}
+
+typedef struct SegmentedVideoPrivate {
+    SegmentedSegmentPrivate *scanlineSegments[SegmentedVideoHeight];
+} SegmentedVideoPrivate;
+
+#define MAX_SEGMENT_COUNT ((VRAM_SIZE - sizeof(SegmentedVideoPrivate)) / sizeof(SegmentedSegmentPrivate))
+
+void SegmentedSetup(const VideoModeEntry *modeEntry)
+{
+    NTSCFillBlankLine(NTSCBlankLine, 1);
+
+    SegmentedVideoPrivate *pvt = (SegmentedVideoPrivate *)VRAM;
+    SegmentedSegmentPrivate *dstseg = (SegmentedSegmentPrivate *)(VRAM + sizeof(SegmentedVideoPrivate));
+
+    // If we're in vertical retrace, wait to enter visible area
+    while(
+        !((lineNumber > SegmentedVideoEvenTop && lineNumber < SegmentedVideoEvenBottom) ||
+        (lineNumber > SegmentedVideoOddTop && lineNumber < SegmentedVideoOddBottom)));
+    // Once we're in visible area, wait to come around again to beginning of vertical retrace
+    while(
+        (lineNumber > SegmentedVideoEvenTop && lineNumber < SegmentedVideoEvenBottom) ||
+        (lineNumber > SegmentedVideoOddTop && lineNumber < SegmentedVideoOddBottom));
+
+    for(int i = 0; i < SegmentedVideoHeight; i++) {
+        pvt->scanlineSegments[i] = dstseg;
+        dstseg->pixelCount = SegmentedVideoWidthSamples;
+        // RGBToYIQ(0, .5, 0, &dstseg->y0, &dstseg->i0, &dstseg->q0); // XXX why did this hang?
+        dstseg->y0 = FloatToFixed12(.295);
+        dstseg->i0 = FloatToFixed12(-.13865);
+        dstseg->q0 = FloatToFixed12(-.26255);
+        dstseg->dy = FloatToFixed12(0);
+        dstseg->di = FloatToFixed12(0);
+        dstseg->dq = FloatToFixed12(0);
+        dstseg++;
+    }
+}
+
+// All scanlines must have 1 or more segments and cover only every pixel on scanline
+int SegmentedSetScanlines(int scanlineCount, VideoSegmentedScanline *scanlines)
+{
+    if(scanlineCount != SegmentedVideoHeight) {
+        return 1; // INVALID - incorrect number of scanlines
+    }
+    size_t totalSegments = 0;
+    for(int i = 0; i < scanlineCount; i++) {
+        totalSegments += scanlines[i].segmentCount;
+        int totalPixels = 0;
+        for(int j = 0; j < scanlines[i].segmentCount; j++) {
+            totalPixels += scanlines[i].segments[j].pixelCount;
+        }
+        if(totalPixels < SegmentedVideoWidthSamples) {
+            return 3; // INVALID - didn't cover line
+        }
+        if(totalPixels > SegmentedVideoWidthSamples) {
+            return 4; // INVALID - exceeded length of line
+        }
+    }
+    if(totalSegments > MAX_SEGMENT_COUNT - 1) {
+        return 2; // INVALID - too many segments
+    }
+
+    SegmentedVideoPrivate *pvt = (SegmentedVideoPrivate *)VRAM;
+    SegmentedSegmentPrivate *dstseg = (SegmentedSegmentPrivate *)(VRAM + sizeof(SegmentedVideoPrivate));
+    SegmentedSegmentPrivate *stopper = dstseg + MAX_SEGMENT_COUNT - 1;
+
+    stopper->pixelCount = SegmentedVideoWidthSamples;
+    float Y, I, Q;
+    RGBToYIQ(1.0f, 0.0f, 0.0f, &Y, &I, &Q);
+    stopper->y0 = FloatToFixed12(Y);
+    stopper->i0 = FloatToFixed12(I);
+    stopper->q0 = FloatToFixed12(Q);
+    stopper->dy = FloatToFixed12(0);
+    stopper->di = FloatToFixed12(0);
+    stopper->dq = FloatToFixed12(0);
+
+    // Hope that we can update this entire buffer in the non-visible region!
+    // Roughly 390000 cycles or around 850 cycles per row, probably
+    // enough to convert frame as long we don't do per-line divides
+    // or trig.
+    // If we're in vertical retrace, wait to enter visible area
+    if(1) {
+        while(
+            !((lineNumber > SegmentedVideoEvenTop && lineNumber < SegmentedVideoEvenBottom) ||
+            (lineNumber > SegmentedVideoOddTop && lineNumber < SegmentedVideoOddBottom)));
+        // Once we're in visible area, wait to come around again to beginning of vertical retrace
+        while(
+            (lineNumber > SegmentedVideoEvenTop && lineNumber < SegmentedVideoEvenBottom) ||
+            (lineNumber > SegmentedVideoOddTop && lineNumber < SegmentedVideoOddBottom));
+    }
+
+    for(int i = 0; i < scanlineCount; i++) {
+        SegmentedSegmentPrivate *actual = dstseg;
+        pvt->scanlineSegments[i] = stopper; // Hopefully we'll see a glitch instead of a crash
+        // printf("scanline %d, %d count\n", i, scanlines[i].segmentCount);  SERIAL_flush();
+        if(1) {
+            for(int j = 0; j < scanlines[i].segmentCount; j++) {
+                VideoSegmentedScanlineSegment *srcseg = scanlines[i].segments + j;
+                dstseg->pixelCount = srcseg->pixelCount;
+                // printf("    segment %d: count %d\n", j, dstseg->pixelCount);  SERIAL_flush();
+                float Y0, I0, Q0;
+                float Y1, I1, Q1;
+                // XXX type of segment
+                RGBToYIQ(srcseg->g.r0, srcseg->g.g0, srcseg->g.b0, &Y0, &I0, &Q0);
+                RGBToYIQ(srcseg->g.r1, srcseg->g.g1, srcseg->g.b1, &Y1, &I1, &Q1);
+                dstseg->y0 = FloatToFixed12(Y0);
+                dstseg->i0 = FloatToFixed12(I0);
+                dstseg->q0 = FloatToFixed12(Q0);
+                dstseg->dy = FloatToFixed12((Y1 - Y0) / srcseg->pixelCount);
+                dstseg->di = FloatToFixed12((I1 - I0) / srcseg->pixelCount);
+                dstseg->dq = FloatToFixed12((Q1 - Q0) / srcseg->pixelCount);
+                dstseg ++;
+            }
+            pvt->scanlineSegments[i] = actual;
+        }
+    }
+    // printf("line number at end: %d\n", lineNumber);
+
+    return 0;
+}
+
+__attribute__((hot,flatten)) void SegmentedFillRow(int frameNumber, int lineNumber, unsigned char *rowBuffer)
+{
+    int rowWithin = (lineNumber % 263) * 2 + lineNumber / 263 - SegmentedVideoTop;
+
+    if((rowWithin >= 0) && (rowWithin < SegmentedVideoHeight)) {
+
+        // Clear pixels outside of area 
+        // XXX These two memsets may be as much as 10% of scanline render time
+        memset(rowBuffer + NTSCHSyncClocks + NTSCBackPorchClocks, NTSCBlack, SegmentedVideoWidthSamples - NTSCHSyncClocks - NTSCBackPorchClocks);
+        int clocksToRightEdge = SegmentedVideoLeft + SegmentedVideoWidthSamples;
+        memset(rowBuffer + clocksToRightEdge, NTSCBlack, ROW_SAMPLES - clocksToRightEdge - NTSCFrontPorchClocks);
+
+        SegmentedVideoPrivate *pvt = (SegmentedVideoPrivate *)VRAM;
+
+        SegmentedSegmentPrivate *segmentp = pvt->scanlineSegments[rowWithin];
+
+        unsigned char *dstSamples = rowBuffer + SegmentedVideoLeft;
+        int pixelsRemaining = SegmentedVideoWidthSamples;
+        while(pixelsRemaining > 0) {
+            int pixelCount = segmentp->pixelCount;
+            float Y = Fixed12ToFloat(segmentp->y0);
+            float I = Fixed12ToFloat(segmentp->i0);
+            float Q = Fixed12ToFloat(segmentp->q0);
+            float dy = Fixed12ToFloat(segmentp->dy);
+            float di = Fixed12ToFloat(segmentp->di);
+            float dq = Fixed12ToFloat(segmentp->dq);
+
+            int pixel = SegmentedVideoWidthSamples - pixelsRemaining;
+            while((pixelCount > 0) && ((pixel % 4) != 0)) {
+                uint32_t value = NTSCYIQDegreesToDAC(Y, I, Q, (pixel % 4) * 90);
+                *dstSamples++ = value;
+                Y += dy; I += di; Q += dq;
+                pixelCount --;
+                pixel++;
+            }
+
+            for(int i = 0; i < pixelCount / 4; i++) {
+
+                ntsc_wave_t waveform = NTSCYIQDegreesToDAC(Y, I, Q, 0) << 0;
+                Y += dy; I += di; Q += dq;
+
+                waveform |= NTSCYIQDegreesToDAC(Y, I, Q, 90) << 8;
+                Y += dy; I += di; Q += dq;
+
+                waveform |= NTSCYIQDegreesToDAC(Y, I, Q, 180) << 16;
+                Y += dy; I += di; Q += dq;
+
+                waveform |= NTSCYIQDegreesToDAC(Y, I, Q, 270) << 24;
+                Y += dy; I += di; Q += dq;
+
+                *(ntsc_wave_t*)dstSamples = waveform;
+                dstSamples += 4;
+            }
+
+            pixelCount = pixelCount % 4;
+
+            pixel = 0;
+            while(pixelCount > 0) {
+                uint32_t value = NTSCYIQDegreesToDAC(Y, I, Q, (pixel % 4) * 90);
+                *dstSamples++ = value;
+                Y += dy; I += di; Q += dq;
+                pixelCount --;
+                pixel++;
+            }
+
+            pixelsRemaining -= segmentp->pixelCount;
+            segmentp++;
+        }
+    } else {
+        memset(rowBuffer + NTSCHSyncClocks + NTSCBackPorchClocks, NTSCBlack, ROW_SAMPLES - NTSCHSyncClocks - NTSCBackPorchClocks - NTSCFrontPorchClocks);
+    }
+}
+
+
+// ----------------------------------------
+// Wolfenstein-style renderer
+
+#define WolfensteinWidthSamples 704
+#define WolfensteinLeft (512 - WolfensteinWidthSamples / 2)
+#define WolfensteinTop (27 * 2)
+#define WolfensteinHeight (230 * 2)
+
+// Pixmap video mode structs
+const static VideoWolfensteinInfo WolfensteinInfo = {
+    WolfensteinWidthSamples,
+    WolfensteinHeight,
+};
+
+#define WolfensteinTextureWidth 64
+#define WolfensteinTextureHeight 64
+
+#ifdef __cplusplus
+extern "C" {
+#endif /* __cplusplus */
+
+extern const uint32_t *Textures[8];
+
+#ifdef __cplusplus
+};
+#endif /* __cplusplus */
+
+
+typedef struct WolfensteinPrivateElement {
+    const ntsc_wave_t *textureColumnBase;
+    int wholePixelsHalfHeight;
+    uint32_t textureRowOffsetFixed16;
+    uint32_t textureRowPerScanRowFixed16;
+    uint32_t bright;
+} WolfensteinPrivateElement;
+
+
+float clamp(float x, float a, float b)
+{
+    return (x < a) ? a : ((x > b) ? b : x);
+}
+
+void WolfensteinSetElements(VideoWolfensteinElement* row);
+
+void WolfensteinGetParameters(const VideoModeEntry *modeEntry, void *params_)
+{
+    //const VideoWolfensteinInfo *info = (VideoWolfensteinInfo*)modeEntry->info;
+    VideoWolfensteinParameters *params = (VideoWolfensteinParameters*)params_;
+    params->setElements = WolfensteinSetElements;
+}
+
+void WolfensteinSetup(const VideoModeEntry *modeEntry)
+{
+    NTSCFillBlankLine(NTSCBlankLine, 1);
+    WolfensteinPrivateElement *pvt = (WolfensteinPrivateElement *)VRAM;
+    for(int i = 0; i < WolfensteinWidthSamples; i++) {
+        pvt[i].wholePixelsHalfHeight = 20;
+        pvt[i].bright = 0;
+        pvt[i].textureRowPerScanRowFixed16 = 0;
+        pvt[i].textureRowOffsetFixed16 = 0;
+        pvt[i].textureColumnBase = Textures[0];
+    }
+}
+
+// Must be "width" elements
+void WolfensteinSetElements(VideoWolfensteinElement* row)
+{
+    WolfensteinPrivateElement *pvt = (WolfensteinPrivateElement *)VRAM;
+    // XXX race condition - need to swap between buffers atomically
+    for(int i = 0; i < WolfensteinWidthSamples; i++) {
+        pvt[i].bright = row[i].bright * 0x10101010;
+        float pixelsHalfHeight = row[i].height / 2.0f * WolfensteinHeight;
+        pvt[i].wholePixelsHalfHeight = roundf(pixelsHalfHeight);
+        if(pvt[i].wholePixelsHalfHeight == 0) {
+            pvt[i].textureRowPerScanRowFixed16 = 0;
+        } else {
+            pvt[i].textureRowPerScanRowFixed16 = 65536 * WolfensteinTextureHeight / (pixelsHalfHeight * 2);
+        }
+        pvt[i].textureRowOffsetFixed16 = pvt[i].textureRowPerScanRowFixed16 * (row[i].height / 2.0f * WolfensteinHeight - (pvt[i].wholePixelsHalfHeight - .5));
+        float s = clamp(row[i].textureS, 0, .99999);
+
+        int lod = 5;
+        int offset = 0;
+        int mipStorageHeight = 64;
+        while((lod > 0) && (pvt[i].textureRowPerScanRowFixed16 > 65536) /* && (pvt[i].dsdx > 1.0f) */ ) {
+            offset += WolfensteinTextureWidth * mipStorageHeight;
+            mipStorageHeight /= 2;
+            pvt[i].textureRowPerScanRowFixed16 /= 2;
+            pvt[i].textureRowOffsetFixed16 /= 2;
+            // pvt[i].dsdx /= 2;
+            lod -= 1;
+            s /= 2;
+        }
+
+        pvt[i].textureColumnBase = Textures[row[i].id] + offset + (int)floorf(s * WolfensteinTextureWidth);
+
+        if(0) printf("%d : %p, %d, %lu\n",
+            i,
+            pvt[i].textureColumnBase,
+            pvt[i].wholePixelsHalfHeight,
+            pvt[i].textureRowPerScanRowFixed16);
+    }
+}
+
+void WolfensteinFillRow(int frameNumber, int lineNumber, unsigned char *rowBuffer)
+{
+    int rowWithin = (lineNumber % 263) * 2 + lineNumber / 263 - WolfensteinTop;
+
+    if((rowWithin >= 0) && (rowWithin < WolfensteinHeight)) {
+
+        // Clear pixels outside of area 
+        // XXX These two memsets may be as much as 10% of scanline render time.
+        memset(rowBuffer + NTSCHSyncClocks + NTSCBackPorchClocks, NTSCBlack, WolfensteinWidthSamples - NTSCHSyncClocks - NTSCBackPorchClocks);
+        int clocksToRightEdge = WolfensteinLeft + WolfensteinWidthSamples;
+        memset(rowBuffer + clocksToRightEdge, NTSCBlack, ROW_SAMPLES - clocksToRightEdge - NTSCFrontPorchClocks);
+
+        int rowFromMiddle = rowWithin - WolfensteinHeight / 2;
+
+        ntsc_wave_t *dstWords = (ntsc_wave_t*)(rowBuffer + WolfensteinLeft);
+        WolfensteinPrivateElement *el = (WolfensteinPrivateElement *)VRAM;
+
+        for(int i = 0; i < WolfensteinWidthSamples; i += 4, el += 4) {
+            ntsc_wave_t waveform;
+            int withinWall = rowFromMiddle + el[0].wholePixelsHalfHeight;
+            if(withinWall >= 0 && rowFromMiddle < el[0].wholePixelsHalfHeight) {
+                int textureRow = (withinWall * el[0].textureRowPerScanRowFixed16 + el[0].textureRowOffsetFixed16) / 65536;
+                waveform = (el[0].textureColumnBase[textureRow * WolfensteinTextureWidth] + el[0].bright) & 0x000000FF;
+            } else {
+                waveform = 0x00000070;
+            }
+            withinWall = rowFromMiddle + el[1].wholePixelsHalfHeight;
+            if(withinWall >= 0 && rowFromMiddle < el[1].wholePixelsHalfHeight) {
+                int textureRow = (withinWall * el[1].textureRowPerScanRowFixed16 + el[1].textureRowOffsetFixed16) / 65536;
+                waveform |= (el[1].textureColumnBase[textureRow * WolfensteinTextureWidth] + el[1].bright) & 0x0000FF00;
+            } else {
+                waveform |= 0x00007000;
+            }
+            withinWall = rowFromMiddle + el[2].wholePixelsHalfHeight;
+            if(withinWall >= 0 && rowFromMiddle < el[2].wholePixelsHalfHeight) {
+                int textureRow = (withinWall * el[2].textureRowPerScanRowFixed16 + el[2].textureRowOffsetFixed16) / 65536;
+                waveform |= (el[2].textureColumnBase[textureRow * WolfensteinTextureWidth] + el[2].bright) & 0x00FF0000;
+            } else {
+                waveform |= 0x00700000;
+            }
+            withinWall = rowFromMiddle + el[3].wholePixelsHalfHeight;
+            if(withinWall >= 0 && rowFromMiddle < el[3].wholePixelsHalfHeight) {
+                int textureRow = (withinWall * el[3].textureRowPerScanRowFixed16 + el[3].textureRowOffsetFixed16) / 65536;
+                waveform |= (el[3].textureColumnBase[textureRow * WolfensteinTextureWidth] + el[3].bright) & 0xFF000000;
+            } else {
+                waveform |= 0x70000000;
+            }
+            *dstWords++ = waveform;
+        }
+    } else {
+        memset(rowBuffer + NTSCHSyncClocks + NTSCBackPorchClocks, NTSCBlack, ROW_SAMPLES - NTSCHSyncClocks - NTSCBackPorchClocks - NTSCFrontPorchClocks);
+    }
+}
+
+
+// ----------------------------------------
+// Video mode table
+
+const static VideoModeEntry NTSCModes[] =
+{
+    {
+        VIDEO_MODE_TEXTPORT,
+        &TextportPlain40x24Info,
+        TextportPlain40x24Setup,
+        TextportPlain40x24GetParameters,
+        TextportPlain40x24FillRow,
+        SetPaletteEntryAlwaysFails,
+        SetRowPalette,
+        NULL,
+    },
+    {
+        VIDEO_MODE_TEXTPORT,
+        &TextportPlain80x24Info,
+        TextportPlain80x24Setup,
+        TextportPlain80x24GetParameters,
+        TextportPlain80x24FillRow,
+        SetPaletteEntryAlwaysFails,
+        SetRowPalette,
+        NULL,
+    },
+    {
+        VIDEO_MODE_PIXMAP,
+        &Bitmap640x192Info,
+        Bitmap640x192Setup,
+        Bitmap640x192GetParameters,
+        Bitmap640x192FillRow,
+        SetPaletteEntryAlwaysFails,
+        SetRowPalette,
+        NULL,
+    },
+    {
+        VIDEO_MODE_PIXMAP,
+        &Color320x192Info,
+        Color320x192Setup,
+        Color320x192GetParameters,
+        Color320x192FillRow,
+        Color320x192SetPaletteEntry,
+        SetRowPalette,
+        NULL,
+    },
+    {
+        VIDEO_MODE_PIXMAP,
+        &Color160x192Info,
+        Color160x192Setup,
+        Color160x192GetParameters,
+        Color160x192FillRow,
+        Color160x192SetPaletteEntry,
+        SetRowPalette,
+        NULL,
+    },
+    {
+        VIDEO_MODE_PIXMAP,
+        &Bitmap704x230Info,
+        Bitmap704x230Setup,
+        Bitmap704x230GetParameters,
+        Bitmap704x230FillRow,
+        SetPaletteEntryAlwaysFails,
+        SetRowPalette,
+        NULL,
+    },
+    {
+        VIDEO_MODE_PIXMAP,
+        &Color350x230Info,
+        Color350x230Setup,
+        Color350x230GetParameters,
+        Color350x230FillRow,
+        Color350x230SetPaletteEntry,
+        SetRowPalette,
+        NULL,
+    },
+    {
+        VIDEO_MODE_PIXMAP,
+        &Color175x230Info,
+        Color175x230Setup,
+        Color175x230GetParameters,
+        Color175x230FillRow,
+        Color175x230SetPaletteEntry,
+        SetRowPalette,
+        NULL,
+    },
+    {
+        VIDEO_MODE_PIXMAP,
+        &ColorMaxResInfo,
+        ColorMaxResSetup,
+        ColorMaxResGetParameters,
+        ColorMaxResFillRow,
+        ColorMaxResSetPaletteEntry,
+        SetRowPalette,
+        NULL,
+    },
+    {
+        VIDEO_MODE_PIXMAP,
+        &Grayscale704x230Info,
+        Grayscale704x230Setup,
+        Grayscale704x230GetParameters,
+        Grayscale704x230FillRow,
+        SetPaletteEntryAlwaysFails,
+        SetRowPalette,
+        NULL,
+    },
+    {
+        VIDEO_MODE_WOLFENSTEIN,
+        &WolfensteinInfo,
+        WolfensteinSetup,
+        WolfensteinGetParameters,
+        WolfensteinFillRow,
+        SetPaletteEntryAlwaysFails,
+        SetRowPalette,
+        NULL,
+    },
+    {
+        VIDEO_MODE_SEGMENTS,
+        &SegmentedInfo,
+        SegmentedSetup,
+        SegmentedGetParameters,
+        SegmentedFillRow,
+        SetPaletteEntryAlwaysFails,
+        SetRowPalette,
+        NULL,
+    },
+};
+
+// Generic videomode functions
+
+int SECTION_CCMRAM CurrentVideoMode = -1;
+
+int VideoGetModeCount()
+{
+    return sizeof(NTSCModes) / sizeof(NTSCModes[0]);
+}
+
+enum VideoModeType VideoModeGetType(int n)
+{
+    return NTSCModes[n].type;
+}
+
+void VideoModeGetInfo(int n, void *info)
+{
+    const VideoModeEntry* entry = NTSCModes + n;
+    switch(entry->type) {
+        case VIDEO_MODE_PIXMAP: {
+            *(VideoPixmapInfo*)info = *(VideoPixmapInfo*)entry->info;
+            break;
+        }
+        case VIDEO_MODE_TEXTPORT: {
+            *(VideoTextportInfo*)info = *(VideoTextportInfo*)entry->info;
+            break;
+        }
+        case VIDEO_MODE_SEGMENTS: {
+            *(VideoSegmentedInfo*)info = *(VideoSegmentedInfo*)entry->info;
+            break;
+            break;
+        }
+        case VIDEO_MODE_DCT: {
+            break;
+        }
+        case VIDEO_MODE_WOZ: {
+            break;
+        }
+        case VIDEO_MODE_TMS9918A: {
+            break;
+        }
+        case VIDEO_MODE_VES: {
+            break;
+        }
+        case VIDEO_MODE_WOLFENSTEIN: {
+            *(VideoWolfensteinInfo*)info = *(VideoWolfensteinInfo*)entry->info;
+            break;
+        }
+    }
+}
+
+void VideoSetMode(int n)
+{
+    NTSCMode = NTSC_DISPLAY_BLACK;
+    const VideoModeEntry* entry = NTSCModes + n;
+    entry->setup(entry);
+    CurrentVideoMode = n;
+    VideoCurrentFillRow = entry->fillRow;
+    NTSCMode = NTSC_USE_VIDEO_MODE;
+}
+
+int VideoGetCurrentMode()
+{
+    return CurrentVideoMode;
+}
+
+void VideoModeGetParameters(void *params)
+{
+    const VideoModeEntry* entry = NTSCModes + CurrentVideoMode;
+    entry->getParameters(entry, params);
+}
+
+int VideoModeSetPaletteEntry(int palette, int which, float r, float g, float b)
+{
+    const VideoModeEntry* entry = NTSCModes + CurrentVideoMode;
+    return entry->setPaletteEntry(entry, palette, which, r, g, b);
+}
+
+int VideoModeSetRowPalette(int row, int palette)
+{
+    const VideoModeEntry* entry = NTSCModes + CurrentVideoMode;
+    return entry->setRowPalette(entry, row, palette);
+}
+
+void VideoModeWaitFrame()
+{
+    // NTSC won't actually go lineNumber >= 525...
+    while(!(lineNumber > 257 && lineNumber < 262) || (lineNumber > 520 && lineNumber < NTSC_FRAME_LINES)); // Wait for VBLANK; should do something smarter
+}
+
+// Generic videomode functions
+
+int SECTION_CCMRAM CurrentVideoMode = -1;
+
+int VideoGetModeCount()
+{
+    return sizeof(NTSCModes) / sizeof(NTSCModes[0]);
+}
+
+enum VideoModeType VideoModeGetType(int n)
+{
+    return NTSCModes[n].type;
+}
+
+void VideoModeGetInfo(int n, void *info)
+{
+    const VideoModeEntry* entry = NTSCModes + n;
+    switch(entry->type) {
+        case VIDEO_MODE_PIXMAP: {
+            *(VideoPixmapInfo*)info = *(VideoPixmapInfo*)entry->info;
+            break;
+        }
+        case VIDEO_MODE_TEXTPORT: {
+            *(VideoTextportInfo*)info = *(VideoTextportInfo*)entry->info;
+            break;
+        }
+        case VIDEO_MODE_SEGMENTS: {
+            *(VideoSegmentedInfo*)info = *(VideoSegmentedInfo*)entry->info;
+            break;
+            break;
+        }
+        case VIDEO_MODE_DCT: {
+            break;
+        }
+        case VIDEO_MODE_WOZ: {
+            break;
+        }
+        case VIDEO_MODE_TMS9918A: {
+            break;
+        }
+        case VIDEO_MODE_VES: {
+            break;
+        }
+        case VIDEO_MODE_WOLFENSTEIN: {
+            *(VideoWolfensteinInfo*)info = *(VideoWolfensteinInfo*)entry->info;
+            break;
+        }
+    }
+}
+
+void VideoSetMode(int n)
+{
+    NTSCMode = NTSC_DISPLAY_BLACK;
+    const VideoModeEntry* entry = NTSCModes + n;
+    entry->setup(entry);
+    CurrentVideoMode = n;
+    VideoCurrentFillRow = entry->fillRow;
+    NTSCMode = NTSC_USE_VIDEO_MODE;
+}
+
+int VideoGetCurrentMode()
+{
+    return CurrentVideoMode;
+}
+
+void VideoModeGetParameters(void *params)
+{
+    const VideoModeEntry* entry = NTSCModes + CurrentVideoMode;
+    entry->getParameters(entry, params);
+}
+
+int VideoModeSetPaletteEntry(int palette, int which, float r, float g, float b)
+{
+    const VideoModeEntry* entry = NTSCModes + CurrentVideoMode;
+    return entry->setPaletteEntry(entry, palette, which, r, g, b);
+}
+
+int VideoModeSetRowPalette(int row, int palette)
+{
+    const VideoModeEntry* entry = NTSCModes + CurrentVideoMode;
+    return entry->setRowPalette(entry, row, palette);
+}
+
+void VideoModeWaitFrame()
+{
+    // NTSC won't actually go lineNumber >= 525...
+    while(!(lineNumber > 257 && lineNumber < 262) || (lineNumber > 520 && lineNumber < NTSC_FRAME_LINES)); // Wait for VBLANK; should do something smarter
+}
+

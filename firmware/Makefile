@@ -123,7 +123,7 @@ burn: main.dfu main.bin
 
 segment_test: segment_test.cpp segment_utility.cpp
 
-hosted: video_subsystem.cpp ntsc_mode_pixmap.cpp utility.cpp graphics.cpp hosted.cpp segment_utility.cpp gl_utility.cpp commandline.cpp apps/systemapps.cpp # apps/showimage.cpp  apps/spin.cpp apps/pocketgl.cpp
+hosted: video_subsystem.cpp ntsc_mode_pixmap.cpp utility.cpp graphics.cpp hosted.cpp segment_utility.cpp gl_utility.cpp commandline.cpp apps/systemapps.cpp # apps/showimage.cpp apps/spin.cpp apps/pocketgl.cpp
 	c++ -DHOSTED $(CXXFLAGS) $(OPT) -I. -I/opt/local/include/ -L/opt/local/lib -std=c++17 -lglfw -framework OpenGL -framework Cocoa -framework IOkit $^ -o $@ 
 	# c++ -DHOSTED $(CXXFLAGS) $(OPT) -I. -I/opt/local/include/ -L/opt/local/lib -std=c++17 $^ -o $@ -lglfw -lGLEW -lpthread -lGL
 

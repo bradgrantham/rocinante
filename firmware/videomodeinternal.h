@@ -152,8 +152,9 @@ struct VESModeDriver : public VideoModeDriver
 struct VideoSubsystemDriver
 {
     virtual void start() = 0;
-    virtual int getModeCount() = 0;
-    virtual VideoModeDriver* getModeDriver(int n) = 0;
+    virtual int getModeCount() const = 0;
+    virtual void setBackgroundColor(float r, float g, float b) = 0;
+    virtual VideoModeDriver* getModeDriver(int n) const = 0;
     virtual void setDebugRow(int row, const char *rowText) = 0; // system sets debug information
     virtual void waitFrame() = 0;
     virtual void stop() = 0;
