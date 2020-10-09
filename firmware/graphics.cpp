@@ -30,15 +30,11 @@ void MakePalette(int whichPalette, int paletteSize, unsigned char (*palette)[3])
         case -1: break; /* no palette */
         case 16:  {
             for(int entry = 0; entry < 16; entry++) {
-                float r = RGBFor4BitPalette[entry][0] / 255.0f;
-                float g = RGBFor4BitPalette[entry][1] / 255.0f;
-                float b = RGBFor4BitPalette[entry][2] / 255.0f;
                 if(palette != NULL) {
                     for(int i = 0; i < 3; i++) {
                         palette[entry][i] = RGBFor4BitPalette[entry][i];
                     }
                 }
-                VideoModeSetPaletteEntry(whichPalette, entry, r, g, b);
             }
             break;
         }
@@ -55,12 +51,12 @@ void MakePalette(int whichPalette, int paletteSize, unsigned char (*palette)[3])
                     palette[entry][1] = g * 255;
                     palette[entry][2] = b * 255;
                 }
-                VideoModeSetPaletteEntry(whichPalette, entry, r, g, b);
             }
         }
     }
 }
 
+#if 0
 void SetPalette(int whichPalette, int paletteSize, unsigned char (*palette)[3])
 {
     for(unsigned int entry = 0; entry < 256; entry++) {
@@ -184,3 +180,4 @@ void DrawLine(int x0, int y0, int x1, int y1, int c)
     }
 }
 
+#endif

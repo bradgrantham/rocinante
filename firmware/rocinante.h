@@ -16,6 +16,16 @@ enum {
     COMMAND_ADD_FAILED,
 };
 
+typedef enum Status {
+    SUCCESS = 0,
+    NO_VIDEO_SUBSYSTEM_SET = -1,        // The platform did not set the video subsystem
+    INVALID_VIDEO_MODE_NUMBER = -2,     // The index passed was not in the range of valid modes
+    INVALID_STRUCTURE_SIZE = -3,        // The "size" parameter did not match the size of the requested structure
+    INVALID_STRUCTURE_TYPE = -4,        // The "type" parameter did not match the size of the requested structure
+    VIDEO_MODE_DOES_NOT_MATCH = -5,     // The "type" parameter to VideoModeGetInfo did not match the requested mode
+    VIDEO_MODE_INFO_UNSUPPORTED = -6,   // The video subsystem does not support returning info on the requested mode
+} Status;
+
 int InputGetChar(void);
 int InputWaitChar(void);
 

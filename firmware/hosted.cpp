@@ -131,9 +131,7 @@ constexpr int ScreenHeight = 460;
 constexpr int ScreenScale = 1;
 uint8_t ScreenPixmap[ScreenHeight][ScreenWidth];
 uint8_t ScreenImage[ScreenHeight][ScreenWidth][3];
-uint16_t ScreenDepth[ScreenHeight][ScreenWidth];
-uint8_t palettes[2][256][3];
-int rowPalettes[512];
+std::mutex VideoExclusionMutex;
 
 enum {
     VIDEO_MODE_PIXMAP_512_512 = 0,
@@ -141,35 +139,6 @@ enum {
     VIDEO_MODE_SEGMENTS_COUNT
 };
 
-int CurrentVideoMode = 0;
-
-void VideoModeGetInfo(int n, void *info)
-{
-    switch(n) {
-        case VIDEO_MODE_PIXMAP_512_512:  {
-            VideoPixmapInfo& pixmap = *(VideoPixmapInfo*)info;
-            pixmap.width = ScreenWidth;
-            pixmap.height = ScreenHeight;
-            pixmap.pixelFormat = VideoPixmapFormat::PALETTE_8BIT;
-            pixmap.paletteSize = 256;
-            pixmap.color = 1;
-            pixmap.overscan = 0;
-            pixmap.aspectX = 1;
-            pixmap.aspectY = 1;
-            break;
-        }
-        case VIDEO_MODE_SEGMENTS_512_512:  {
-            VideoSegmentedInfo& segments = *(VideoSegmentedInfo*)info;
-            segments.width = ScreenWidth;
-            segments.height = ScreenHeight;
-            segments.aspectX = ScreenWidth;
-            segments.aspectY = ScreenHeight;
-            break;
-        }
-    }
-}
-
-std::mutex SegmentsAccessMutex;
 std::array<std::vector<VideoSegmentedScanlineSegment>, ScreenHeight> SegmentsCopy;
 
 constexpr int MAX_SEGMENT_COUNT = (128 * 1024 - (460 * 4) - 4 * 1024) / (7 * 2);
@@ -204,7 +173,7 @@ int SegmentedSetScanlines(int scanlineCount, VideoSegmentedScanline *scanlines)
     }
 
     VideoModeWaitFrame();
-    std::scoped_lock<std::mutex> lk(SegmentsAccessMutex);
+    std::scoped_lock<std::mutex> lk(VideoExclusionMutex);
     for(int i = 0; i < ScreenHeight; i++) {
         SegmentsCopy[i].clear();
         SegmentsCopy[i] = std::vector<VideoSegmentedScanlineSegment>(scanlines[i].segments, scanlines[i].segments + scanlines[i].segmentCount);
@@ -214,6 +183,8 @@ int SegmentedSetScanlines(int scanlineCount, VideoSegmentedScanline *scanlines)
 
 void VideoModeFillGLTexture()
 {
+#if 0
+    // invoke fillrow for active driver
     switch(CurrentVideoMode) {
         case VIDEO_MODE_PIXMAP_512_512:  {
             for(int y = 0; y < ScreenHeight; y++) {
@@ -229,7 +200,7 @@ void VideoModeFillGLTexture()
         }
         case VIDEO_MODE_SEGMENTS_512_512:  {
             {
-                std::scoped_lock<std::mutex> lk(SegmentsAccessMutex);
+                std::scoped_lock<std::mutex> lk(VideoExclusionMutex);
                 int row = 0;
                 for(auto const& segments : SegmentsCopy) {
                     PaintSegments(segments.data(), ScreenImage[row], ScreenWidth);
@@ -240,44 +211,10 @@ void VideoModeFillGLTexture()
             break;
         }
     }
+#endif
 }
 
-void VideoModeGetParameters(void *params)
-{
-    switch(CurrentVideoMode) {
-        case VIDEO_MODE_PIXMAP_512_512:  {
-            VideoPixmapParameters& pixmap = *(VideoPixmapParameters*)params;
-            pixmap.base = &ScreenPixmap[0][0];
-            pixmap.rowSize = ScreenWidth;
-            break;
-        }
-        case VIDEO_MODE_SEGMENTS_512_512:  {
-            VideoSegmentedParameters& segments = *(VideoSegmentedParameters*)params;
-            segments.setScanlines = SegmentedSetScanlines;
-            break;
-        }
-    }
-}
-
-// Generic videomode functions
-
-int VideoGetModeCount()
-{
-    return VIDEO_MODE_SEGMENTS_COUNT;
-}
-
-enum VideoModeType VideoModeGetType(int n)
-{
-    switch(n) {
-        case VIDEO_MODE_PIXMAP_512_512:
-            return VIDEO_MODE_PIXMAP;
-        case VIDEO_MODE_SEGMENTS_512_512:
-            return VIDEO_MODE_SEGMENTS;
-        default:
-            return VIDEO_MODE_PIXMAP;
-    }
-}
-
+#if 0
 void VideoSetMode(int n)
 {
     CurrentVideoMode = n;
@@ -287,7 +224,7 @@ void VideoSetMode(int n)
             memset(ScreenPixmap, 0, sizeof(ScreenPixmap));
             break;
         case VIDEO_MODE_SEGMENTS_512_512: {
-            std::scoped_lock<std::mutex> lk(SegmentsAccessMutex);
+            std::scoped_lock<std::mutex> lk(VideoExclusionMutex);
             for(int i = 0; i < ScreenHeight; i++) {
                 SegmentsCopy[i].clear();
                 VideoSegmentedScanlineSegment seg;
@@ -303,11 +240,6 @@ void VideoSetMode(int n)
     }
 }
 
-int VideoGetCurrentMode()
-{
-    return CurrentVideoMode;
-}
-
 int VideoModeSetRowPalette(int row, int palette)
 {
     rowPalettes[row] = palette;
@@ -321,6 +253,14 @@ int VideoModeSetPaletteEntry(int palette, int entry, float r, float g, float b)
     palettes[palette][entry][2] = b * 255;
     return 1;
 }
+#endif
+
+// ----------------------------------------------------------------------------
+// Fake NTSC Subsystem
+
+#include <videomodeinternal.h>
+#include "ntsc_constants.h"
+#include "dac_constants.h"
 
 class BinarySemaphore
 {
@@ -357,42 +297,147 @@ private:
 BinarySemaphore FrameSemaphore;
 volatile int FrameNumber = 0;
 
-void VideoModeWaitFrame()
+static constexpr int MAXDRIVERS=16;
+static int driverCount = 0;
+static NTSCModeDriver* drivers[MAXDRIVERS];
+
+void NTSCVideoRegisterDriver(NTSCModeDriver* driver)
 {
-    FrameSemaphore.wait();
-    // int oldFrameNumber = FrameNumber;
-    // while(oldFrameNumber == FrameNumber) {
-        // printf("WaitFrame: %d\n", FrameNumber);
-        // usleep(10000);
-    // }
+    if(driverCount >= MAXDRIVERS) {
+        printf("Exceeded maximum NTSC mode driver count, will ignore \"%s\"\n", driver->getName());
+        return;
+    }
+    drivers[driverCount++] = driver;
 }
 
-void SaveImage()
-{
-    FILE *fp = fopen("color.ppm", "wb");
-    fprintf(fp, "P6 %d %d 255\n", ScreenWidth, ScreenHeight);
+unsigned char VRAM[128 * 1024];
 
-    switch(CurrentVideoMode) {
-        case VIDEO_MODE_PIXMAP_512_512:  {
-            for(int y = 0; y < ScreenHeight; y++) {
-                for(int x = 0; x < ScreenWidth; x++) {
-                    int value = ScreenPixmap[y][x];
-                    fwrite(palettes[rowPalettes[y]][value], 3, 1, fp);
+int debugOverlayEnabled = 0;
+
+#define debugDisplayWidth 19
+#define debugDisplayHeight 13
+#define debugDisplayLeftTick 48
+#define debugDisplayTopTick 20
+/* debugFontWidthScale != 4 looks terrible in a color field because of adjacent color columns; probably need to ensure 0s around any 1 text column */
+#define debugFontWidthScale 4
+#define debugCharGapPixels 1
+#define debugFontHeightScale 1
+
+char debugDisplay[debugDisplayHeight][debugDisplayWidth];
+
+#include "8x16.h"
+// static int font8x16Width = 8, font8x16Height = 16;
+// static unsigned char font8x16Bits[] = /* was a bracket here */
+
+unsigned char NTSCBlack;
+unsigned char NTSCWhite;
+
+void NTSCCalculateParameters()
+{
+    NTSCBlack = voltageToDACValue(NTSC_SYNC_BLACK_VOLTAGE);
+    NTSCWhite = voltageToDACValue(NTSC_SYNC_WHITE_VOLTAGE);
+}
+
+void fillRowDebugOverlay(int frameNumber, int lineNumber, unsigned char* nextRowBuffer)
+{
+    ntsc_wave_t NTSCWhiteLong =
+        (NTSCWhite <<  0) |
+        (NTSCWhite <<  8) |
+        (NTSCWhite << 16) |
+        (NTSCWhite << 24);
+    int debugFontScanlineHeight = font8x16Height * debugFontHeightScale;
+
+    int rowWithinDebugArea = (lineNumber % 263) - debugDisplayTopTick;
+    int charRow = rowWithinDebugArea / debugFontScanlineHeight;
+    int charPixelY = (rowWithinDebugArea % debugFontScanlineHeight) / debugFontHeightScale;
+
+// XXX this code assumes font width <= 8 and each row padded out to a byte
+    if((rowWithinDebugArea >= 0) && (charRow < debugDisplayHeight)) {
+        for(int charCol = 0; charCol < debugDisplayWidth; charCol++) {
+            unsigned char debugChar = debugDisplay[charRow][charCol];
+            if(debugChar != 0) {
+                unsigned char charRowBits = font8x16Bits[debugChar * font8x16Height + charPixelY];
+#if debugFontWidthScale == 4 && font8x16Width == 8
+                unsigned char *charPixels = nextRowBuffer + debugDisplayLeftTick + (charCol * (font8x16Width + debugCharGapPixels)) * debugFontWidthScale;
+                if(charRowBits & 0x80) { ((ntsc_wave_t*)charPixels)[0] = NTSCWhiteLong; } 
+                if(charRowBits & 0x40) { ((ntsc_wave_t*)charPixels)[1] = NTSCWhiteLong; }
+                if(charRowBits & 0x20) { ((ntsc_wave_t*)charPixels)[2] = NTSCWhiteLong; }
+                if(charRowBits & 0x10) { ((ntsc_wave_t*)charPixels)[3] = NTSCWhiteLong; }
+                if(charRowBits & 0x08) { ((ntsc_wave_t*)charPixels)[4] = NTSCWhiteLong; }
+                if(charRowBits & 0x04) { ((ntsc_wave_t*)charPixels)[5] = NTSCWhiteLong; }
+                if(charRowBits & 0x02) { ((ntsc_wave_t*)charPixels)[6] = NTSCWhiteLong; }
+                if(charRowBits & 0x01) { ((ntsc_wave_t*)charPixels)[7] = NTSCWhiteLong; }
+#else
+                for(int charPixelX = 0; charPixelX < font8x16Width; charPixelX++) {
+                    int pixel = charRowBits & (0x80 >> charPixelX);
+                    if(pixel) {
+                        unsigned char *charPixels = nextRowBuffer + debugDisplayLeftTick + (charCol * (font8x16Width + debugCharGapPixels) + charPixelX) * debugFontWidthScale;
+#if debugFontWidthScale == 4
+                        *(ntsc_wave_t *)charPixels = NTSCWhiteLong; 
+#else
+                        for(int col = 0; col < debugFontWidthScale; col++) {
+                            charPixels[col] = NTSCWhite;
+                        }
+#endif
+                    }
                 }
+#endif
             }
-            break;
-        }
-        case VIDEO_MODE_SEGMENTS_512_512:  {
-            std::scoped_lock<std::mutex> lk(SegmentsAccessMutex);
-            unsigned char row[ScreenWidth][3];
-            for(auto const& segments : SegmentsCopy) {
-                PaintSegments(segments.data(), row, ScreenWidth);
-                fwrite(row, 3 * ScreenWidth, 1, fp);
-            }
-            break;
         }
     }
 }
+
+struct NTSCVideoSubsystem : VideoSubsystemDriver
+{
+    virtual void start();
+    virtual void stop();
+    virtual void setDebugRow(int row, const char *rowText);
+    virtual int getModeCount();
+    virtual VideoModeDriver* getModeDriver(int n);
+    virtual void waitFrame();
+};
+
+int NTSCVideoSubsystem::getModeCount()
+{
+    return driverCount;
+}
+
+VideoModeDriver* NTSCVideoSubsystem::getModeDriver(int n)
+{
+    return drivers[n];
+}
+
+void NTSCVideoSubsystem::waitFrame()
+{
+    FrameSemaphore.wait();
+}
+
+void NTSCVideoSubsystem::start()
+{
+    NTSCCalculateParameters();
+}
+
+void NTSCVideoSubsystem::stop()
+{
+}
+
+void NTSCVideoSubsystem::setDebugRow(int row, const char *rowText)
+{
+    if((row >= 0) && (row <= debugDisplayHeight)) {
+        size_t to_copy = std::min((size_t)debugDisplayWidth, strlen(rowText));
+        memcpy(debugDisplay[row], rowText, to_copy);
+        memset(debugDisplay[row] + to_copy, ' ', debugDisplayWidth - to_copy);
+    }
+}
+
+static NTSCVideoSubsystem NTSCVideo;
+
+VideoSubsystemDriver* GetNTSCVideoSubsystem()
+{
+    return &NTSCVideo;
+}
+
+#if 0
 
 enum { CIRCLE_COUNT = 10 };
 
@@ -518,6 +563,7 @@ static void RegisterCommandTestSegmentMode(void)
         "test segmented mode"
         );
 }
+#endif
 
 static GLFWwindow* my_window;
 
@@ -1031,6 +1077,8 @@ int main(int argc, char **argv)
     initialize_ui();
 
     setraw();
+
+    VideoSetSubsystem(GetNTSCVideoSubsystem());
 
     auto commandThread = std::thread{[&] {
         if(argc > 1) {

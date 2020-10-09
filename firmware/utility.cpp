@@ -37,14 +37,6 @@ void bell()
 //--------------------------------------------------------------------------
 // Color
 
-// This is transcribed from the NTSC spec, double-checked.
-void RGBToYIQ(float r, float g, float b, float *y, float *i, float *q)
-{
-    *y = .30f * r + .59f * g + .11f * b;
-    *i = -.27f * (b - *y) + .74f * (r - *y);
-    *q = .41f * (b - *y) + .48f * (r - *y);
-}
-
 void HSVToRGB3f(float h, float s, float v, float *r, float *g, float *b)
 {
     if(s < .00001) {

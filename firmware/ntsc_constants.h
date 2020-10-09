@@ -2,6 +2,7 @@
 #define _NTSC_CONSTANTS_H_
 
 #include <math.h>
+#include <math.h>
 #include <dac_constants.h>
 
 #define NTSC_COLORBURST_FREQUENCY       3579545
@@ -80,6 +81,14 @@ inline ntsc_wave_t NTSCYIQToWave(float y, float i, float q)
     unsigned char b3 = NTSCYIQToDAC(y, i, q, .75f);
 
     return (b0 << 0) | (b1 << 8) | (b2 << 16) | (b3 << 24);
+}
+
+// This is transcribed from the NTSC spec, double-checked.
+inline void RGBToYIQ(float r, float g, float b, float *y, float *i, float *q)
+{
+    *y = .30f * r + .59f * g + .11f * b;
+    *i = -.27f * (b - *y) + .74f * (r - *y);
+    *q = .41f * (b - *y) + .48f * (r - *y);
 }
 
 inline ntsc_wave_t NTSCRGBToWave(float r, float g, float b)

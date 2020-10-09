@@ -1,3 +1,6 @@
+come back to:
+    are VideoGetModeCount() and VideoModeGetType() inconsistent? - consider, make consistent, record policy here
+----------------------------
 Stated explicitly:
     Make silicon do as much as possible - as few and as cheap external components as possible
         So avoid external DAC (expensive), use weighted resistor DAC
@@ -9,27 +12,32 @@ Stated explicitly:
         But write something nice enough that someone else *could* use it.
     C++17 interfaces internally
     Windowing, then Processes (and pipes? signals?), then Loader
+-----------------------------
+
+Getting to video working
+    comment out all apps except "modes" and "show"
+    move all old code to ${filename}_old.cpp
+    Get the following API calls working
+
+    what files exist and what is their purpose?
+        videomode.h - application interface, must be C-capable
+            NOT YET SANITIZED
+        videomodeinternal.h - structs and enums for drivers to communicate with generic subsystem
+            NOT YET SANITIZED
+        ntsc_constants.h - NTSC timing constants
+            NOT YET SANITIZED
+        ntsc_mode_driver.cpp - structs and enums for NTSC drivers to communicate with NTSC video subsystem
+            NOT YET SANITIZED
+        ntsc_mode_pixmap.cpp - a specific NTSC driver implementing a pixmap
+            NOT YET SANITIZED
+        ntscvideo.cpp - NTSC implementation
+            NOT YET SANITIZED
+        videomode_subsystem.cpp - implementations of functions in videomode.h
+            NOT YET SANITIZED
 
 Modularizing video
-    Get all video functions out into separate .cpps
-        video mode drivers in their own files
-        the thing that fills in NTSC's raw buffer and manages mouse events and windowing in its own file
-        STM-specific implementation of DMA, etc in separate file and call the NTSC raw buffer goop - callback?
     Abstraction 
-        drivers register themselves in a constructor function
-            VideoSubSystem* NTSCVideoRegisterMode(VideoModeDriver *mode);
-                 video subsystem keeps an array of these modes
-        The platform initializes the video subsystem
-            NTSCVideoStart or VGAVideoStart or HDMIVideoStart
-                set up DAC?
-                set up interrupts?
-                    Need generic DMA interrupt to call Video-specific callback
-                manage VRAM
-            0 windows to start
-                Maybe all video modes have a background color?  
-            Maybe hardcoded shell opens a text window
-            main loop routes events to video - VideoSubsystem->routeEvent(EventBase *event)
-            VideoSubsystem draws window decorations (may want to share these among implementations)
+        main loop routes events to video - VideoSubsystem->routeEvent(EventBase *event)
         An app calls
             void VideoSetBackgroundColor(float r, float g, float b);
             VideoGetModeCount() to get number of modes, then loops through them
@@ -46,35 +54,9 @@ Modularizing video
                 }
             }
 
-Getting to color - Duplicate other signal timing & voltages as closely as possible, including # of colorbursts
-    VCR, barring that, Apple //e, NES?, DVD?
-    Make nice diagrams of a single frame's signal
-    Hm, can CB be per-line?
-
-Measured MCO/5 as HSE at 4.00086MHz on freq counter, so 20MHz crystal is giving me 20.00430 Mhz
-
-Could probably pull off 304x192 r5g6b5 framebuffer within 128K, or 384x256 r3g3b2 within 128K (would dither)
-    But why bother with r3g3b2?  Just make a 256-LUT?  Save memory, make conversion explicit?
-Close on segmented framebuffer
-    textured and solid triangles, trapezoids, and segments
-    need a way to merge or continue runs to reduce memory usage
-    teapot with Enable(CULLFACE):
-        max 75 segments in one row
-        max 8756 segments in frame
-        max 41976 trapezoids per frame
-    polytope256 with Enable(CULLFACE):
-        max 62 segments in one row
-        max 11426 segments in frame
-        max 64728 trapezoids
 New Video API
-    NTSC needs to either be filled with "phase" (column % 4) to get the waveform right, or always aligned to 4 clocks
     Video Subsystem keeps track of window location, size, order in stacking, whether it's fullscreen, and its mode
-    How are text windows created?  rows and columns? - separate API?
-    How are fullscreen-only windows created?  rows and columns? - separate API?
-    Does every viedo mode have a debug overlay?
     Application API exposed by video subsystem:
-        int VideoGetModeCount();
-        enum VideoModeType VideoModeGetType(int n);
         struct ModeInformation {
             VideoModeType type;
         };
@@ -106,97 +88,6 @@ New Video API
                 can return INVALID_CALL_FOR_MODE
             Status VideoModeSetRowPalette(int row, int palette)
                 can return INVALID_CALL_FOR_MODE
-    API that video driver implements:
-        struct ScanlineSpan { int start; int length; };
-        struct WindowSpanList { int start; int count; struct ScanlineSpan *spans };
-        struct VideoWindowDescriptor { void* vram; uint32_t rootOffset; };
-        API that video subsystem implements for drivers:
-            typedef uint32_t (*VideoSubsystemAllocateFunc)(size_t size); - offset from base VRAM pointer, wherever that is
-        enum VideoModeType that already exists
-        struct VideoModeDriver {
-            // a class can exist with no members and only virtual functions, but maybe should add name
-            // How are special extra methods exposed?
-            // like all draw funcs (text vs wolfenstein vs pixmap/colortable vs segments)
-            VideoModeType getModeType();
-            virtual bool isFixedSize() = 0; // fixed size, e.g. TMS9918A or Woz or Channel F, NTSC knows that if this gives minimum Size 704x460, this mode is fullscreen overscan only
-            virtual bool getMinimumSize(int *w, int *h) = 0; // if a fixed size, put fixed dimensions in these 
-            virtual bool getNearestNotLarger(int w, int h, int *nearestNotLargerW, int *nearestNotLargerH) = 0; // mostly for text modes - only succeed for multiples of text size, put nearest smaller window size in W and H (for outline during resizing)
-            virtual bool reallocateForWindow(int windowSpanCount, struct WindowSpanList* windowSpans, const VideoWindowDescriptor* oldWindow, void* vramTemp, uint32_t *rootOffset, VideoSubsystemAllocateFunc allocate, bool copyContents) = 0;
-                allocates per-scanline or per-window as necessary, keeps track of its own kind of allocation
-                might make a per-window allocation e.g. colormap
-                allocate a "root" buffer containing additional allocations and store root buffer in rootOffset
-                    e.g. color tables and then scanline data for pixmaps
-                    or window + windowspans
-                    or allocate one big buffer and carve everything up in there e.g. text?, TMS9918, Wolfenstein
-                copy old allocations from vram to new allocations in vramTemp if copyContents
-                    e.g. color tables, but leave scanline pixmap regions junk or 0
-                    e.g. copy text because all text kept around?
-                    e.g. copy TMS9918 data or Wolfenstein data or segments
-                if !copyContents, then window system is probably trying to resize or create a new window and testing a layout.
-                if copyContents and all windows succeed, then rootOffsets will be changed and vramTemp will be copied to vram as quickly as possibly during VBLANK
-                therefore no pointers within VRAM, only offsets
-                if vram is nullptr and oldOffset is 0xFFFFFFFF, then window didn't exist before
-        }
-        struct NTSCModeDriver : public VideoModeDriver
-        {
-            virtual void fill(const VideoWindowDescriptor* window, int columnStartOnScreen /* for color phase */, int screenRow /* for flipping ColorBurst */, int columnStartWithinWindow, int pixelCount, int rowWithinWindow, unsigned char *rowData) = 0;
-            // debug version could put rowData somewhere else, check it for corrupting nearby data, then copy it when done
-        }
-        640 * 384 is a good underscan mode
-        704 * 460 is a good overscan mode
-        struct PixmapModeInformation
-        {
-            VideoModeType type;
-            bool isMonochrome; // Only used by NTSC Video Subsystem to determine whether to do Colorburst
-            enum PixmapFormat { PIXMAP_1BIT, PIXMAP_2BIT, PIXMAP_4BIT, PIXMAP_8BIT } pixmapFormat;
-            enum PaletteSize { PALETTE_4_ENTRIES, PALETTE_16_ENTRIES, PALETTE_256_ENTRIES } paletteSize;
-        };
-        struct PixmapMode : public VideoModeDriver
-        {
-            Let's say maximum resolution, 704x460; can get 2 bits per pixel in that mode in roughly 112KB.
-            Let's say 1 byte per pixel. can easily do 384 * 230 in that mode in roughly 112KB.
-            virtual void getInfo(PixmapModeInformation* info) = 0;
-            enum PaletteIndex { PALETTE0, PALETTE1 };
-            virtual void setPaletteContents(const VideoWindowDescriptor* window, PaletteIndex which, unsigned char (*palette)[3]) = 0;
-            virtual void setRowPalette(const VideoWindowDescriptor* window, int row, PaletteIndex which) = 0;
-            virtual void drawPixelRect(const VideoWindowDescriptor* window, int left, int top, int width, int height, size_t rowBytes, unsigned char *pixmap) = 0; // packed like pixel format
-            // Need more drawing functions here - this has essentially made the framebuffer opaque
-        };
-        struct TextportMode : public VideoModeDriver
-        {
-            virtual void setCursorPosition(const VideoWindowDescriptor* window, int col, int row) = 0;
-            virtual void setCursorAttributes(const VideoWindowDescriptor* window, uint32_t attributes) = 0;
-            virtual void clearArea(const VideoWindowDescriptor* window, int col, int row, int cols, int rows) = 0;
-            virtual void drawChar(const VideoWindowDescriptor* window, int col, int row, char c) = 0;
-            virtual void copyArea(const VideoWindowDescriptor* window, int col, int row, int cols, int rows, int newcol, int newrow) = 0;
-            virtual void drawArea(const VideoWindowDescriptor* window, int col, int row, int cols, int rows, const char *text) = 0;
-        }
-        struct SegmentVideoMode : public VideoModeDriver
-        {
-            virtual int setScanlineSegments(const VideoWindowDescriptor* window, int scanlineCount, const VideoSegmentedScanline *scanlines) = 0; // but this is variable size?  maybe there can only ever be one of these and its reallocated last and allocates as much as it can.
-        }
-        struct WolfensteinMode : public VideoModeDriver
-        {
-            virtual void setElements(const VideoWindowDescriptor* window, const VideoWolfensteinElement* elements) = 0;
-        }
-        struct DCTVideoMode : public VideoModeDriver
-        {
-        }
-        struct WozVideoMode : public VideoModeDriver
-        {
-        }
-        struct TMS9918AMode : public VideoModeDriver
-        {
-        }
-        struct VESVideoMode : public VideoModeDriver
-        {
-        }
-    API that video subsystem implements for system:
-        struct VideoSubsystemDriver {
-            static VideoSubsystemDriver* start(); // NTSC system makes runtime constants, starts scanout
-            virtual void stop() = 0;
-            virtual void setDebugRow(int row, const char *rowText) = 0; // system sets debug information
-        };
     re-allocation events: window stacking order changed, window moved, window resized, window fullscreened or windowed
         for every window
             make span list
@@ -231,10 +122,6 @@ New Video API
         };
     };
     every window (only front window?) has a 2 or 4-pixel border
-    every scanline effectively needs a list of pixel ranges owned by windows - this should be in VRAM for DMA decoupling
-    every window needs to be able to allocate only memory for storage for its ranges per row.
-	could memory allocation and populating memory and calling expansion to video stream pixels be decoupled from the video mode?
-            Wolf, DCT, 9918, Text, aren't specific to a scan line specific
     need a video mode which is a solid color for background
     Some video game modes (TMS9918A, Woz, TIA) require full-screen.
         Debug overlay says "Game mode" if ALT-space pressed or some such?
@@ -250,10 +137,29 @@ New Video API
     Click on FRONT window is passed to app owning FRONT
     non-FRONT window doesn't get mouse moves?
     Click on border resizes (just outline is shown until button release)
-    transparent backing-store mode from non-VRAM
-        hooks the event functions and the Set-style functions
-        catches REDRAW etc events, updates from backing-store when possible
-        passes on to app if necessary (RESIZE, FULLSCREEN, REDRAW)
+Getting to color - Duplicate other signal timing & voltages as closely as possible, including # of colorbursts
+    VCR, barring that, Apple //e, NES?, DVD?
+    Make nice diagrams of a single frame's signal
+    Does CB need to rotate phase 180 degrees each line?
+Need generic DMA/DAC facility (or do I is DAC/DMA used for anything but NTSC or VGA?)
+Could probably pull off 304x192 r5g6b5 framebuffer within 128K, or 384x256 r3g3b2 within 128K (would dither)
+    But why bother with r3g3b2?  Just make a 256-LUT?  Save memory, make conversion explicit?
+Let's say maximum resolution, 704x460; can get 2 bits per pixel in that mode in roughly 112KB.
+Let's say 1 byte per pixel. can easily do 384 * 230 in that mode in roughly 112KB.
+640 * 384 is a good underscan mode
+704 * 460 is a good overscan mode
+Close on segmented framebuffer
+    textured and solid triangles, trapezoids, and segments
+    need a way to merge or continue runs to reduce memory usage
+    teapot with Enable(CULLFACE):
+        max 75 segments in one row
+        max 8756 segments in frame
+        max 41976 trapezoids per frame
+    polytope256 with Enable(CULLFACE):
+        max 62 segments in one row
+        max 11426 segments in frame
+        max 64728 trapezoids
+Measured MCO/5 as HSE at 4.00086MHz on freq counter, so 20MHz crystal is giving me 20.00430 Mhz
 Move Wolf to palette-RGB-style textures (reduce bandwidth to make up lookup & process cost?)
 honor aspect ratio in "show"
 Some things to improve in "show"
@@ -263,8 +169,6 @@ Some things to improve in "show"
 Make circle renderer find pixel center coordinates to see if the weird jumpiness is being caused by integer snapping - can't expect decent lit or textured rendering if the coordinates are going to jump around for some reason
 DB-9 Coleco game controller
 PS/2 keyboard and mouse
-paletteToWave and rowPalette should be carved from imgBuffer so imgBuffer for non-palette modes has more space
-    VRAMalloc
 Some things to improve living
     textport should be virtual and overlaid on screen in text mode and preserved for returning to text mode
         so then textport output would ALWAYS work and be recorded, and switching back to text would restore the old viewport.
@@ -295,13 +199,7 @@ hosted
         video and audio calls take a lock
         video scanout happens 30 Hz and also takes the lock
 Video API notes
-    Fundamentally, CCMRAM lacks the memory for more than 1 byte per pixel at more than 250x200
-        VideoMode has internals that convert to the display specifics
-        VideoMode is the abstraction hiding the memory limitations from the application.
-            Platform libraries do additional useful work, like converting R8G8B8 rows to 256-entry palettized images with Floyd-Steinberg
-        Carve out 128K from 320K in 746, could easily have 512 * 240 * 256 colors
-        Larger chip with 512K, could spare 256K, yield 640x400
-        ** BUT part of the *novelty* of the project is that video is generated at a higher resolution than RAM allows. **
+    ** part of the *novelty* of the project is that video is generated at a higher resolution than RAM allows. **
             e.g. very small palettes - 1, 2, 4 bit; RLE; DCT; specialized renderer (e.g. Wolfenstein, spin)
     NTSC output is by necessity Waves (DAC samples represent NTSC waveform at 14.31818 MHZ)
         Probably not much point in having R8G8B8 at 912 pixels per row - can't be represented
@@ -309,16 +207,12 @@ Video API notes
             yiq can range from 
         Individual VideoModes could filter, or just the ones I care about could filter
         SET_AND_INCREMENT_WAVE(y, i, q)
-    Commit to 565 for VGA output, use 3 DACs (and a whole 16-bit port?  Yikes!)
-        *might* be able to convert 332 to FS-dithered at scan time
-        Hook up to Parallax 332 DAC to start (and maybe dither), create 565 DAC later
+    Hook up to Parallax 332 DAC to test VGA (and maybe dither), create 565 DAC later
     HDMI can be whatever as long as I have 3 bytes of RGB to look up in a table
-clean up rect mode
 setup a software interrupt for VBlank processing (e.g. update scanout stats, audio goop) and trigger it from row=262 and row = 525 -> event interrupt?
 help and other output should be paged -
     have a special mode in non-VT102 mode?  Start Paging / Stop Paging?
     OutputSetPaging(int paging)
-Move NTSC goop to another .c
 Move Audio goop to another .c
 Add some things to shell
     startup.sh # run from disk, quit scripting on blue button
@@ -341,7 +235,6 @@ Add some things to shell
     # expressions
     for var = A to B [step C] ; ... ; end
     for var in A B C D E F G ; ... ; end
-VideoModeGetInfo should take a type so it can avoid copying wrong struct
 everything should return 0 on success or non-zero error or void if it can't fail
 audio
     22050Hz?  11025Hz?  8000Hz?
