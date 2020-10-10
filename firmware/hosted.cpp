@@ -456,6 +456,7 @@ void VideoModeFillGLTexture()
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, ScreenWidth, ScreenHeight, 0, GL_RGB, GL_UNSIGNED_BYTE, ScreenImage);
 }
 
+
 #if 0
 
 enum { CIRCLE_COUNT = 10 };

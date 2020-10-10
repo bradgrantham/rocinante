@@ -164,6 +164,18 @@ Status VideoModeGetInfo(int modeIndex, void *infobase, size_t infoSize); // info
 void VideoModeWaitFrame();      // Wait until end of last visible line in a frame
 void VideoModeSetBackgroundColor(float r, float g, float b);
 
+enum WindowParameter
+{
+    END = 0,
+    PREFERRED_SIZE = 1, /* followed by int w, int h */
+    GET_SIZE_OR_FAIL = 2,
+    FULLSCREEN_OVERSCAN = 3,
+    FULLSCREEN_UNDERSCAN = 4,
+};
+Status WindowCreate(int mode, const char *name, int *parameters, int *window);
+Status WindowSetTitle(int window, const char *name);
+void WindowClose(int window);
+
 #ifdef __cplusplus
 };
 #endif /* __cplusplus */

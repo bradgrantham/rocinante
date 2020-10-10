@@ -110,3 +110,25 @@ void VideoModeSetBackgroundColor(float r, float g, float b)
     driver->setBackgroundColor(r, g, b);
 }
 
+int windowPosition[2] = {20, 20};
+int windowSize[2] = {640, 400};
+int windowMode = -1;
+
+Status WindowCreate(int modeIndex, const char *name, int *parameters, int *window)
+{
+    if(!driver) {
+        return NO_VIDEO_SUBSYSTEM_SET;
+    }
+    if(modeIndex > driver->getModeCount()) {
+        return INVALID_VIDEO_MODE_NUMBER;
+    }
+    *window = 0;
+    windowMode = modeIndex;
+    return SUCCESS;
+}
+
+void WindowClose(int window)
+{
+    windowMode = -1;
+}
+
