@@ -59,9 +59,10 @@ New Video API
         int WindowCreate(int mode, int *parameters);
             -> always produces "RESIZE" and "REDRAW" events - get width and height that way
             Subsequent moves and stack order changes *might* not REDRAW - the system could decide to keep a backing-store of the image.
-            position and size may be selected by mouse
-                if not fullscreen, moust selects window position
-                if window mode !isFixedSize, mouse rubberbands window size, modulated to getNearestNotLarger()
+            position and size may be selected by mouse...?  Requires a weird state machine to receive mouse events and redraw the screen until mouse released. 
+            if window mode !isFixedSize, mouse rubberbands window size, modulated to getNearestNotLarger()?
+            Maybe best to just pop up in a known position
+            Then move and resize are just UI state machines
         void WindowClose(int window);
         Mode specific functions. These can return INVALID_CALL_FOR_MODE.
             Status WindowSetPaletteEntry(int window, int palette, int which, float r, float g, float b);
