@@ -10,6 +10,13 @@ static VideoSubsystemDriver *driver;
 void VideoSetSubsystem(VideoSubsystemDriver *drv)
 {
     driver = drv;
+    driver->start();
+}
+
+void VideoStopSubsystem()
+{
+    driver->stop();
+    driver = nullptr;
 }
 
 Status VideoGetModeCount(int *count)

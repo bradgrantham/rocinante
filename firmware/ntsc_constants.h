@@ -40,9 +40,9 @@ typedef uint32_t ntsc_wave_t;
 inline unsigned char NTSCYIQToDAC(float y, float i, float q, float tcycles)
 {
 // This is transcribed from the NTSC spec, double-checked.
-    float wt = tcycles * M_PI * 2;
-    float sine = sinf(wt + 33.0f / 180.0f * M_PI);
-    float cosine = cosf(wt + 33.0f / 180.0f * M_PI);
+    float w_t = tcycles * M_PI * 2;
+    float sine = sinf(w_t + 33.0f / 180.0f * M_PI);
+    float cosine = cosf(w_t + 33.0f / 180.0f * M_PI);
     float signal = y + q * sine + i * cosine;
 // end of transcription
 
@@ -89,6 +89,26 @@ inline void RGBToYIQ(float r, float g, float b, float *y, float *i, float *q)
     *y = .30f * r + .59f * g + .11f * b;
     *i = -.27f * (b - *y) + .74f * (r - *y);
     *q = .41f * (b - *y) + .48f * (r - *y);
+}
+
+// Alternatively, a 3x3 matrix transforming [r g b] to [y i q] is:
+// (untested - computed from equation above)
+// 0.300000 0.590000 0.110000
+// 0.599000 -0.277300 -0.321700
+// 0.213000 -0.525100 0.312100
+
+// A 3x3 matrix transforming [y i q] back to [r g b] is:
+// (untested - inverse of 3x3 matrix above)
+// 1.000000 0.946882 0.623557
+// 1.000000 -0.274788 -0.635691
+// 1.000000 -1.108545 1.709007
+
+// untested - using inverse 3x3 matrix above
+inline void YIQToRGB(float y, float i, float q, float *r, float *g, float *b)
+{
+    *r = 1.0f * y + .946882f * i + 0.623557f * q;
+    *g = 1.000000f * y + -0.274788f * i + -0.635691f * q;
+    *b = 1.000000f * y + -1.108545f * i + 1.709007f * q;
 }
 
 inline ntsc_wave_t NTSCRGBToWave(float r, float g, float b)

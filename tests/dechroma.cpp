@@ -4,6 +4,11 @@
 
 #define TAU (M_PI * 2)
 
+// phaseIn in radians
+// wave in whatever
+// DC component is average of wave
+// magnitude is largest of HF component
+// phase is phase of HF component
 void Decompose(float phaseIn, float wave[4], float *dc, float *magnitude, float *phase)
 {
     *dc = (wave[0] + wave[1] + wave[2] + wave[3]) / 4;

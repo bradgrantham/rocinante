@@ -173,6 +173,7 @@ struct NTSCModeDriver : public VideoModeDriver
 };
 
 void VideoSetSubsystem(VideoSubsystemDriver *drv);
+void VideoStopSubsystem();
 VideoSubsystemDriver* GetNTSCVideoSubsystem();
 void NTSCVideoRegisterDriver(NTSCModeDriver* driver);
 

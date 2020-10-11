@@ -309,7 +309,7 @@ void NTSCCalculateParameters()
 {
     NTSCBlack = voltageToDACValue(NTSC_SYNC_BLACK_VOLTAGE);
     NTSCWhite = voltageToDACValue(NTSC_SYNC_WHITE_VOLTAGE);
-    addColorburst = false; // Will set or clear at beginning of frame depending on top window
+    addColorburst = true; // Will set or clear at beginning of frame depending on top window
 }
 
 void fillRowDebugOverlay(int frameNumber, int lineNumber, unsigned char* nextRowBuffer)
@@ -420,16 +420,92 @@ VideoSubsystemDriver* GetNTSCVideoSubsystem()
     return &NTSCVideo;
 }
 
-void ConvertNTSCDACRow(uint8_t *dacRow, uint8_t (*screenRow)[3], int width, bool color)
+#define TAU (M_PI * 2)
+
+// phaseIn in radians
+// wave in whatever
+// DC component is average of wave
+// magnitude is largest of HF component
+// phase is phase of HF component
+void Decompose(float phaseIn, float wave[4], float *dc, float *magnitude, float *phase)
 {
-    if(color) {
-    // XXX later try to extract hue and saturation from chroma
+    *dc = (wave[0] + wave[1] + wave[2] + wave[3]) / 4;
+
+    float waveHF[4];
+    for(int i = 0; i < 4; i++) waveHF[i] = wave[i] - *dc;
+
+    *magnitude = 0;
+    for(int i = 0; i < 4; i++) *magnitude = std::max(*magnitude, fabsf(waveHF[i]));
+
+    for(int i = 0; i < 4; i++) waveHF[i] /= *magnitude;
+
+    float sine =
+        waveHF[0] * sinf(phaseIn + TAU / 4 * 0) + 
+        waveHF[1] * sinf(phaseIn + TAU / 4 * 1) + 
+        waveHF[2] * sinf(phaseIn + TAU / 4 * 2) + 
+        waveHF[3] * sinf(phaseIn + TAU / 4 * 3);
+    float cosine =
+        waveHF[0] * cosf(phaseIn + TAU / 4 * 0) + 
+        waveHF[1] * cosf(phaseIn + TAU / 4 * 1) + 
+        waveHF[2] * cosf(phaseIn + TAU / 4 * 2) + 
+        waveHF[3] * cosf(phaseIn + TAU / 4 * 3);
+
+    *phase = atan2(cosine, sine);
+    if(*phase < -.0001) *phase += TAU;
+}
+
+void NTSCWaveToYIQ(float tcycles, float wave[4], float *y, float *i, float *q)
+{
+    *y = (wave[0] + wave[1] + wave[2] + wave[3]) / 4;
+
+    float waveHF[4];
+    for(int j = 0; j < 4; j++) waveHF[j] = wave[j] - *y;
+
+    float w_t = tcycles * M_PI * 2 + 33.0f / 180.0f * M_PI;
+
+    *i =
+        waveHF[0] * sinf(w_t + TAU / 4 * 0) + 
+        waveHF[1] * sinf(w_t + TAU / 4 * 1) + 
+        waveHF[2] * sinf(w_t + TAU / 4 * 2) + 
+        waveHF[3] * sinf(w_t + TAU / 4 * 3);
+
+    *q =
+        waveHF[0] * cosf(w_t + TAU / 4 * 0) + 
+        waveHF[1] * cosf(w_t + TAU / 4 * 1) + 
+        waveHF[2] * cosf(w_t + TAU / 4 * 2) + 
+        waveHF[3] * cosf(w_t + TAU / 4 * 3);
+}
+
+float DACToSignal(uint8_t dacByte)
+{
+    float dacVoltage = dacByte / 255.0 * MAX_DAC_VOLTAGE;
+    float luma = (dacVoltage - NTSC_SYNC_BLACK_VOLTAGE) / (NTSC_SYNC_WHITE_VOLTAGE - NTSC_SYNC_BLACK_VOLTAGE);
+    return std::clamp(luma, 0.0f, 1.0f);
+}
+
+void ConvertNTSCDACRow(uint8_t *dacRow, uint8_t (*screenRow)[3], int width, bool decodeColor)
+{
+    if(decodeColor) {
+        float wave[4];
+        wave[0] = DACToSignal(dacRow[0]);
+        wave[1] = DACToSignal(dacRow[1]);
+        wave[2] = DACToSignal(dacRow[2]);
+        for(int x = 0; x < width - 3; x++) {
+            wave[3] = DACToSignal(dacRow[x + 3]);
+            float y, i, q;
+            NTSCWaveToYIQ((x % 4) / 4.0f, wave, &y, &i, &q);
+            float r, g, b;
+            YIQToRGB(y, i, q, &r, &g, &b);
+            screenRow[x][0] = std::clamp(r, 0.0f, 1.0f) * 255.999f;
+            screenRow[x][1] = std::clamp(g, 0.0f, 1.0f) * 255.999f;
+            screenRow[x][2] = std::clamp(b, 0.0f, 1.0f) * 255.999f;
+            wave[0] = wave[1];
+            wave[1] = wave[2];
+            wave[2] = wave[3];
+        }
     } else {
         for(int x = 0; x < width; x++) {
-            uint8_t dacByte = dacRow[x];
-            float dacVoltage = dacByte / 255.0 * MAX_DAC_VOLTAGE;
-            float luma = (dacVoltage - NTSC_SYNC_BLACK_VOLTAGE) / (NTSC_SYNC_WHITE_VOLTAGE - NTSC_SYNC_BLACK_VOLTAGE);
-            float clamped = std::clamp(luma, 0.0f, 1.0f);
+            float clamped = DACToSignal(dacRow[x]);
             uint8_t pixel = clamped * 255.999;
             screenRow[x][0] = pixel;
             screenRow[x][1] = pixel;
