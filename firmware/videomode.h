@@ -164,17 +164,86 @@ Status VideoModeGetInfo(int modeIndex, void *infobase, size_t infoSize); // info
 void VideoModeWaitFrame();      // Wait until end of last visible line in a frame
 void VideoModeSetBackgroundColor(float r, float g, float b);
 
-enum WindowParameter
+typedef enum WindowParameter
 {
     END = 0,
-    PREFERRED_SIZE = 1, /* followed by int w, int h */
-    GET_SIZE_OR_FAIL = 2,
+    PREFERRED_SIZE = 1, /* followed by int w, int h, int failIfNotPreferredSize */
     FULLSCREEN_OVERSCAN = 3,
     FULLSCREEN_UNDERSCAN = 4,
-};
-Status WindowCreate(int mode, const char *name, int *parameters, int *window);
+} WindowParameter;
+
+// Always produces "RESIZE" and "REDRAW" events - get width and height that way
+// Subsequent moves and stack order changes *might* not REDRAW - the system could decide to keep a backing-store of the image.
+Status WindowCreate(int mode, const char *name, const int *parameters, int *window);
+
 Status WindowSetTitle(int window, const char *name);
+
 void WindowClose(int window);
+
+// Event stuff should be in a separate header
+
+struct MouseMoveEvent {
+    int dx, dy;
+};
+
+struct MouseButtonPressEvent {
+    int button;
+};
+
+struct MouseButtonReleaseEvent {
+    int button;
+};
+
+struct KeyboardRawEvent {
+    int keycode;
+};
+
+struct WindowResizeEvent {
+    int window;
+    int width, height;
+};
+
+struct WindowRedrawEvent {
+    int window;
+    int left, top, width, height;
+};
+
+struct WindowStatusEvent {
+    int window;
+    enum {
+        FRONT,
+        BEHIND,
+        CLOSE,
+        FULLSCREEN,
+        WINDOWED,
+    } status;
+};
+
+struct Event
+{
+    enum {
+        EVENTS_LOST,
+        MOUSE_MOVE,
+        MOUSE_BUTTONPRESS,
+        MOUSE_BUTTONRELEASE,
+        KEYBOARD_RAW,
+        WINDOW_RESIZE,
+        WINDOW_REDRAW,
+        WINDOW_STATUS,
+    } eventType;
+    union {
+        MouseMoveEvent mouseMove;
+        MouseButtonPressEvent mouseButtonPress;
+        MouseButtonReleaseEvent mouseButtonRelease;
+        KeyboardRawEvent keyboardRaw;
+        WindowResizeEvent windowResize;
+        WindowRedrawEvent windowRedraw;
+        WindowStatusEvent windowStatus;
+        uint8_t reserved[64];
+    };
+};
+
+int EventPoll(Event *event); /* 0 if none, 1 if filled */
 
 #ifdef __cplusplus
 };

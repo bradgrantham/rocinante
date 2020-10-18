@@ -10,42 +10,45 @@ Stated explicitly:
         Settle on STM32H743IIT6 for now
     App and Driver API should be the one you're most comfortable with (because no one else will use it!)
         But write something nice enough that someone else *could* use it.
-    C++17 interfaces internally
+    C++17 interfaces and code internally
     Windowing, then Processes (and pipes? signals?), then Loader
 -----------------------------
 
-Getting to video working
-    Get the following API calls working
+to plumb through windowing API, edit showimage
+    instead of mode, take bit depth and whether to force mono, and find matching buffer
+        --1bit, --2bit, --4bit, --8bit, --gray, --color
+        default is 8bit color
+    could read image and make colormap here
+    WindowCreate
+    enter loop
+        read event
+        WINDOWED / FULLSCREEN - ignore?
+        FRONT - ignore?
+        RESIZE:
+            if buffer, free old buffer
+            malloc resized buffer
+            reread the image resized to window, call ProcessYield() after each line
+            rereading and dithering can be very slow...  May be fast enough at 500MHz?
+            redraw rows as they are read
+        REDRAW: redraw image rectangle from buffer
 
-    what files exist and what is their purpose?
-        videomode.h - application interface, must be C-capable
-            NOT YET SANITIZED
-        videomodeinternal.h - structs and enums for drivers to communicate with generic subsystem
-            NOT YET SANITIZED
-        ntsc_constants.h - NTSC timing constants
-            NOT YET SANITIZED
-        ntsc_mode_driver.cpp - structs and enums for NTSC drivers to communicate with NTSC video subsystem
-            NOT YET SANITIZED
-        ntsc_mode_pixmap.cpp - a specific NTSC driver implementing a pixmap
-            NOT YET SANITIZED
-        ntscvideo.cpp - NTSC implementation
-            NOT YET SANITIZED
-        videomode_subsystem.cpp - implementations of functions in videomode.h
-            NOT YET SANITIZED
+to plumb through fullscreen API, add a 9918 fullscreen mode and register playback from Mac Colecovision emulator
 
 Modularizing video
     Abstraction 
         main loop routes events to video - VideoSubsystem->routeEvent(EventBase *event)
         An app calls
-            void VideoSetBackgroundColor(float r, float g, float b);
+            optionally void VideoSetBackgroundColor(float r, float g, float b);
             VideoGetModeCount() to get number of modes, then loops through them
                 VideoSubsystem has vector of VideoModeDriver*
             VideoModeGetType(int n) to get mode
                 VideoSubsystem calls VideoModeDriver->getType();
-            Status VideoModeGetInfo(int n, ModeInformation* info) to determine if it meets needs (or skip this)
+            Status VideoModeGetInfo(int n, ModeInformation* info, size) to determine if it meets needs (or skip this)
             window = WindowCreate(mode, parameters)
-                VideoSubsystem:
-                    checks
+                // enqueues WINDOWED or FULLSCREEN
+                // enqueues FRONT
+                // enqueues RESIZE
+                // enqueues REDRAW
             while((status = EventPoll(&event)) {
                 switch(event.type) (
                     ...
@@ -55,15 +58,6 @@ Modularizing video
 New Video API
     Video Subsystem keeps track of window location, size, order in stacking, whether it's fullscreen, and its mode
     Application API exposed by video subsystem:
-        enum WindowParameter { END = 0, PREFERRED_SIZE = 1 /* w, h */, GET_SIZE_OR_FAIL = 2, FULLSCREEN_OVERSCAN = 3, FULLSCREEN_UNDERSCAN = 4};
-        int WindowCreate(int mode, int *parameters);
-            -> always produces "RESIZE" and "REDRAW" events - get width and height that way
-            Subsequent moves and stack order changes *might* not REDRAW - the system could decide to keep a backing-store of the image.
-            position and size may be selected by mouse...?  Requires a weird state machine to receive mouse events and redraw the screen until mouse released. 
-            if window mode !isFixedSize, mouse rubberbands window size, modulated to getNearestNotLarger()?
-            Maybe best to just pop up in a known position
-            Then move and resize are just UI state machines
-        void WindowClose(int window);
         Mode specific functions. These can return INVALID_CALL_FOR_MODE.
             Status WindowSetPaletteEntry(int window, int palette, int which, float r, float g, float b);
             Status WindowSetPalette(int window, int palette, float *rgbEntries);
@@ -86,33 +80,9 @@ New Video API
             call allocate to video mode for window
             if failed, flash screen, maybe debug overlay, and exit re-allocation
         CommitAllocations
-    int EventGet(Event *event);
+    int ProcessYield();
     void MouseGetPosition(int *x, int *y);
     void MouseGetButtonsPressed(int *b1, int *b2, int *b2); // 0 = not pressed, 1 = pressed
-    struct Event {
-        enum { MOUSEMOVE, MOUSEBUTTONPRESS, MOUSEBUTTONRELEASE, RAWKEYBOARD, RESIZE, FULLSCREEN, WINDOWED, FRONT, BEHIND, REDRAW } eventType;
-        union {
-            struct MouseMoveEvent {
-                int dx, dy;
-            } mouseMove;
-            struct MouseButtonPressEvent {
-                int button;
-            } mouseButtonPress;
-            struct MouseButtonReleaseEvent {
-                int button;
-            } mouseButtonRelease;
-            struct RawKeyboardEvent {
-                int keycode;
-            } rawKeyboard;
-            struct ResizeEvent {
-                int width, height;
-            } resize;
-            struct RedrawEvent {
-                int left, top, width, height;
-            } redraw;
-            uint8_t reserved[64];
-        };
-    };
     every window (only front window?) has a 2 or 4-pixel border
     need a video mode which is a solid color for background
     Some video game modes (TMS9918A, Woz, TIA) require full-screen.

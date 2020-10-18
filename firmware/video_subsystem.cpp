@@ -6,6 +6,42 @@
 // Generic videomode functions
 
 static VideoSubsystemDriver *driver;
+static int windowPosition[2];
+static int windowSize[2];
+static int windowMode = -1;
+
+template <class T, size_t SIZE>
+class StaticQueue
+{
+    int nextHead = 0;
+    int tail = 0;
+    T q[SIZE];
+public:
+    bool isFull() const
+    {
+        size_t length = (nextHead + SIZE - tail) % SIZE;
+        return length == SIZE - 1;
+    }
+    bool isEmpty() const
+    {
+        return nextHead == tail;
+    }
+    void enqNoCheck(const T& v)
+    {
+        q[nextHead] = v; // std::move(v);
+        nextHead = (nextHead + 1) % SIZE;
+    }
+    void deqNoCheck(T& v)
+    {
+        v = q[tail]; // std::move(q[tail]);
+        tail = (tail + 1) % SIZE;
+    }
+};
+
+bool eventsLost = false;
+StaticQueue<Event, 32> eventQueue;
+
+extern "C" {
 
 void VideoSetSubsystem(VideoSubsystemDriver *drv)
 {
@@ -117,11 +153,16 @@ void VideoModeSetBackgroundColor(float r, float g, float b)
     driver->setBackgroundColor(r, g, b);
 }
 
-int windowPosition[2] = {20, 20};
-int windowSize[2] = {640, 400};
-int windowMode = -1;
+static void enqueueOrSetEventsLost(const Event& ev)
+{
+    if(eventQueue.isFull()) {
+        eventsLost = true;
+    } else {
+        eventQueue.enqNoCheck(ev);
+    }
+}
 
-Status WindowCreate(int modeIndex, const char *name, int *parameters, int *window)
+Status WindowCreate(int modeIndex, const char *name, const int *parameters, int *window)
 {
     if(!driver) {
         return NO_VIDEO_SUBSYSTEM_SET;
@@ -131,6 +172,32 @@ Status WindowCreate(int modeIndex, const char *name, int *parameters, int *windo
     }
     *window = 0;
     windowMode = modeIndex;
+    // XXX Hack dimension for bringup
+    windowPosition[0] = 20;
+    windowPosition[1] = 20;
+    windowSize[0] = 640;
+    windowSize[1] = 400;
+
+    {
+        Event ev { Event::WINDOW_STATUS };
+        ev.windowStatus.status = WindowStatusEvent::WINDOWED;
+        enqueueOrSetEventsLost(ev);
+    }
+    {
+        Event ev { Event::WINDOW_STATUS };
+        ev.windowStatus.status = WindowStatusEvent::FRONT;
+        enqueueOrSetEventsLost(ev);
+    }
+    {
+        Event ev { Event::WINDOW_RESIZE };
+        ev.windowResize = { 0, windowSize[0], windowSize[1] };
+        enqueueOrSetEventsLost(ev);
+    }
+    {
+        Event ev { Event::WINDOW_REDRAW };
+        ev.windowRedraw = { 0, 0, 0, windowSize[0], windowSize[1] };
+        enqueueOrSetEventsLost(ev);
+    }
     return SUCCESS;
 }
 
@@ -138,4 +205,20 @@ void WindowClose(int window)
 {
     windowMode = -1;
 }
+
+int EventPoll(Event* ev)
+{
+    if(eventsLost) {
+        ev->eventType = Event::EVENTS_LOST;
+        eventsLost = false;
+        return 1;
+    }
+    if(eventQueue.isEmpty()) {
+        return 0;
+    }
+    eventQueue.deqNoCheck(*ev);
+    return 1;
+}
+
+};
 

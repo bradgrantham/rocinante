@@ -19,7 +19,6 @@ static Status CheckStatusAndReturn(Status status, const char *command)
 
 #define CHECK_FAIL(c) { Status s = CheckStatusAndReturn(c, #c); if(s != SUCCESS) { return COMMAND_FAILED; } }
 
-
 int doCommandVideoModes(int wordCount, char **words)
 {
     int modeCount;

@@ -172,9 +172,13 @@ struct NTSCModeDriver : public VideoModeDriver
         unsigned char *rowData) = 0;
 };
 
+extern "C" {
+
 void VideoSetSubsystem(VideoSubsystemDriver *drv);
 void VideoStopSubsystem();
 VideoSubsystemDriver* GetNTSCVideoSubsystem();
 void NTSCVideoRegisterDriver(NTSCModeDriver* driver);
+
+};
 
 #endif /* _VIDEO_MODE_INTERNAL_H_ */

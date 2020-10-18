@@ -103,7 +103,7 @@ inline void RGBToYIQ(float r, float g, float b, float *y, float *i, float *q)
 // 1.000000 -0.274788 -0.635691
 // 1.000000 -1.108545 1.709007
 
-// untested - using inverse 3x3 matrix above
+// Using inverse 3x3 matrix above.  Tested numerically to be the inverse of RGBToYIQ
 inline void YIQToRGB(float y, float i, float q, float *r, float *g, float *b)
 {
     *r = 1.0f * y + .946882f * i + 0.623557f * q;

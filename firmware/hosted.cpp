@@ -420,39 +420,7 @@ VideoSubsystemDriver* GetNTSCVideoSubsystem()
     return &NTSCVideo;
 }
 
-#define TAU (M_PI * 2)
-
-// phaseIn in radians
-// wave in whatever
-// DC component is average of wave
-// magnitude is largest of HF component
-// phase is phase of HF component
-void Decompose(float phaseIn, float wave[4], float *dc, float *magnitude, float *phase)
-{
-    *dc = (wave[0] + wave[1] + wave[2] + wave[3]) / 4;
-
-    float waveHF[4];
-    for(int i = 0; i < 4; i++) waveHF[i] = wave[i] - *dc;
-
-    *magnitude = 0;
-    for(int i = 0; i < 4; i++) *magnitude = std::max(*magnitude, fabsf(waveHF[i]));
-
-    for(int i = 0; i < 4; i++) waveHF[i] /= *magnitude;
-
-    float sine =
-        waveHF[0] * sinf(phaseIn + TAU / 4 * 0) + 
-        waveHF[1] * sinf(phaseIn + TAU / 4 * 1) + 
-        waveHF[2] * sinf(phaseIn + TAU / 4 * 2) + 
-        waveHF[3] * sinf(phaseIn + TAU / 4 * 3);
-    float cosine =
-        waveHF[0] * cosf(phaseIn + TAU / 4 * 0) + 
-        waveHF[1] * cosf(phaseIn + TAU / 4 * 1) + 
-        waveHF[2] * cosf(phaseIn + TAU / 4 * 2) + 
-        waveHF[3] * cosf(phaseIn + TAU / 4 * 3);
-
-    *phase = atan2(cosine, sine);
-    if(*phase < -.0001) *phase += TAU;
-}
+constexpr float TAU = M_PI * 2.0f;
 
 void NTSCWaveToYIQ(float tcycles, float wave[4], float *y, float *i, float *q)
 {
@@ -461,19 +429,19 @@ void NTSCWaveToYIQ(float tcycles, float wave[4], float *y, float *i, float *q)
     float waveHF[4];
     for(int j = 0; j < 4; j++) waveHF[j] = wave[j] - *y;
 
-    float w_t = tcycles * M_PI * 2 + 33.0f / 180.0f * M_PI;
+    float w_t = tcycles * TAU + 33.0f / 180.0f * M_PI;
 
     *i =
-        waveHF[0] * sinf(w_t + TAU / 4 * 0) + 
-        waveHF[1] * sinf(w_t + TAU / 4 * 1) + 
-        waveHF[2] * sinf(w_t + TAU / 4 * 2) + 
-        waveHF[3] * sinf(w_t + TAU / 4 * 3);
+        waveHF[0] * sinf(w_t + TAU / 4.0f * 0.0f) + 
+        waveHF[1] * sinf(w_t + TAU / 4.0f * 1.0f) + 
+        waveHF[2] * sinf(w_t + TAU / 4.0f * 2.0f) + 
+        waveHF[3] * sinf(w_t + TAU / 4.0f * 3.0f);
 
     *q =
-        waveHF[0] * cosf(w_t + TAU / 4 * 0) + 
-        waveHF[1] * cosf(w_t + TAU / 4 * 1) + 
-        waveHF[2] * cosf(w_t + TAU / 4 * 2) + 
-        waveHF[3] * cosf(w_t + TAU / 4 * 3);
+        waveHF[0] * cosf(w_t + TAU / 4.0f * 0.0f) + 
+        waveHF[1] * cosf(w_t + TAU / 4.0f * 1.0f) + 
+        waveHF[2] * cosf(w_t + TAU / 4.0f * 2.0f) + 
+        waveHF[3] * cosf(w_t + TAU / 4.0f * 3.0f);
 }
 
 float DACToSignal(uint8_t dacByte)
@@ -483,7 +451,7 @@ float DACToSignal(uint8_t dacByte)
     return std::clamp(luma, 0.0f, 1.0f);
 }
 
-void ConvertNTSCDACRow(uint8_t *dacRow, uint8_t (*screenRow)[3], int width, bool decodeColor)
+void NTSCConvertDACRowToRGB(uint8_t *dacRow, uint8_t (*screenRow)[3], int width, bool decodeColor)
 {
     if(decodeColor) {
         float wave[4];
@@ -527,7 +495,7 @@ void VideoModeFillGLTexture()
 
         // Call video mode drivers to fill the rest of the row 
 
-        ConvertNTSCDACRow(row, ScreenImage[y], ScreenWidth, addColorburst);
+        NTSCConvertDACRowToRGB(row, ScreenImage[y], ScreenWidth, addColorburst);
     }
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, ScreenWidth, ScreenHeight, 0, GL_RGB, GL_UNSIGNED_BYTE, ScreenImage);
 }
@@ -1169,6 +1137,16 @@ int setcooked()
 
 int main(int argc, char **argv)
 {
+    for(int j = 0; j < 100; j++) {
+        float r = drand48();
+        float g = drand48();
+        float b = drand48();
+        printf("%f %f %f -> ", r, g, b);
+        float y, i, q;
+        RGBToYIQ(r,g, b, &y, &i, &q);
+        YIQToRGB(y, i, q, &r, &g, &b);
+        printf("%f %f %f\n", r, g, b);
+    }
     initialize_ui();
 
     setraw();

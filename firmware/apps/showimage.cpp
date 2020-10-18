@@ -1,7 +1,8 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <errno.h>
-#include <string.h>
+#include <new>
+#include <cstdio>
+#include <cstdlib>
+#include <cerrno>
+#include <cstring>
 
 #include "videomode.h"
 #include "utility.h"
@@ -25,7 +26,15 @@ Loading for any image format means:
         store LUT value
 */
 
-static int whichPalette = 1;
+static Status CheckStatusAndReturn(Status status, const char *command)
+{
+    if(status != SUCCESS) {
+        printf("FATAL: %s failed with status %d\n", command, status);
+    }
+    return status;
+}
+
+#define CHECK_FAIL(c) { Status s = CheckStatusAndReturn(c, #c); if(s != SUCCESS) { return COMMAND_FAILED; } }
 
 int FindClosestColor(unsigned char palette[][3], int paletteSize, int r, int g, int b)
 {
@@ -48,10 +57,9 @@ int FindClosestColor(unsigned char palette[][3], int paletteSize, int r, int g, 
     return c;
 }
 
-enum {
-    MAX_ROW_SIZE = 4096,
-};
+constexpr int MAX_ROW_SIZE = 4096;
 
+#if 0
 static void SetPixelDirect(int x, int y, int c, VideoPixmapFormat pixelFormat, unsigned char *base, size_t rowSize)
 {
     switch(pixelFormat) {
@@ -91,45 +99,220 @@ static void SetPixelDirect(int x, int y, int c, VideoPixmapFormat pixelFormat, u
         }
     }
 }
+#endif
+
+void usage(const char *appName)
+{
+    printf("usage: %s [options] filename\n", appName);
+    printf("options\n");
+    printf("\t--1bit        Request window with 1 bit per pixel\n");
+    printf("\t--2bit        Request window with 2 bit per pixel\n");
+    printf("\t--4bit        Request window with 4 bit per pixel\n");
+    printf("\t--8bit        Request window with 8 bit per pixel (default)\n");
+    printf("\t--color       Request color window (default)\n");
+    printf("\t--gray        Request monochrome/grayscale window\n");
+}
+
+uint8_t *allocateImage(int x, int y, PixmapFormat fmt)
+{
+    size_t rowBytes = 0;
+    switch(fmt) {
+        case PIXMAP_1_BIT:
+            rowBytes = (x + 7) / 8;
+            break;
+        case PIXMAP_2_BITS:
+            rowBytes = (x + 3) / 4;
+            break;
+        case PIXMAP_4_BITS:
+            rowBytes = (x + 1) / 2;
+            break;
+        case PIXMAP_8_BITS:
+            rowBytes = x / 8;
+            break;
+    }
+    return new uint8_t[rowBytes * y];
+}
+
+bool calculatePalette(const char *filename, PaletteSize chosenPalette, float palette[256][3], int *entriesFilled)
+{
+    // Cheat
+    // Later do median cut a la pnmcolormap
+    for(int i = 0; i < 256; i++) {
+        palette[i][0] = ((i >> 0) & 0x3) * 1.0f / 3;
+        palette[i][1] = ((i >> 2) & 0x7) * 1.0f / 7;
+        palette[i][2] = ((i >> 5) & 0x7) * 1.0f / 7;
+    }
+    *entriesFilled = 256;
+    return true;
+}
+
+bool loadImageResized(const char *filename, int w, int h, float palette[256][3], int paletteSize, uint8_t *imageBuffer)
+{
+    printf("load \"%s\" resized to %d x %d\n", filename, w, h);
+    return true;
+}
+
+void redrawImage(int myWindow, uint8_t* imageBuffer, int windowWidth, int windowHeight, int x, int y, int w, int h)
+{
+    printf("redraw to %d x %d at %d, %d\n", w, h, x, y);
+    /* cheat and redraw everything */
+}
 
 static int AppShowImage(int argc, char **argv)
 {
     const char *filename;
+    int requestedModeBits = 8;
+    bool requestedColor = true;
 
-    if(argc > 2) {
-        // form "show N filename"
+    int myWindow;
+    int windowWidth;
+    int windowHeight;
+    uint8_t *imageBuffer = nullptr;
 
-        int mode = atoi(argv[1]);
-        if((mode < 0) || (mode >= VideoGetModeCount())) {
-            printf("mode %d is out of range; only %d modes (list modes with \"modes\")\n", mode, VideoGetModeCount());
+    const char *appName = argv[0];
+    argv++;
+    argc--;
+
+    while(argc > 1) {
+        if(strcmp(argv[0], "--8bit") == 0) {
+            requestedModeBits = 8;
+            argc--; argv++;
+        } else if(strcmp(argv[0], "--4bit") == 0) {
+            requestedModeBits = 4;
+            argc--; argv++;
+        } else if(strcmp(argv[0], "--2bit") == 0) {
+            requestedModeBits = 2;
+            argc--; argv++;
+        } else if(strcmp(argv[0], "--1bit") == 0) {
+            requestedModeBits = 1;
+            argc--; argv++;
+        } else if(strcmp(argv[0], "--color") == 0) {
+            requestedColor = true;
+            argc--; argv++;
+        } else if(strcmp(argv[0], "--gray") == 0) {
+            requestedColor = false;
+            argc--; argv++;
+        } else {
+            usage(appName);
             return COMMAND_FAILED;
         }
-        if(VideoModeGetType(mode) != VIDEO_MODE_PIXMAP) {
-            printf("mode %d is not a pixmap mode (list modes with \"modes\")\n", mode);
-            return COMMAND_FAILED;
-        }
-        VideoSetMode(mode);
-
-        filename = argv[2];
-    } else {
-        // form "show filename"
-
-        enum VideoModeType type = VideoModeGetType(VideoGetCurrentMode());
-        
-        if(type != VIDEO_MODE_PIXMAP) {
-            printf("current mode is not a pixmap; use \"modes\"\n");
-            printf("and \"mode\" to choose and set a pixmap mode\n");
-            return COMMAND_FAILED;
-        }
-
-        filename = argv[1];
     }
 
-    VideoPixmapInfo info;
-    VideoPixmapParameters params;
-    VideoModeGetInfo(VideoGetCurrentMode(), &info);
-    VideoModeGetParameters(&params);
+    if(argc < 1) {
+        usage(appName);
+        return COMMAND_FAILED;
+    }
 
+    filename = argv[0];
+
+    int chosenMode = -1;
+    int chosenBits = 0;
+    PixmapFormat chosenFormat;
+    PaletteSize chosenPalette;
+    int modeCount;
+    CHECK_FAIL(VideoGetModeCount(&modeCount));
+    for(int i = 0; i < modeCount; i++) {
+
+        VideoModeType type;
+        CHECK_FAIL(VideoModeGetType(i, &type));
+
+        switch(type) {
+            case VIDEO_MODE_PIXMAP: {
+                VideoPixmapInfo info;
+                info.type = VIDEO_MODE_PIXMAP;
+                CHECK_FAIL(VideoModeGetInfo(i, &info, sizeof(info)));
+                bool isColor = !info.mono;
+                int bits = 0;
+                switch(info.pixmapFormat) {
+                    case PIXMAP_1_BIT: bits = 1; break;
+                    case PIXMAP_2_BITS: bits = 2; break;
+                    case PIXMAP_4_BITS: bits = 4; break;
+                    case PIXMAP_8_BITS: bits = 8; break;
+                }
+                if((requestedColor == isColor) && (requestedModeBits >= bits)) {
+                    // matches the requirements
+                    if((chosenMode == -1) || (bits < chosenBits)) {
+                        // better than the previous choice (for memory use)
+                        chosenMode = i;
+                        chosenBits = bits;
+                        chosenFormat = info.pixmapFormat;
+                        chosenPalette = info.paletteSize;
+                    }
+                }
+                break;
+            }
+            default:
+                // ignore
+                break;
+        }
+    }
+
+    if(chosenMode == -1) {
+        printf("couldn't find %s mode matching %d bits per pixel \n", requestedColor ? "color" : "grayscale", requestedModeBits);
+        usage(appName);
+        return COMMAND_FAILED;
+    }
+
+    float palette[256][3];
+    int paletteSize;
+    if(!calculatePalette(filename, chosenPalette, palette, &paletteSize)) {
+        printf("couldn't calculate palette\n");
+        return COMMAND_FAILED;
+    }
+    // Could load image here and calculate palette
+
+    CHECK_FAIL(WindowCreate(chosenMode, "showimage", nullptr, &myWindow));
+
+    bool quit = false;
+    while(!quit) {
+        Event ev;
+        while(EventPoll(&ev)) {
+            switch(ev.eventType) {
+                // We don't check the window ID because we only have the one
+                case Event::WINDOW_STATUS: {
+                    const auto& status = ev.windowStatus;
+                    switch(status.status) {
+                        case WindowStatusEvent::CLOSE:
+                            quit = true;
+                            break;
+                        default:
+                            // ignore other status changes
+                            break;
+                    }
+                    break;
+                }
+                case Event::WINDOW_RESIZE: {
+                    const auto& resize = ev.windowResize;
+                    delete[] imageBuffer;
+                    windowWidth = resize.width;
+                    windowHeight = resize.height;
+                    try {
+                        imageBuffer = allocateImage(windowWidth, windowHeight, chosenFormat);
+                    } catch (std::bad_alloc& ba) {
+                        printf("Out of memory.\n"); fflush(stdout);
+                        return COMMAND_FAILED;
+                    }
+                    if(!loadImageResized(filename, windowWidth, windowHeight, palette, paletteSize, imageBuffer)) {
+                        printf("Couldn't load image resized.\n"); fflush(stdout);
+                        return COMMAND_FAILED;
+                    }
+                    break;
+                }
+                case Event::WINDOW_REDRAW: {
+                    const auto& redraw = ev.windowRedraw;
+                    redrawImage(myWindow, imageBuffer, windowWidth, windowHeight, redraw.left, redraw.top, redraw.width, redraw.height);
+                    break;
+                }
+                default: {
+                    // ignore other events;
+                    break;
+                }
+            }
+        }
+        fflush(stdout);
+    }
+
+#if 0
     FILE *fp;
     fp = fopen (filename, "rb");
     if(fp == NULL) {
@@ -348,8 +531,11 @@ static int AppShowImage(int argc, char **argv)
     free(palette);
     free(rowError);
     free(rowRGB);
+#endif
 
-    return COMMAND_CONTINUE;
+    printf("%s\n", (true and false) ? "no" : "yes");
+
+    return COMMAND_SUCCESS;
 }
 
 static void RegisterMyApp(void) __attribute__((constructor));
