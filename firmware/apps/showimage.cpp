@@ -36,15 +36,20 @@ static Status CheckStatusAndReturn(Status status, const char *command)
 
 #define CHECK_FAIL(c) { Status s = CheckStatusAndReturn(c, #c); if(s != SUCCESS) { return COMMAND_FAILED; } }
 
-int FindClosestColor(unsigned char palette[][3], int paletteSize, int r, int g, int b)
+int MakeGrayscale8(float r, float g, float b)
 {
-    float bestDiff = 200000;  // skosh above the maximum difference, 3 * 65536
+    return (0.2126f * r + 0.7152f * g + 0.0722f * b) * 255.0f;
+}
+
+int FindClosestColor(float palette[][3], int paletteSize, float r, float g, float b)
+{
+    float bestDiff = 2;  // max should be 1.7321
     int c = -1;
 
     for(int i = 0; i < paletteSize; i++) {
-        float pr = (unsigned int)palette[i][0];
-        float pg = (unsigned int)palette[i][1];
-        float pb = (unsigned int)palette[i][2];
+        float pr = palette[i][0];
+        float pg = palette[i][1];
+        float pb = palette[i][2];
         float diff = (pr - r) * (pr - r) + (pg - g) * (pg - g) + (pb - b) * (pb - b);
         if(diff == 0) {
             return i;
@@ -59,18 +64,17 @@ int FindClosestColor(unsigned char palette[][3], int paletteSize, int r, int g, 
 
 constexpr int MAX_ROW_SIZE = 4096;
 
-#if 0
-static void SetPixelDirect(int x, int y, int c, VideoPixmapFormat pixelFormat, unsigned char *base, size_t rowSize)
+static void setPixel(int x, int y, int c, PixmapFormat pixelFormat, uint8_t *base, size_t rowSize)
 {
     switch(pixelFormat) {
-        case VideoPixmapFormat::BITMAP: {
+        case PIXMAP_1_BIT: {
             unsigned char value = c << (x % 8);
             unsigned char mask = ~(1 << (x % 8));
             unsigned char *byte = base + y * rowSize + x / 8;
             *byte = (*byte & mask) | value;
             break;
         }
-        case VideoPixmapFormat::GRAY_2BIT:
+        case PIXMAP_2_BITS:
         {
             int whichByte = x / 4;
             int whichTwoBits = x % 4;
@@ -80,8 +84,7 @@ static void SetPixelDirect(int x, int y, int c, VideoPixmapFormat pixelFormat, u
             *byte = (*byte & mask) | value;
             break;
         }
-        case VideoPixmapFormat::GRAY_4BIT:
-        case VideoPixmapFormat::PALETTE_4BIT:
+        case PIXMAP_4_BITS:
         {
             int whichByte = x / 2;
             int whichNybble = x % 2;
@@ -91,15 +94,13 @@ static void SetPixelDirect(int x, int y, int c, VideoPixmapFormat pixelFormat, u
             *byte = (*byte & mask) | value;
             break;
         }
-        case VideoPixmapFormat::GRAY_8BIT:
-        case VideoPixmapFormat::PALETTE_8BIT:
+        case PIXMAP_8_BITS:
         {
             base[y * rowSize + x] = c;
             break;
         }
     }
 }
-#endif
 
 void usage(const char *appName)
 {
@@ -127,7 +128,7 @@ uint8_t *allocateImage(int x, int y, PixmapFormat fmt)
             rowBytes = (x + 1) / 2;
             break;
         case PIXMAP_8_BITS:
-            rowBytes = x / 8;
+            rowBytes = x;
             break;
     }
     return new uint8_t[rowBytes * y];
@@ -137,18 +138,187 @@ bool calculatePalette(const char *filename, PaletteSize chosenPalette, float pal
 {
     // Cheat
     // Later do median cut a la pnmcolormap
+    int entries = 0;
+    switch(chosenPalette) {
+        case NO_PALETTE:
+            entries = 0;
+            break;
+        case PALETTE_4_ENTRIES:
+            entries = 4;
+            break;
+        case PALETTE_16_ENTRIES:
+            entries = 16;
+            break;
+        case PALETTE_256_ENTRIES:
+            entries = 256;
+            break;
+    }
+
+    if(entries != 256) {
+        return false;
+    }
+
     for(int i = 0; i < 256; i++) {
-        palette[i][0] = ((i >> 0) & 0x3) * 1.0f / 3;
-        palette[i][1] = ((i >> 2) & 0x7) * 1.0f / 7;
-        palette[i][2] = ((i >> 5) & 0x7) * 1.0f / 7;
+        palette[i][0] = ((i >> 0) & 0x3) / 3.0f;
+        palette[i][1] = ((i >> 2) & 0x7) / 7.0f;
+        palette[i][2] = ((i >> 5) & 0x7) / 7.0f;
     }
     *entriesFilled = 256;
     return true;
 }
 
-bool loadImageResized(const char *filename, int w, int h, float palette[256][3], int paletteSize, uint8_t *imageBuffer)
+bool readRowAsRGB(FILE *fp, int ppmtype, int width, uint8_t (*rowRGB)[3])
 {
-    printf("load \"%s\" resized to %d x %d\n", filename, w, h);
+    if(ppmtype == 6) {
+        if(fread(rowRGB, 3, width, fp) != (size_t)width) {
+            return false;
+        }
+    } else if(ppmtype == 5) {
+        if(fread(rowRGB, 1, width, fp) != (size_t)width) {
+            return false;
+        }
+        // expand P5 row to P6 RGB
+        for(int i = 0; i < width; i++) {
+            int x = width - 1 - i;
+            unsigned char gray = ((unsigned char *)rowRGB)[x];
+            rowRGB[x][0] = gray;
+            rowRGB[x][1] = gray;
+            rowRGB[x][2] = gray;
+        }
+    }
+    return true;
+}
+
+bool loadImageResized(const char *filename, int imageWidth, int imageHeight, float palette[256][3], int paletteSize, bool isColor, PixmapFormat chosenFormat, uint8_t *imageBuffer)
+{
+    FILE *fp;
+    fp = fopen (filename, "rb");
+    if(fp == NULL) {
+        printf("ERROR: couldn't open \"%s\" for reading, errno %d\n", filename, errno);
+        return false;
+    }
+
+    int ppmtype, max, width, height;
+
+    if(fscanf(fp, "P%d %d %d %d ", &ppmtype, &width, &height, &max) != 4) {
+        printf("couldn't read PPM header from \"%s\"\n", filename);
+        fclose(fp);
+        return false;
+    }
+
+    if((ppmtype != 5) && (ppmtype != 6)) {
+        printf("unsupported image type %d for \"%s\"\n", ppmtype, filename);
+        fclose(fp);
+        return false;
+    }
+
+    if(width > MAX_ROW_SIZE) {
+	printf("ERROR: width %d of image in \"%s\" is too large for static row of %u pixels\n",
+            width, filename, MAX_ROW_SIZE);
+        fclose(fp);
+        return false;
+    }
+
+    printf("image is %u by %u\n", width, height);
+
+    uint8_t (*rowRGB)[3];
+    rowRGB = (uint8_t (*)[3]) malloc(sizeof(rowRGB[0]) * MAX_ROW_SIZE);
+    if(rowRGB == NULL) {
+        printf("failed to allocate row for pixel data\n");
+        fclose(fp);
+        return false;
+    }
+
+    float (*rowError)[MAX_ROW_SIZE][3]; // + 1 in either direction
+    int currentErrorRow = 0;
+    rowError = (float (*)[MAX_ROW_SIZE][3])malloc(sizeof(rowError[0]) * 2);
+    memset(rowError, 0, sizeof(rowError[0]) * 2);
+    if(rowError == NULL) {
+        printf("failed to allocate row for error data\n");
+        free(rowRGB);
+        fclose(fp);
+        return false;
+    }
+
+    int colorShift = 0;
+    int rowSize;
+    switch(chosenFormat) {
+        case PIXMAP_1_BIT: colorShift = 7; rowSize = (imageWidth + 7) / 8; break;
+        case PIXMAP_2_BITS: colorShift = 6; rowSize = (imageWidth + 3) / 4; break;
+        case PIXMAP_4_BITS: colorShift = 4; rowSize = (imageWidth + 1) / 2; break;
+        case PIXMAP_8_BITS: colorShift = 0; rowSize = imageWidth; break;
+    }
+
+    int prevY = -1;
+    for(int srcRow = 0; srcRow < height; srcRow++) {
+        if(!readRowAsRGB(fp, ppmtype, width, rowRGB)) {
+            printf("ERROR: couldn't read row %d from \"%s\"\n", srcRow, filename);
+            free(rowError);
+            free(rowRGB);
+            return false;
+        }
+        
+        int y = (srcRow * imageHeight + imageHeight - 1) / height;
+
+        if(y != prevY) {
+
+            if(y >= imageHeight) {
+                printf("hm, y was >= height, skipped\n");
+            }
+
+            float (*errorThisRow)[3] = rowError[currentErrorRow] + 1; // So we can access -1 without bounds check
+
+            int nextErrorRow = (currentErrorRow + 1) % 2;
+            memset(rowError[nextErrorRow], 0, sizeof(rowError[0]));
+            float (*errorNextRow)[3] = rowError[nextErrorRow] + 1;   // So we can access -1 without bounds check
+
+            for(int x = 0; x < imageWidth; x++) {
+                int srcCol = (x * width + width - 1) / imageWidth;
+
+                // get the color with error diffused from previous pixels
+                float correctedRGB[3];
+                for(int i = 0; i < 3; i++) {
+                    correctedRGB[i] = (rowRGB[srcCol][i] / 255.0f) + errorThisRow[x][i];
+                }
+
+                // Find the closest color in our palette
+                int c;
+                if(isColor) { // XXX should do this comparison in a template to avoid branch
+                    c = FindClosestColor(palette, paletteSize, correctedRGB[0], correctedRGB[1], correctedRGB[2]);
+                } else {
+                    c = MakeGrayscale8(correctedRGB[0], correctedRGB[1], correctedRGB[2]) >> colorShift;
+                }
+
+                // XXX Should templatize image buffer format to avoid branch
+                setPixel(x, y, c, chosenFormat, imageBuffer, rowSize);
+
+                // Calculate our error between what we wanted and what we got
+                // and distribute it a la Floyd-Steinberg
+                float error[3];
+                for(int i = 0; i < 3; i++) {
+                    error[i] = correctedRGB[i] - palette[c][i];
+                }
+                for(int i = 0; i < 3; i++) {
+                    errorThisRow[x + 1][i] += error[i] * 7.0f / 16.0f;
+                }
+                for(int i = 0; i < 3; i++) {
+                    errorNextRow[x - 1][i] += error[i] * 3.0f / 16.0f;
+                }
+                for(int i = 0; i < 3; i++) {
+                    errorNextRow[x    ][i] += error[i] * 5.0f / 16.0f;
+                }
+                for(int i = 0; i < 3; i++) {
+                    errorNextRow[x + 1][i] += error[i] * 1.0f / 16.0f;
+                }
+            }
+            prevY = y;
+            currentErrorRow = nextErrorRow;
+        }
+    }
+
+    fclose(fp);
+    free(rowError);
+    free(rowRGB);
     return true;
 }
 
@@ -156,6 +326,27 @@ void redrawImage(int myWindow, uint8_t* imageBuffer, int windowWidth, int window
 {
     printf("redraw to %d x %d at %d, %d\n", w, h, x, y);
     /* cheat and redraw everything */
+}
+
+void writeImage(const char *filename, float (*palette)[3], int paletteSize, bool chosenIsColor, PixmapFormat chosenFormat, int width, int height, const uint8_t *imageBuffer)
+{
+    if(chosenFormat != PIXMAP_8_BITS) {
+        printf("writeImage: format %d not supported\n", chosenFormat);
+        return;
+    }
+    FILE *fp = fopen(filename, "wb");
+    fprintf(fp, "P6 %d %d 255\n", width, height);
+    for(int y = 0; y < height; y++) {
+        for(int x = 0; x < width; x++) {
+            int c = imageBuffer[y * width + x];
+            uint8_t rgb[3];
+            rgb[0] = palette[c][0] * 255;
+            rgb[1] = palette[c][1] * 255;
+            rgb[2] = palette[c][2] * 255;
+            fwrite(rgb, 3, 1, fp);
+        }
+    }
+    fclose(fp);
 }
 
 static int AppShowImage(int argc, char **argv)
@@ -206,9 +397,10 @@ static int AppShowImage(int argc, char **argv)
     filename = argv[0];
 
     int chosenMode = -1;
-    int chosenBits = 0;
+    int chosenBits;
     PixmapFormat chosenFormat;
     PaletteSize chosenPalette;
+    bool chosenIsColor;
     int modeCount;
     CHECK_FAIL(VideoGetModeCount(&modeCount));
     for(int i = 0; i < modeCount; i++) {
@@ -237,6 +429,7 @@ static int AppShowImage(int argc, char **argv)
                         chosenBits = bits;
                         chosenFormat = info.pixmapFormat;
                         chosenPalette = info.paletteSize;
+                        chosenIsColor = isColor;
                     }
                 }
                 break;
@@ -253,11 +446,18 @@ static int AppShowImage(int argc, char **argv)
         return COMMAND_FAILED;
     }
 
-    float palette[256][3];
-    int paletteSize;
-    if(!calculatePalette(filename, chosenPalette, palette, &paletteSize)) {
-        printf("couldn't calculate palette\n");
+    float (*palette)[3];
+    palette = (float (*)[3])malloc(sizeof(palette[0]) * 256);
+    if(palette == NULL) {
+        printf("failed to allocate palette\n");
         return COMMAND_FAILED;
+    }
+    int paletteSize;
+    if(chosenIsColor) {
+        if(!calculatePalette(filename, chosenPalette, palette, &paletteSize)) {
+            printf("couldn't calculate palette\n");
+            return COMMAND_FAILED;
+        }
     }
     // Could load image here and calculate palette
 
@@ -292,7 +492,7 @@ static int AppShowImage(int argc, char **argv)
                         printf("Out of memory.\n"); fflush(stdout);
                         return COMMAND_FAILED;
                     }
-                    if(!loadImageResized(filename, windowWidth, windowHeight, palette, paletteSize, imageBuffer)) {
+                    if(!loadImageResized(filename, windowWidth, windowHeight, palette, paletteSize, chosenIsColor, chosenFormat, imageBuffer)) {
                         printf("Couldn't load image resized.\n"); fflush(stdout);
                         return COMMAND_FAILED;
                     }
