@@ -1,6 +1,16 @@
 #include <cassert>
 #include <videomodeinternal.h>
 
+int CalculatePixelStorageRequired(PixmapFormat fmt, int length)
+{
+    switch(fmt) {
+        case PIXMAP_1_BIT: return (length + 7) / 8; break;
+        case PIXMAP_2_BITS: return (length + 3) / 4; break;
+        case PIXMAP_4_BITS: return (length + 1) / 2; break;
+        case PIXMAP_8_BITS: return length; break;
+    }
+}
+
 class PixmapPalettizedMode : public NTSCModeDriver, public PixmapModeDriver
 {
     PixmapFormat fmt;
@@ -109,9 +119,96 @@ public:
         }
     }
 
-    virtual bool reallocateForWindow(int windowSpanCount, struct ScanlineSpanList* windowSpans, const VideoWindowDescriptor* oldWindow, void* vramTemp, uint32_t *rootOffset, VideoSubsystemAllocateFunc allocate, bool copyContents)
+    struct PixmapAllocation
     {
-        // Reallocate here 
+        uint32_t palettes[2][256];
+        uint32_t scanlineCount;
+        uint32_t scanlineTableOffset;
+    };
+
+    struct SpanIdentifier
+    {
+        uint32_t spanCount;
+        uint32_t spanArrayOffset;
+    };
+
+    struct PixmapSpan : ScanlineSpanList
+    {
+        uint16_t start;
+        uint16_t length;
+        uint32_t pixelsOffset;
+    };
+    // Reuse ScanlineSpan
+
+    // Pixmap's rootAllocation points to a PixmapAllocation.
+    // scanlineTableOffset points to an array of uint32_t, one for each scanline.
+    // Each scanline's uint32_t points to an array of uint32_t, one for each span.
+    // Each span's uint32_t points to an array of pixel data which is unpacked into NTSC waves
+
+    template <typename T>
+    T& GetAllocationFromVRAM(const VideoWindowDescriptor* window, size_t offset)
+    {
+        return *(T*)(((uint8_t*)window->vram) + offset);
+    }
+
+    PixmapAllocation& GetPixmapAllocation(const VideoWindowDescriptor* window)
+    {
+        return GetAllocationFromVRAM<PixmapAllocation>(window, window->rootOffset);
+    }
+
+    // So to get the span header for a row, GetScanlineSpanIdentifiers(window, pixmapAllocation)[row]
+    SpanIdentifier* GetScanlineSpanIdentifiers(VideoWindowDescriptor* window, const PixmapAllocation& pixmapAllocation)
+    {
+        return &GetAllocationFromVRAM<SpanIdentifier>(window, pixmapAllocation.scanlineTableOffset);
+    }
+
+    // So span N is GetSpans(window, spanIdentifier)[span]
+    PixmapSpan* GetSpans(VideoWindowDescriptor* window, const SpanIdentifier& spanIdentifier)
+    {
+        return &GetAllocationFromVRAM<PixmapSpan>(window, spanIdentifier.spanArrayOffset);
+    }
+
+    virtual bool reallocateForWindow(int scanlineCount, struct ScanlineSpanList* scanlineSpans, const VideoWindowDescriptor* oldWindow, void* vramTemp, uint32_t *rootOffset, VideoSubsystemAllocateFunc allocate, bool copyContents)
+    {
+        *rootOffset = allocate(sizeof(PixmapAllocation));
+        if(*rootOffset == ALLOCATION_FAILED) {
+            return false;
+        }
+        // XXX check allocation result
+
+        VideoWindowDescriptor window { vramTemp, *rootOffset };
+
+        auto pixmapAllocation = GetPixmapAllocation(&window);
+        pixmapAllocation.scanlineCount = scanlineCount;
+        pixmapAllocation.scanlineTableOffset = allocate(sizeof(SpanIdentifier) * scanlineCount);
+        if(pixmapAllocation.scanlineTableOffset == ALLOCATION_FAILED) {
+            return false;
+        }
+        // XXX check allocation result
+
+        auto scanlineArray = GetScanlineSpanIdentifiers(&window, pixmapAllocation);
+        for(int i = 0; i < scanlineCount; i++) {
+            auto& spanIdentifier = scanlineArray[i];
+
+            spanIdentifier.spanCount = scanlineSpans[i].count;
+            spanIdentifier.spanArrayOffset = allocate(sizeof(ScanlineSpan) * scanlineSpans[i].count);
+            if(spanIdentifier.spanArrayOffset == ALLOCATION_FAILED) {
+                return false;
+            }
+            // XXX check allocation result
+
+            auto spanArray = GetSpans(&window, spanIdentifier);
+            for(int j = 0; j < scanlineSpans[i].count; j++) {
+                spanArray[j].start = scanlineSpans[i].spans[j]->start;
+                spanArray[j].length = scanlineSpans[i].spans[j]->length;
+                spanArray[j].pixelsOffset = allocate(CalculatePixelStorageRequired(fmt, spanArray[j].length));
+                if(spanArray[j].pixelsOffset == ALLOCATION_FAILED) {
+                    return false;
+                    // ignore copyContents for now
+                }
+            }
+        }
+
         return true;
     }
 

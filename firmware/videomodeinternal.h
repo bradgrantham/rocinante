@@ -11,14 +11,13 @@
 // A window is represented as an array of one or more ScanlineSpan per scan line
 struct ScanlineSpan
 {
-    int start;
-    int length;
+    uint16_t start;
+    uint16_t length;
 };
 
 struct ScanlineSpanList
 {
-    int start;
-    int count;
+    uint16_t count;
     struct ScanlineSpan **spans;
 };
 
@@ -73,6 +72,7 @@ struct VideoModeDriver
     therefore no pointers within VRAM, only offsets
     if vram is nullptr and oldOffset is 0xFFFFFFFF, then window didn't exist before
     */
+    static constexpr uint32_t ALLOCATION_FAILED = 0xFFFFFFFF;
     virtual bool reallocateForWindow(int windowScanlineCount, struct ScanlineSpanList* scanlines,
         const VideoWindowDescriptor* oldWindow,
         void* vramTemp, uint32_t *rootOffset,
