@@ -1,4 +1,5 @@
 come back to:
+    be consistent with window, windowIndex, windowID : windowID?  Make a typedef int "Window"?  But Window is already the struct for windowing
     are VideoGetModeCount() and VideoModeGetType() inconsistent? - consider, make consistent, record policy here
 ----------------------------
 Stated explicitly:

@@ -3,6 +3,7 @@
 #include <cstdlib>
 #include <cerrno>
 #include <cstring>
+#include <memory>
 
 #include "videomode.h"
 #include "utility.h"
@@ -459,9 +460,22 @@ static int AppShowImage(int argc, char **argv)
             return COMMAND_FAILED;
         }
     }
-    // Could load image here and calculate palette
 
     CHECK_FAIL(WindowCreate(chosenMode, "showimage", nullptr, &myWindow));
+    {
+        uint8_t (*palette8)[3] = (uint8_t (*)[3])malloc(sizeof(uint8_t[3]) * 256);
+        if(palette == NULL) {
+            printf("failed to allocate palette\n");
+            return COMMAND_FAILED;
+        }
+        for(int i = 0; i < paletteSize; i++) {
+            palette8[i][0] = palette[i][0] / 255.0f;
+            palette8[i][1] = palette[i][1] / 255.0f;
+            palette8[i][2] = palette[i][2] / 255.0f;
+        }
+        CHECK_FAIL(WindowPixmapSetPalette(myWindow, PALETTE0, palette8));
+        free(palette8);
+    }
 
     bool quit = false;
     while(!quit) {
@@ -495,6 +509,9 @@ static int AppShowImage(int argc, char **argv)
                     if(!loadImageResized(filename, windowWidth, windowHeight, palette, paletteSize, chosenIsColor, chosenFormat, imageBuffer)) {
                         printf("Couldn't load image resized.\n"); fflush(stdout);
                         return COMMAND_FAILED;
+                    }
+                    for(int i = 0; i < windowHeight; i++) {
+                        CHECK_FAIL(WindowPixmapSetRowPalette(myWindow, i, PALETTE0));
                     }
                     break;
                 }

@@ -178,7 +178,11 @@ Status WindowCreate(int mode, const char *name, const int *parameters, int *wind
 
 Status WindowSetTitle(int window, const char *name);
 
-void WindowClose(int window);
+Status WindowClose(int window);
+
+enum PaletteIndex { PALETTE0, PALETTE1 };
+Status WindowPixmapSetPalette(int window, PaletteIndex whichPalette, uint8_t (*palette)[3]);
+Status WindowPixmapSetRowPalette(int window, int row, PaletteIndex whichPalette);
 
 // Event stuff should be in a separate header
 

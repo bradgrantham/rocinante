@@ -18,7 +18,7 @@ struct ScanlineSpan
 struct ScanlineSpanList
 {
     uint16_t count;
-    struct ScanlineSpan **spans;
+    struct ScanlineSpan *spans;
 };
 
 // A video mode driver allocates a private data structure for each
@@ -88,7 +88,6 @@ struct PixmapModeDriver
 {
     virtual PixmapFormat getPixmapFormat() const = 0;
     virtual PaletteSize getPaletteSize() const = 0;
-    enum PaletteIndex { PALETTE0, PALETTE1 };
     virtual void setPaletteContents(const VideoWindowDescriptor* window,
         PaletteIndex which, unsigned char (*palette)[3]) = 0;
     virtual void setRowPalette(const VideoWindowDescriptor* window,

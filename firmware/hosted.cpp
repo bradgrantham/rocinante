@@ -283,8 +283,6 @@ void NTSCVideoRegisterDriver(NTSCModeDriver* driver)
     drivers[driverCount++] = driver;
 }
 
-unsigned char VRAM[128 * 1024];
-
 int debugOverlayEnabled = 0;
 
 #define debugDisplayWidth 19

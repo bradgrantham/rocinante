@@ -24,6 +24,8 @@ typedef enum Status {
     INVALID_STRUCTURE_TYPE = -4,        // The "type" parameter did not match the size of the requested structure
     VIDEO_MODE_DOES_NOT_MATCH = -5,     // The "type" parameter to VideoModeGetInfo did not match the requested mode
     VIDEO_MODE_INFO_UNSUPPORTED = -6,   // The video subsystem does not support returning info on the requested mode
+    INVALID_WINDOW = -7,                // A window was not open or valid with the provided index
+    INVALID_PARAMETER_VALUE = -8,       // A passed parameter was outside the valid range
 } Status;
 
 int InputGetChar(void);
