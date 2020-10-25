@@ -21,6 +21,13 @@ struct ScanlineSpanList
     struct ScanlineSpan *spans;
 };
 
+struct ScanlineRangeList
+{
+    uint16_t start;
+    uint16_t count;
+    ScanlineSpanList *scanlines;
+};
+
 // A video mode driver allocates a private data structure for each
 // window.  The root of the allocation is stored here, and the meaning
 // of the data starting at the rootOffset within vram is specific to
@@ -71,13 +78,17 @@ struct VideoModeDriver
         vram as quickly as possible during VBLANK
     therefore no pointers within VRAM, only offsets
     if vram is nullptr and oldOffset is 0xFFFFFFFF, then window didn't exist before
+    if driver sets enqueueRedrawEvents, then subsystem should enqueue REDRAW for at least all exposed regions
+        a backing store window like advanced Pixmap or Text or Wolfenstein could set to false;
     */
     static constexpr uint32_t ALLOCATION_FAILED = 0xFFFFFFFF;
-    virtual bool reallocateForWindow(int windowScanlineCount, struct ScanlineSpanList* scanlines,
+    virtual bool reallocateForWindow(uint32_t width, uint32_t height,
+        int windowScanlineRangeCount, const struct ScanlineRangeList* scanlineRanges,
         const VideoWindowDescriptor* oldWindow,
         void* vramTemp, uint32_t *rootOffset,
         VideoSubsystemAllocateFunc allocate,
-        bool copyContents) = 0;
+        bool copyContents,
+        bool *enqueueExposedRedrawEvents) = 0;
 };
 
 

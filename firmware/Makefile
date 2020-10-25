@@ -5,7 +5,7 @@ FIRMWARE_VERSION    := $(shell date)
 
 CXXFLAGS        +=       --std=c++17 -Wall -Werror
 CFLAGS          +=      -std=c99 -Wall -Werror
-OPT             =       -O2 -g -funroll-loops -ffast-math
+OPT             =       -g # -O2 -g -funroll-loops -ffast-math
 
 # TOOLROOT        ?=      $(HOME)/trees/gcc-arm-none-eabi-5_3-2016q1
 TOOLROOT        ?=      $(HOME)/packages/gcc-arm-none-eabi-7-2018-q2-update

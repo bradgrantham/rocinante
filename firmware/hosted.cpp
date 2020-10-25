@@ -1135,7 +1135,7 @@ int setcooked()
 
 int main(int argc, char **argv)
 {
-    for(int j = 0; j < 100; j++) {
+    if(0)for(int j = 0; j < 100; j++) {
         float r = drand48();
         float g = drand48();
         float b = drand48();

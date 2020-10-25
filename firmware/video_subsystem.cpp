@@ -1,6 +1,7 @@
 #include <typeinfo>
 #include <cstring>
 #include <cstdio>
+#include <memory>
 #include <videomodeinternal.h>
 
 // Generic videomode functions
@@ -92,7 +93,7 @@ Status VideoModeGetInfo(int modeIndex, void *infovoid, size_t infoSize)
         return INVALID_STRUCTURE_TYPE;
     }
 
-    memset(infobase + sizeof(VideoModeType), 0xA5, infoSize - sizeof(VideoModeType));
+    memset((uint8_t*)infovoid + sizeof(VideoModeType), 0xA5, infoSize - sizeof(VideoModeType));
 
     switch(type) {
 
@@ -165,9 +166,9 @@ int top = 0;
 
 uint32_t allocateVRAM(size_t size)
 {
-    // printf("allocateVRAM(%zd) at %d\n", size, top); fflush(stdout);
+    printf("allocateVRAM(%zd) at %d\n", size, top); fflush(stdout);
     if(top + size >= sizeof(VRAM)) {
-        // printf(" --> failed\n"); fflush(stdout);
+        printf(" --> failed\n"); fflush(stdout);
         return VideoModeDriver::ALLOCATION_FAILED;
     }
     int where = top;
@@ -199,34 +200,70 @@ Status WindowCreate(int modeIndex, const char *name, const int *parameters, int 
     windowList[*windowIndex].mode = modeIndex;
     windowList[*windowIndex].position[0] = 20;
     windowList[*windowIndex].position[1] = 20;
-    windowList[*windowIndex].size[0] = 384;
-    windowList[*windowIndex].size[1] = 230;
+    windowList[*windowIndex].size[0] = 384 - 40;
+    windowList[*windowIndex].size[1] = 230 - 40;
     Window& window = windowList[*windowIndex];
 
-    int scanlineCount = window.size[1];
-    ScanlineSpanList* scanlineSpans = new ScanlineSpanList[scanlineCount];
-    for(int i = 0; i < scanlineCount; i++) {
-        if(i < 100 || i > 159) {
-            scanlineSpans[i].count = 1;
-            scanlineSpans[i].spans = new ScanlineSpan[1];
-            scanlineSpans[i].spans[0].start = 0;
-            scanlineSpans[i].spans[0].length = window.size[0];
-        } else {
-            scanlineSpans[i].count = 2;
-            scanlineSpans[i].spans = new ScanlineSpan[2];
-            scanlineSpans[i].spans[0].start = 0;
-            scanlineSpans[i].spans[0].length = 100;
-            scanlineSpans[i].spans[1].start = 200;
-            scanlineSpans[i].spans[1].length = window.size[0] - 200;
+    if(modeIndex != 0) {
+        printf("modeIndex = %d\n", modeIndex); fflush(stdout);
+        abort();
+    }
+
+    /* Window at 20,20 sized 344x190 */
+    /* Occluded by a window at 100,100 sized 100x75 */
+    /* Occluded by a window at 0, 125 sized 384, 25 */
+    // 20 20 344 190 1 0 0
+    // 100 100 100 75 0 1 0
+    // 0 125 384 25 0 0 1
+    /* So two vertical ranges: #1 start 20 (0 in window) length 105, #2 start 150 (130 in window) length 60 */
+    /* vertical range 1 has 80 lines @ screen 20 window 0 of 1 span {{0, 344}}, 25 lines at screen 100 window 80 of two spans {{0, 80}, {155, 189}} */
+
+    ScanlineRangeList* scanlineRanges = new ScanlineRangeList[2];
+
+    // XXX leaks a bunch of memory
+    {
+        auto& scanlineRange = scanlineRanges[0];
+        scanlineRange = { 0, 105, new ScanlineSpanList[105] };
+        ScanlineSpanList* scanlines = scanlineRange.scanlines;
+        for(int i = 0; i < 80; i++) {
+            auto& scanline = scanlines[i];
+            scanline = { 1, new ScanlineSpan[1] };
+            scanline.spans[0] = {0, 344};
+        }
+        for(int i = 80; i < 105; i++) {
+            auto& scanline = scanlines[i];
+            scanline = { 2, new ScanlineSpan[2] };
+            scanline.spans[0] = {0, 80};
+            scanline.spans[1] = {155, 189};
+        }
+    }
+
+    /* vertical range 2 has 25 lines @ screen 150 window 130 of two spans {{0, 80}, {155, 189}}, 35 lines @ screen 175 window 155 of 1 span {{0, 344}} */
+    {
+        auto& scanlineRange = scanlineRanges[1];
+        scanlineRange = { 130, 60, new ScanlineSpanList[60] };
+        ScanlineSpanList* scanlines = scanlineRange.scanlines;
+        for(int i = 0; i < 25; i++) {
+            auto& scanline = scanlines[i];
+            scanline = { 2, new ScanlineSpan[2] };
+            scanline.spans[0] = {0, 80};
+            scanline.spans[1] = {155, 189};
+        }
+        for(int i = 25; i < 60; i++) {
+            auto& scanline = scanlines[i];
+            scanline = { 1, new ScanlineSpan[1] };
+            scanline.spans[0] = {0, 344};
         }
     }
 
     VideoModeDriver* modedriver = driver->getModeDriver(modeIndex);
-    bool success = modedriver->reallocateForWindow(scanlineCount, scanlineSpans, nullptr, VRAM, &window.rootOffset, allocateVRAM, false);
+    bool issueRedrawEvents;
+    bool success = modedriver->reallocateForWindow(window.size[0], window.size[1], 2, scanlineRanges, nullptr, VRAM, &window.rootOffset, allocateVRAM, false, &issueRedrawEvents);
     if(!success) {
         printf("reallocateForWindow failed\n");
         exit(1);
     }
+    /* issueRedrawEvents ignored for creation; redraw always enqueued for whole window */
 
     {
         Event ev { Event::WINDOW_STATUS };
