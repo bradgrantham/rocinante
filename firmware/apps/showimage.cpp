@@ -115,24 +115,24 @@ void usage(const char *appName)
     printf("\t--gray        Request monochrome/grayscale window\n");
 }
 
-uint8_t *allocateImage(int x, int y, PixmapFormat fmt)
+uint8_t *allocateImage(int x, int y, PixmapFormat fmt, size_t *rowBytes)
 {
-    size_t rowBytes = 0;
+    *rowBytes = 0;
     switch(fmt) {
         case PIXMAP_1_BIT:
-            rowBytes = (x + 7) / 8;
+            *rowBytes = (x + 7) / 8;
             break;
         case PIXMAP_2_BITS:
-            rowBytes = (x + 3) / 4;
+            *rowBytes = (x + 3) / 4;
             break;
         case PIXMAP_4_BITS:
-            rowBytes = (x + 1) / 2;
+            *rowBytes = (x + 1) / 2;
             break;
         case PIXMAP_8_BITS:
-            rowBytes = x;
+            *rowBytes = x;
             break;
     }
-    return new uint8_t[rowBytes * y];
+    return new uint8_t[*rowBytes * y];
 }
 
 bool calculatePalette(const char *filename, PaletteSize chosenPalette, float palette[256][3], int *entriesFilled)
@@ -323,9 +323,10 @@ bool loadImageResized(const char *filename, int imageWidth, int imageHeight, flo
     return true;
 }
 
-void redrawImage(int myWindow, uint8_t* imageBuffer, int windowWidth, int windowHeight, int x, int y, int w, int h)
+void redrawImage(int myWindow, int x, int y, int w, int h, size_t rowBytes, int windowWidth, int windowHeight, uint8_t* imageBuffer)
 {
     printf("redraw to %d x %d at %d, %d\n", w, h, x, y);
+    VideoPixmapDrawRect(myWindow, 0, 0, windowWidth, windowHeight, rowBytes, imageBuffer);
     /* cheat and redraw everything */
 }
 
@@ -360,6 +361,7 @@ static int AppShowImage(int argc, char **argv)
     int windowWidth;
     int windowHeight;
     uint8_t *imageBuffer = nullptr;
+    size_t rowBytes;
 
     const char *appName = argv[0];
     argv++;
@@ -469,9 +471,9 @@ static int AppShowImage(int argc, char **argv)
             return COMMAND_FAILED;
         }
         for(int i = 0; i < paletteSize; i++) {
-            palette8[i][0] = palette[i][0] / 255.0f;
-            palette8[i][1] = palette[i][1] / 255.0f;
-            palette8[i][2] = palette[i][2] / 255.0f;
+            palette8[i][0] = palette[i][0] * 255.0f;
+            palette8[i][1] = palette[i][1] * 255.0f;
+            palette8[i][2] = palette[i][2] * 255.0f;
         }
         CHECK_FAIL(WindowPixmapSetPalette(myWindow, PALETTE0, palette8));
         free(palette8);
@@ -501,7 +503,7 @@ static int AppShowImage(int argc, char **argv)
                     windowWidth = resize.width;
                     windowHeight = resize.height;
                     try {
-                        imageBuffer = allocateImage(windowWidth, windowHeight, chosenFormat);
+                        imageBuffer = allocateImage(windowWidth, windowHeight, chosenFormat, &rowBytes);
                     } catch (std::bad_alloc& ba) {
                         printf("Out of memory.\n"); fflush(stdout);
                         return COMMAND_FAILED;
@@ -517,7 +519,7 @@ static int AppShowImage(int argc, char **argv)
                 }
                 case Event::WINDOW_REDRAW: {
                     const auto& redraw = ev.windowRedraw;
-                    redrawImage(myWindow, imageBuffer, windowWidth, windowHeight, redraw.left, redraw.top, redraw.width, redraw.height);
+                    redrawImage(myWindow, redraw.left, redraw.top, redraw.width, redraw.height, rowBytes, windowWidth, windowHeight, imageBuffer);
                     break;
                 }
                 default: {

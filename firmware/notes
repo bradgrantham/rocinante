@@ -1,5 +1,4 @@
 fillRect
-    PixmapAllocation -> Root
     ScanlineInfo -> Scanline
     I had assumed a Scanline for entire height of window.
         If a window wants to keep its own backing store, I think it probably wants to receive an entire drawRect
@@ -50,6 +49,25 @@ to plumb through windowing API, edit showimage
 to plumb through fullscreen API, add a 9918 fullscreen mode and register playback from Mac Colecovision emulator
 
 Modularizing video
+    Window coverage, range, span sample diagram: https://docs.google.com/drawings/d/1fAEjk5LkpoVFAkQtjVpDIjrKxcilrsKm9ytVupJzXDs/edit
+    Need pixmap drivers to be able to express a pixel resolution (pixmap pixel to screen pixel)
+        want a way to select highest-res mode if desired (old MAXRES mode)
+    Make ::fill be part of the driver specific to a mode.
+    Revamp memory ONCE AGAIN
+        VideoSubsystem does window conversion to vector<Range> with vectors of spans - this is allocated on heap or statically.
+            Range has scanlineStart, scanlineCount, spanCount, std::vector<Span>
+            Span has start, count, windowID
+        Calls attemptWindowConfiguration with Ranges as well as existing parameters
+        NTSC::attemptWindowConfiguration creates its own tracking Ranges, Scanlines, and Spans
+    NTSCVideoSubsystem has to have a function that calls modeDriver::fill for every driver, and it's doing that every frame.
+        So it needs to know the layout of every scanline.
+        Scanline layout is provided by VideoSubsystem / Window manager
+        How does VideoSubsystem communicate window layout?
+            Needs to know screen "width and height" in "pixels" from the concrete subsystem
+            Communicate windows and (separately) stacking order to concrete subsystem
+            Concrete subsystem calculates spans if necessary (e.g. OpenGL implementation doesn't bother)
+            struct Window has a "subsystem mailbox" (e.g. uint32_t) in it?
+            bool VideoSubsystemDriver::attemptWindowConfiguration(Window *windows, int *stackOrder);
     Abstraction 
         main loop routes events to video - VideoSubsystem->routeEvent(EventBase *event)
         An app calls
@@ -71,7 +89,7 @@ Modularizing video
             }
 
 New Video API
-    Video Subsystem keeps track of window location, size, order in stacking, whether it's fullscreen, and its mode
+    Video Subsystem keeps track of window location, size, Z order, whether it's fullscreen, and its mode
     Application API exposed by video subsystem:
         Mode specific functions. These can return INVALID_CALL_FOR_MODE.
             Status WindowSetPaletteEntry(int window, int palette, int which, float r, float g, float b);

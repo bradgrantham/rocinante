@@ -26,6 +26,7 @@ typedef enum Status {
     VIDEO_MODE_INFO_UNSUPPORTED = -6,   // The video subsystem does not support returning info on the requested mode
     INVALID_WINDOW = -7,                // A window was not open or valid with the provided index
     INVALID_PARAMETER_VALUE = -8,       // A passed parameter was outside the valid range
+    WINDOW_CREATION_FAILED = -9,        // Window could not be created because of memory allocation or possibly other reason
 } Status;
 
 int InputGetChar(void);

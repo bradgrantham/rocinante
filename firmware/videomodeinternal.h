@@ -8,24 +8,16 @@
 //----------------------------------------------------------------------------
 // Video Mode Driver data structures and prototypes
 
-// A window is represented as an array of one or more ScanlineSpan per scan line
-struct ScanlineSpan
-{
-    uint16_t start;
-    uint16_t length;
-};
+constexpr int MAX_WINDOWS = 64;
 
-struct ScanlineSpanList
+struct Window
 {
-    uint16_t count;
-    struct ScanlineSpan *spans;
-};
-
-struct ScanlineRangeList
-{
-    uint16_t start;
-    uint16_t count;
-    ScanlineSpanList *scanlines;
+    int id = -1;
+    int mode = -1;
+    int position[2];
+    int size[2];
+    void* subsystemPrivate;
+    void* modePrivate;
 };
 
 // A video mode driver allocates a private data structure for each
@@ -99,11 +91,11 @@ struct PixmapModeDriver
 {
     virtual PixmapFormat getPixmapFormat() const = 0;
     virtual PaletteSize getPaletteSize() const = 0;
-    virtual void setPaletteContents(const VideoWindowDescriptor* window,
+    virtual void setPaletteContents(Window& window,
         PaletteIndex which, unsigned char (*palette)[3]) = 0;
-    virtual void setRowPalette(const VideoWindowDescriptor* window,
+    virtual void setRowPalette(Window& window,
         int row, PaletteIndex which) = 0;
-    virtual void drawPixelRect(const VideoWindowDescriptor* window,
+    virtual void drawPixelRect(Window& window,
         int left, int top, int width, int height, size_t rowBytes, unsigned char *pixmap) = 0; // packed like pixel format
 };
 
@@ -168,6 +160,7 @@ struct VideoSubsystemDriver
     virtual void setDebugRow(int row, const char *rowText) = 0; // system sets debug information
     virtual void waitFrame() = 0;
     virtual void stop() = 0;
+    virtual bool attemptWindowConfiguration(std::vector<Window>& windowsBackToFront) = 0;
 };
 
 

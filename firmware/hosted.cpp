@@ -368,6 +368,7 @@ struct NTSCVideoSubsystem : VideoSubsystemDriver
     virtual int getModeCount() const;
     virtual VideoModeDriver* getModeDriver(int n) const;
     virtual void waitFrame();
+    virtual bool attemptWindowConfiguration(std::vector<Window>& windowsBackToFront);
 };
 
 void NTSCVideoSubsystem::setBackgroundColor(float r, float g, float b)
@@ -409,6 +410,271 @@ void NTSCVideoSubsystem::setDebugRow(int row, const char *rowText)
         memcpy(debugDisplay[row], rowText, to_copy);
         memset(debugDisplay[row] + to_copy, ' ', debugDisplayWidth - to_copy);
     }
+}
+
+// XXX bringup
+uint8_t VRAM[128 * 1024];
+int top = 0;
+
+uint32_t allocateVRAM(size_t size)
+{
+    printf("allocateVRAM(%zd) at %d\n", size, top); fflush(stdout);
+    if(top + size >= sizeof(VRAM)) {
+        printf(" --> failed\n"); fflush(stdout);
+        return VideoModeDriver::ALLOCATION_FAILED;
+    }
+    int where = top;
+    top += size;
+    return where;
+}
+
+struct ScanlineSpan
+{
+    int windowListIndex; // index in windowList
+    int start;
+    int length;
+};
+
+// A ScanlineRange represents a series of scanlines that all have the same spans
+struct ScanlineRange
+{
+    int start;
+    int count;
+    std::vector<ScanlineSpan> spans;
+};
+
+struct WindowFirstLast
+{
+    int location;
+    enum {START = 1, STOPPED = 0} what; // START = begins on this pixel, STOPPED = ended on previous pixel
+    int windowListIndex;
+};
+
+struct WindowSet
+{
+    std::bitset<64> windows;
+    WindowSet() : windows(0) {}
+    size_t size() const
+    {
+        return windows.count();
+    }
+    void insert(int window)
+    {
+        windows.set(window);
+    }
+    void erase(int window)
+    {
+        windows.reset(window);
+    }
+    struct iterator
+    {
+        WindowSet& wset;
+        int which;
+        iterator(WindowSet &wset, int which) :
+            wset(wset), which(which)
+        {}
+        int operator*()
+        {
+            return which;
+        }
+        iterator& operator++()
+        {
+            if(which == 64) return *this;
+
+            int last = wset.last();
+            do {
+                which ++;
+            } while((which < last) && !wset.windows.test(which));
+
+            return *this;
+        }
+        bool operator==(const iterator& it) const
+        {
+            return which == it.which;
+        }
+        bool operator!=(const iterator& it) const
+        {
+            return which != it.which;
+        }
+        iterator& operator=(iterator& it)
+        {
+            wset = it.wset;
+            which = it.which;
+            return *this;
+        }
+    };
+    int first() const
+    {
+        if(windows.none()) {
+            return 64;
+        }
+        for(int i = 0; i < 64; i++) {
+            if(windows.test(i)) {
+                return i;
+            }
+        }
+        return 64;
+    }
+    int last() const
+    {
+        if(windows.none()) {
+            return 64;
+        }
+        for(int i = 63; i >= 0; i--) {
+            if(windows.test(i)) {
+                return i;
+            }
+        }
+        return 64;
+    }
+    iterator begin()
+    {
+        return iterator(*this, first());
+    }
+    iterator end()
+    {
+        if(windows.none()) {
+            return iterator(*this, 64);
+        } else {
+            return iterator(*this, last() + 1);
+        }
+    }
+};
+
+void WindowsToRanges(int screenWidth, int screenHeight, const std::vector<Window>& windowsBackToFront, std::vector<ScanlineRange>& scanlineRanges)
+{
+    constexpr bool debug = false;
+    std::vector<WindowFirstLast> scanlineEventList;
+
+    for(int windowIndex = 0; windowIndex < windowsBackToFront.size(); windowIndex++) {
+        auto& w = windowsBackToFront[windowIndex];
+        int clippedStart = std::max(w.position[1], 0);
+        int clippedStopped = std::min(w.position[1] + w.size[1], screenHeight);
+        scanlineEventList.push_back({clippedStart, WindowFirstLast::START, windowIndex});
+        scanlineEventList.push_back({clippedStopped, WindowFirstLast::STOPPED, windowIndex});
+    }
+
+    std::sort(scanlineEventList.begin(), scanlineEventList.end(), [](const WindowFirstLast& v1, const WindowFirstLast& v2){return (v1.location * 2 + v1.what) < (v2.location * 2 + v2.what);});
+
+    int currentScanline = 0;
+    std::vector<ScanlineSpan> currentSpans { };
+    WindowSet activeWindows;
+
+    auto se = scanlineEventList.begin();
+    while(se != scanlineEventList.end()) {
+
+        if(debug) { printf("%d: window %d %s\n", se->location, se->windowListIndex, (se->what == WindowFirstLast::START) ? "start" : "stopped"); }
+
+        if(currentScanline < se->location) {
+            if(debug) { printf("repeat current spans for %d scanlines\n", se->location - currentScanline); }
+            if(!currentSpans.empty()) {
+                scanlineRanges.push_back({currentScanline, se->location - currentScanline, currentSpans});
+            }
+        }
+        currentScanline = se->location;
+
+        while((se != scanlineEventList.end()) && (se->location == currentScanline)) {
+            if(se->what == WindowFirstLast::START) {
+                activeWindows.insert(se->windowListIndex);
+            } else {
+                activeWindows.erase(se->windowListIndex);
+            }
+            se++;
+        }
+        if(debug) {
+            printf("current windows at scanline %d:", currentScanline);
+            printf("activeWindows = %d %d\n", *activeWindows.begin(), *activeWindows.end());
+            for(const auto& w: activeWindows) {
+                printf(" %d", w);
+            }
+            puts("");
+        }
+
+        std::vector<WindowFirstLast> pixelEventList;
+
+        for(const auto& w: activeWindows) {
+            auto& window = windowsBackToFront[w];
+            int clippedStart = std::max(window.position[0], 0);
+            int clippedStopped = std::min(window.position[0] + window.size[0], screenWidth);
+            pixelEventList.push_back({clippedStart, WindowFirstLast::START, w});
+            pixelEventList.push_back({clippedStopped, WindowFirstLast::STOPPED, w});
+        }
+
+        std::sort(pixelEventList.begin(), pixelEventList.end(), [](const WindowFirstLast& v1, const WindowFirstLast& v2){return (v1.location * 2 + v1.what) < (v2.location * 2 + v2.what);});
+
+        if(debug) {
+            printf("sorted event list on scanline:");
+            for(const auto& pe: pixelEventList) {
+                printf(" (%d: %s %d)", pe.location, (pe.what == WindowFirstLast::START) ? "start" : "stopped", pe.windowListIndex);
+            }
+            puts("");
+        }
+
+        WindowSet activeWindowsOnThisScanline;
+        int currentPixel = 0;
+        currentSpans.clear();
+        auto pe = pixelEventList.begin();
+        while(pe != pixelEventList.end()) {
+            if((currentPixel < pe->location) && (activeWindowsOnThisScanline.size() > 0)) {
+                int topmostWindow = activeWindowsOnThisScanline.last();
+                if(debug) {
+                    printf("topmostWindow = %d (%d %d):", topmostWindow, *activeWindowsOnThisScanline.begin(), *activeWindowsOnThisScanline.end());
+                    for(const auto& w: activeWindowsOnThisScanline) {
+                        printf(" %d", w);
+                    }
+                    puts("");
+                }
+                currentSpans.push_back({topmostWindow, currentPixel, pe->location - currentPixel});
+            }
+            currentPixel = pe->location;
+
+            while((pe != pixelEventList.end()) && (pe->location == currentPixel)) {
+                if(pe->what == WindowFirstLast::START) {
+                    activeWindowsOnThisScanline.insert(pe->windowListIndex);
+                } else {
+                    activeWindowsOnThisScanline.erase(pe->windowListIndex);
+                }
+                pe++;
+            }
+        }
+        if((currentPixel < screenWidth) && (activeWindowsOnThisScanline.size() > 0)) {
+            int topmostWindow = activeWindowsOnThisScanline.last();
+            currentSpans.push_back({topmostWindow, currentPixel, screenWidth - currentPixel});
+        }
+    }
+    if((currentScanline < screenHeight) && (!currentSpans.empty())) {
+        scanlineRanges.push_back({currentScanline, screenHeight - currentScanline, currentSpans});
+    }
+}
+
+
+bool NTSCVideoSubsystem::attemptWindowConfiguration(std::vector<Window>& windowsBackToFront)
+{
+    std::vector<ScanlineRange> scanlineRanges;
+    WindowsToRanges(ScreenWidth, ScreenHeight, windowsBackToFront, scanlineRanges);
+
+    if(false) { // XXX for debugging
+        for(const auto& [rangeStart, rangeScanlineCount, spans]: scanlineRanges) {
+            printf("at %d for %d scanlines:\n", rangeStart, rangeScanlineCount); 
+            for(const auto& span: spans) {
+                printf("    at %d for %d pixels, window %d\n", span.start, span.length, span.windowListIndex);
+            }
+        }
+    }
+
+#if 0
+    for(auto& window: windowsBackToFront) {
+        VideoModeDriver* modedriver = driver->getModeDriver(window.mode);
+        bool issueRedrawEvents;
+        bool success = modedriver->reallocateForWindow(window.size[0], window.size[1], 2, scanlineRanges, nullptr, VRAM, &window.rootOffset, allocateVRAM, false, &issueRedrawEvents);
+        if(!success) {
+            printf("reallocateForWindow failed\n");
+            exit(1);
+        }
+    }
+#endif
+
+    return true;
 }
 
 static NTSCVideoSubsystem NTSCVideo;
