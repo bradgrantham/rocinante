@@ -44,31 +44,43 @@ void DrawRectangle(const vec2i& leftTop, const vec2i& widthHeight, const vec2i& 
     }
 }
 
-struct Span
+struct ScanlineSpan
 {
+    int windowListIndex; // index in windowList
     int start;
-    int inWindowStart;
     int length;
-    int window;
 };
 
-struct WindowFirstLast {
+// A ScanlineRange represents a series of scanlines that all have the same spans
+struct ScanlineRange
+{
+    int start;
+    int count;
+    std::vector<ScanlineSpan> spans;
+};
+
+struct WindowFirstLast
+{
     int location;
     enum {START = 1, STOPPED = 0} what; // START = begins on this pixel, STOPPED = ended on previous pixel
-    int window;
+    int windowListIndex;
 };
 
 struct WindowSet
 {
-    uint32_t windows;
+    std::bitset<64> windows;
     WindowSet() : windows(0) {}
+    size_t size() const
+    {
+        return windows.count();
+    }
     void insert(int window)
     {
-        windows |= (1 << window);
+        windows.set(window);
     }
     void erase(int window)
     {
-        windows &= ~(1 << window);
+        windows.reset(window);
     }
     struct iterator
     {
@@ -83,11 +95,12 @@ struct WindowSet
         }
         iterator& operator++()
         {
-            if(which == 32) return *this;
+            if(which == 64) return *this;
 
+            int last = wset.last();
             do {
                 which ++;
-            } while((which < 32) & !(wset.windows & (1 << which)));
+            } while((which < last) && !wset.windows.test(which));
 
             return *this;
         }
@@ -106,23 +119,29 @@ struct WindowSet
             return *this;
         }
     };
-    int first()
+    int first() const
     {
-        for(int i = 0; i < 32; i++) {
-            if(windows & (1 << i)) {
+        if(windows.none()) {
+            return 64;
+        }
+        for(int i = 0; i < 64; i++) {
+            if(windows.test(i)) {
                 return i;
             }
         }
-        return 32;
+        return 64;
     }
-    int last()
+    int last() const
     {
-        for(int i = 31; i <= 0; i--) {
-            if(windows & (1 << i)) {
+        if(windows.none()) {
+            return 64;
+        }
+        for(int i = 63; i >= 0; i--) {
+            if(windows.test(i)) {
                 return i;
             }
         }
-        return 32;
+        return 64;
     }
     iterator begin()
     {
@@ -130,55 +149,56 @@ struct WindowSet
     }
     iterator end()
     {
-        if(last() == 32) {
-            return iterator(*this, 32);
+        if(windows.none()) {
+            return iterator(*this, 64);
         } else {
             return iterator(*this, last() + 1);
         }
     }
 };
 
-// NB Required that one window is screen sized at 0,0.
-void DrawWindows(const std::vector<Window>& windows)
+void WindowsToRanges(int screenWidth, int screenHeight, const std::vector<Window>& windowsBackToFront, std::vector<ScanlineRange>& scanlineRanges)
 {
     std::vector<WindowFirstLast> scanlineEventList;
 
-    int i = 0;
-    for(const auto& w: windows) {
-        scanlineEventList.push_back({w.position[1], WindowFirstLast::START, i});
-        scanlineEventList.push_back({w.position[1] + w.size[1], WindowFirstLast::STOPPED, i});
-        i++;
+    for(int windowIndex = 0; windowIndex < windowsBackToFront.size(); windowIndex++) {
+        auto& w = windowsBackToFront[windowIndex];
+        int clippedStart = std::max(w.position[1], 0);
+        int clippedStopped = std::min(w.position[1] + w.size[1], screenHeight);
+        scanlineEventList.push_back({clippedStart, WindowFirstLast::START, windowIndex});
+        scanlineEventList.push_back({clippedStopped, WindowFirstLast::STOPPED, windowIndex});
     }
 
     std::sort(scanlineEventList.begin(), scanlineEventList.end(), [](const WindowFirstLast& v1, const WindowFirstLast& v2){return (v1.location * 2 + v1.what) < (v2.location * 2 + v2.what);});
 
-    std::vector<std::pair<int, std::vector<Span>>> scanlineSpans;
-
     int currentScanline = 0;
-    std::vector<Span> currentSpans { };
+    std::vector<ScanlineSpan> currentSpans { };
     WindowSet activeWindows;
 
     auto se = scanlineEventList.begin();
     while(se != scanlineEventList.end()) {
 
-        if(false) { printf("%d: window %d %s\n", se->location, se->window, (se->what == WindowFirstLast::START) ? "start" : "stopped"); }
+        if(debug) { printf("%d: window %d %s\n", se->location, se->windowListIndex, (se->what == WindowFirstLast::START) ? "start" : "stopped"); }
 
         if(currentScanline < se->location) {
-            if(debug) { printf("repeat current spans for %d scanlines\n", se->location- currentScanline); }
-            scanlineSpans.push_back({se->location - currentScanline, currentSpans});
+            if(debug) { printf("repeat current spans for %d scanlines\n", se->location - currentScanline); }
+            if(!currentSpans.empty()) {
+                scanlineRanges.push_back({currentScanline, se->location - currentScanline, currentSpans});
+            }
         }
         currentScanline = se->location;
 
         while((se != scanlineEventList.end()) && (se->location == currentScanline)) {
             if(se->what == WindowFirstLast::START) {
-                activeWindows.insert(se->window);
+                activeWindows.insert(se->windowListIndex);
             } else {
-                activeWindows.erase(se->window);
+                activeWindows.erase(se->windowListIndex);
             }
             se++;
         }
         if(debug) {
             printf("current windows at scanline %d:", currentScanline);
+            printf("activeWindows = %d %d\n", *activeWindows.begin(), *activeWindows.end());
             for(const auto& w: activeWindows) {
                 printf(" %d", w);
             }
@@ -188,8 +208,11 @@ void DrawWindows(const std::vector<Window>& windows)
         std::vector<WindowFirstLast> pixelEventList;
 
         for(const auto& w: activeWindows) {
-            pixelEventList.push_back({windows[w].position[0], WindowFirstLast::START, w});
-            pixelEventList.push_back({windows[w].position[0] + windows[w].size[0], WindowFirstLast::STOPPED, w});
+            auto& window = windowsBackToFront[w];
+            int clippedStart = std::max(window.position[0], 0);
+            int clippedStopped = std::min(window.position[0] + window.size[0], screenWidth);
+            pixelEventList.push_back({clippedStart, WindowFirstLast::START, w});
+            pixelEventList.push_back({clippedStopped, WindowFirstLast::STOPPED, w});
         }
 
         std::sort(pixelEventList.begin(), pixelEventList.end(), [](const WindowFirstLast& v1, const WindowFirstLast& v2){return (v1.location * 2 + v1.what) < (v2.location * 2 + v2.what);});
@@ -197,7 +220,7 @@ void DrawWindows(const std::vector<Window>& windows)
         if(debug) {
             printf("sorted event list on scanline:");
             for(const auto& pe: pixelEventList) {
-                printf(" (%d: %s %d)", pe.location, (pe.what == WindowFirstLast::START) ? "start" : "stopped", pe.window);
+                printf(" (%d: %s %d)", pe.location, (pe.what == WindowFirstLast::START) ? "start" : "stopped", pe.windowListIndex);
             }
             puts("");
         }
@@ -207,48 +230,63 @@ void DrawWindows(const std::vector<Window>& windows)
         currentSpans.clear();
         auto pe = pixelEventList.begin();
         while(pe != pixelEventList.end()) {
-            if(currentPixel < pe->location) {
-                int topmostWindow = 0;
-                for(const auto& w: activeWindowsOnThisScanline) {
-                    if(windows[w].locationInStack > windows[topmostWindow].locationInStack) {
-                        topmostWindow = w;
+            if((currentPixel < pe->location) && (activeWindowsOnThisScanline.size() > 0)) {
+                int topmostWindow = activeWindowsOnThisScanline.last();
+                if(debug) {
+                    printf("topmostWindow = %d (%d %d):", topmostWindow, *activeWindowsOnThisScanline.begin(), *activeWindowsOnThisScanline.end());
+                    for(const auto& w: activeWindowsOnThisScanline) {
+                        printf(" %d", w);
                     }
+                    puts("");
                 }
-                int inWindowStart = currentPixel - windows[topmostWindow].position[0];
-                currentSpans.push_back({currentPixel, inWindowStart, pe->location - currentPixel, topmostWindow});
+                currentSpans.push_back({topmostWindow, currentPixel, pe->location - currentPixel});
             }
             currentPixel = pe->location;
 
             while((pe != pixelEventList.end()) && (pe->location == currentPixel)) {
                 if(pe->what == WindowFirstLast::START) {
-                    activeWindowsOnThisScanline.insert(pe->window);
+                    activeWindowsOnThisScanline.insert(pe->windowListIndex);
                 } else {
-                    activeWindowsOnThisScanline.erase(pe->window);
+                    activeWindowsOnThisScanline.erase(pe->windowListIndex);
                 }
                 pe++;
             }
         }
+        if((currentPixel < screenWidth) && (activeWindowsOnThisScanline.size() > 0)) {
+            int topmostWindow = activeWindowsOnThisScanline.last();
+            currentSpans.push_back({topmostWindow, currentPixel, screenWidth - currentPixel});
+        }
     }
+    if((currentScanline < screenHeight) && (!currentSpans.empty())) {
+        scanlineRanges.push_back({currentScanline, screenHeight - currentScanline, currentSpans});
+    }
+}
 
-    int scanline = 0;
-    for(const auto& [count, spans]: scanlineSpans) {
-        for(int i = 0; i < count; i++, scanline++) {
-            int pixel = 0;
+void DrawRanges(const std::vector<Window>& windowsBackToFront, std::vector<ScanlineRange>& scanlineRanges)
+{
+    for(const auto& [rangeRowStart, rangeRowCount, spans]: scanlineRanges) {
+        for(int row = rangeRowStart; row < rangeRowStart + rangeRowCount; row++) {
             for(const auto& span: spans) {
-                DrawRectangle({pixel, scanline}, {span.length, 1}, {span.inWindowStart, scanline - windows[span.window].position[1]}, windows[span.window].color);
-                pixel += span.length;
+                auto& window = windowsBackToFront[span.windowListIndex];
+                int columnWithinWindow = span.start - window.position[0];
+                int rowWithinWindow = row - window.position[1];
+                DrawRectangle({span.start, row}, {span.length, 1}, {columnWithinWindow, rowWithinWindow}, window.color);
             }
         }
     }
 }
+
 
 int main(int argc, char **argv)
 {
     char line[1024];
     std::vector<Window> windows;
 
+#if 0
     // full-screen solid color (or otherwise background) is always window stack location 0
     windows.push_back({0, 0, screenWidth, screenHeight, 0, {0, 0, 0}});
+#endif
+
     while(fgets(line, sizeof(line), stdin)) {
         int left, top, width, height;
         float r, g, b;
@@ -267,7 +305,19 @@ int main(int argc, char **argv)
     fwrite(image, 3, screenWidth * screenHeight, byRectangle);
 
     // Draw as spans
-    DrawWindows(windows);
+    std::vector<ScanlineRange> scanlineRanges;
+    WindowsToRanges(screenWidth, screenHeight, windows, scanlineRanges);
+    if(debug) {
+        for(const auto& [rangeStart, rangeScanlineCount, spans]: scanlineRanges) {
+            printf("at %d for %d scanlines:\n", rangeStart, rangeScanlineCount); 
+            for(const auto& span: spans) {
+                printf("    at %d for %d pixels, window %d\n", span.start, span.length, span.windowListIndex);
+            }
+        }
+    }
+
+    DrawRectangle({0, 0}, {screenWidth, screenHeight}, {0,0}, {0, 0, 0});
+    DrawRanges(windows, scanlineRanges);
     FILE *bySpan = fopen("window_span.ppm", "wb");
     fprintf(bySpan, "P6 %d %d 255\n", screenWidth, screenHeight);
     fwrite(image, 3, screenWidth * screenHeight, bySpan);
