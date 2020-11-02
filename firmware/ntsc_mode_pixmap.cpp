@@ -1,4 +1,5 @@
 #include <vector>
+#include <string>
 #include <tuple>
 #include <algorithm>
 #include <cassert>
@@ -145,7 +146,7 @@ public:
         uint32_t palettes[2][256];
         uint16_t scanlineRangeCount;
         uint32_t scanlineRangeTableOffset;
-        uint16_t width, height; // Window width and height
+        uint16_t width, height; // Window width and height but mostly for debugging
     };
 
     // A vertical range of scanlines that have spans
@@ -211,7 +212,7 @@ public:
         const auto& root = GetRoot(buffer, rootOffset);
         const auto* scanlineRangeArray = GetScanlineRanges(buffer, root);
         FILE *fp = fopen(name, "w");
-        fprintf(fp, "root = %d %p : { width = %d, height = %d, scanlineCount = %u, scanlineRangeTableOffset = %u }\n",
+        fprintf(fp, "root = %d %p : { width = %d, height = %d, scanlineRangeCount = %u, scanlineRangeTableOffset = %u }\n",
             rootOffset, &root, root.width, root.height, root.scanlineRangeCount, root.scanlineRangeTableOffset); fflush(stdout);
         const auto* ranges = GetScanlineRanges(buffer, root);
         for(int rangeIndex = 0; rangeIndex < root.scanlineRangeCount; rangeIndex++) {
@@ -284,57 +285,53 @@ public:
         fclose(fp);
     }
 
-    virtual bool reallocateForWindow(Window& window, const std::vector<ScanlineRange>& ranges, void *VRAM, void* newVRAM, VideoSubsystemAllocateFunc allocate, bool *enqueueExposedRedrawEvents) 
+    virtual bool reallocateForWindow(Window& window, const std::vector<ScanlineRange>& ranges, void* stagingVRAM, VideoSubsystemAllocateFunc allocate, bool *enqueueExposedRedrawEvents) 
     {
-#if 0
-        *rootOffset = allocate(sizeof(Root));
-        if(*rootOffset == ALLOCATION_FAILED) {
+        window.modeRootOffset = allocate(sizeof(PixmapRoot));
+        if(window.modeRootOffset == ALLOCATION_FAILED) {
             printf("failed to allocate pixmap Root\n"); // XXX debug
             return false;
         }
 
-        VideoWindowDescriptor window { vramTemp, *rootOffset };
-
-        auto& root = GetRoot(&window);
-        root.scanlineRangeCount = windowScanlineRangeCount;
-        root.width = width;
-        root.height = height;
-        root.scanlineRangeTableOffset = allocate(sizeof(ScanlineRange) * windowScanlineRangeCount);
+        auto& root = GetRoot(stagingVRAM, window.modeRootOffset);
+        root.scanlineRangeCount = ranges.size();
+        root.width = window.size[0];
+        root.height = window.size[1];
+        root.scanlineRangeTableOffset = allocate(sizeof(PixmapScanlineRange) * ranges.size());
         if(root.scanlineRangeTableOffset == ALLOCATION_FAILED) {
             printf("failed to allocate pixmap scanlineRangeTableOffset\n"); // XXX debug
             return false;
         }
 
-        auto* scanlineRangeArray = GetScanlineRanges(&window, root);
+        auto* scanlineRangeArray = GetScanlineRanges(stagingVRAM, root);
 
         // Loop over ranges
-        for(int rangeIndex = 0; rangeIndex < windowScanlineRangeCount; rangeIndex++) {
+        for(int rangeIndex = 0; rangeIndex < ranges.size(); rangeIndex++) {
             auto& range = scanlineRangeArray[rangeIndex];
-            const auto& requestedRange = windowScanlineRanges[rangeIndex];
+            const auto& requestedRange = ranges[rangeIndex];
 
-            range = { requestedRange.start, requestedRange.count, allocate(sizeof(ScanlineInfo) * requestedRange.count) };
+            range = { requestedRange.start, requestedRange.count, allocate(sizeof(PixmapScanlineInfo) * requestedRange.count) };
             if(range.scanlineInfoTableOffset == ALLOCATION_FAILED) {
                 printf("failed to allocate pixmap scanlineInfoTableOffset\n"); // XXX debug
                 return false;
             }
 
             // Loop over scanlines
-            auto* scanlineArray = GetScanlineInfos(&window, range);
+            auto* scanlineArray = GetScanlineInfos(stagingVRAM, range);
             for(int scanlineIndex = 0; scanlineIndex < range.count; scanlineIndex++) {
                 auto& scanlineInfo = scanlineArray[scanlineIndex];
-                const auto& requestedScanline = requestedRange.scanlines[scanlineIndex];
 
-                scanlineInfo = { 0, requestedScanline.count, allocate(sizeof(PixmapSpan) * requestedScanline.count) };
+                scanlineInfo = { 0, static_cast<uint16_t>(requestedRange.spans.size()), allocate(sizeof(PixmapSpan) * requestedRange.spans.size()) };
                 if(scanlineInfo.spanArrayOffset == ALLOCATION_FAILED) {
                     printf("failed to allocate pixmap spanArrayOffset for line %d\n", scanlineIndex); // XXX debug
                     return false;
                 }
 
-                auto* spanArray = GetSpans(&window, scanlineInfo);
+                auto* spanArray = GetSpans(stagingVRAM, scanlineInfo);
 
-                for(int spanIndex = 0; spanIndex < requestedScanline.count; spanIndex++) {
+                for(int spanIndex = 0; spanIndex < requestedRange.spans.size(); spanIndex++) {
                     auto& span = spanArray[spanIndex];
-                    const auto& requestedSpan = requestedScanline.spans[spanIndex];
+                    const auto& requestedSpan = requestedRange.spans[spanIndex];
 
                     size_t pixelDataSize = CalculatePixelStorageRequired(fmt, requestedSpan.length);
                     span = { requestedSpan.start, requestedSpan.length, allocate(pixelDataSize) };
@@ -347,26 +344,25 @@ public:
             }
         }
 
-        *enqueueExposeRedraws = true;
+        *enqueueExposedRedrawEvents = true;
 
         if(true) {
             // dump for debugging
-            dumpPixmapDescriptorTree(&window, "pixmap.out");
+            std::string fname = "pixmap_" + std::to_string(window.id) + ".out";
+            dumpPixmapDescriptorTree(VRAM, window.modeRootOffset, fname.c_str());
         }
 
-#endif
         return true;
     }
 
-    virtual void fill(const VideoWindowDescriptor* window, int columnStartOnScreen /* for color phase */, int screenRow /* for flipping ColorBurst */, int columnStartWithinWindow, int pixelCount, int rowWithinWindow, unsigned char *rowData)
+    virtual void fillRow(uint32_t rootOffset, uint32_t startOnScreen /* for color phase */, uint32_t startWithinWindow, uint32_t length, uint32_t rowOnScreen /* for flipping ColorBurst */, uint32_t rowWithinWindow, uint8_t *rowBuffer)
     {
         // Fill row here
     }
 
     virtual void setPaletteContents(Window& window, PaletteIndex which, uint8_t (*palette)[3])
     {
-#if 0
-        auto& root = GetRoot(window);
+        auto& root = GetRoot(VRAM, window.modeRootOffset);
 
         int paletteEntries = 0;
         switch(fmt) {
@@ -395,34 +391,30 @@ public:
             printf("debug palette %d %d %d\n",
                 debugPalette[i][0], debugPalette[i][1], debugPalette[i][2]);
         }
-#endif
     }
 
     virtual void setRowPalette(Window& window, int row, PaletteIndex which)
     {
-#if 0
-        auto& root = GetRoot(window);
-        auto* ranges = GetScanlineRanges(window, root);
+        auto& root = GetRoot(VRAM, window.modeRootOffset);
+        auto* ranges = GetScanlineRanges(VRAM, root);
         for(int i = 0; i < root.scanlineRangeCount; i++) {
             auto& range = ranges[i];
             if(row >= range.start && row < range.start + range.count) {
-                auto* scanlineArray = GetScanlineInfos(window, range);
+                auto* scanlineArray = GetScanlineInfos(VRAM, range);
                 auto& scanlineInfo = scanlineArray[row - range.start];
                 scanlineInfo.whichPalette = which;
                 break;
             }
         }
-#endif
     }
 
     virtual void drawPixelRect(Window& window,
         int left, int top, int width, int height, size_t rowBytes, uint8_t *source)
     {
-#if 0
         auto [bitsPerPixel, pixelsPerByte, pixelBitmask] = CalculateBitSizeOfPixel(fmt);
 
-        auto& root = GetRoot(window);
-        auto* ranges = GetScanlineRanges(window, root);
+        auto& root = GetRoot(VRAM, window.modeRootOffset);
+        auto* ranges = GetScanlineRanges(VRAM, root);
 
         // Walk the scanline ranges
         for(int i = 0; i < root.scanlineRangeCount; i++) {
@@ -440,19 +432,19 @@ public:
                     int rowWithinSource = rowWithinWindow - top;
 
                     uint8_t *srcRow = source + rowBytes * rowWithinSource;
-                    auto* scanlineArray = GetScanlineInfos(window, range);
+                    auto* scanlineArray = GetScanlineInfos(VRAM, range);
                     auto& scanlineInfo = scanlineArray[j];
 
                     // Walk the spans
                     for(int k = 0; k < scanlineInfo.spanCount; k++) {
 
-                        auto& span = GetSpans(window, scanlineInfo)[k];
+                        auto& span = GetSpans(VRAM, scanlineInfo)[k];
                         int start = std::max((int)span.start, left);
                         int stop = std::min((int)span.start + (int)span.length, left + width);
 
                         if(start < stop) {
 
-                            auto* pixelData = GetPixelData(window, span);
+                            auto* pixelData = GetPixelData(VRAM, span);
 
                             // XXX this should be a utility routine, like CopyRow or some such
                             for(int colWithinWindow = start; colWithinWindow < stop; colWithinWindow++) {
@@ -474,15 +466,16 @@ public:
         }
         if(true) {
             // dump for debugging
-            dumpPixmapDescriptorTree(window, "pixmap2.out");
+            std::string fname = "pixmap2_" + std::to_string(window.id) + ".out";
+            dumpPixmapDescriptorTree(VRAM, window.modeRootOffset, fname.c_str());
         }
         if(true) {
 
             // dump for debugging
-            dumpPixmapPPM(window, "pixmap_drawrect.ppm");
+            std::string fname = "pixmap_drawrect_" + std::to_string(window.id) + ".ppm";
+            dumpPixmapPPM(VRAM, window.modeRootOffset, fname.c_str());
 
         }
-#endif
     }
 
     // Drawing functions would be difficult into a spanned window.

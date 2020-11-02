@@ -184,7 +184,7 @@ Status WindowCreate(int modeIndex, const char *name, const int *parameters, int 
     gWindowList.push_back({ gNextWindowID++, modeIndex, {20, 20}, {344, 190} });
     gWindowList.push_back({ gNextWindowID++, modeIndex, {100, 100}, {100, 75} });
     gWindowList.push_back({ gNextWindowID++, modeIndex, {0, 125}, {384, 25} });
-    Window& window = gWindowList.back();
+    Window& window = gWindowList[0];
     *windowID = window.id;
 
     if(modeIndex != 0) {

@@ -13,15 +13,15 @@ constexpr int MAX_WINDOWS = 64;
 struct ScanlineSpan
 {
     int windowListIndex; // index in windowList
-    int start;
-    int length;
+    uint16_t start;
+    uint16_t length;
 };
 
 // A ScanlineRange represents a series of scanlines that all have the same spans
 struct ScanlineRange
 {
-    int start;
-    int count;
+    uint16_t start;
+    uint16_t count;
     std::vector<ScanlineSpan> spans;
 };
 
@@ -29,22 +29,10 @@ struct Window
 {
     int id = -1;
     int mode = -1;
-    int position[2];
-    int size[2];
+    int16_t position[2]; // Could be negative, would result in starting off screen top and/or left
+    int16_t size[2]; // negative values are invalid
     uint32_t subsystemRootOffset;
     uint32_t modeRootOffset;
-};
-
-// A video mode driver allocates a private data structure for each
-// window.  The root of the allocation is stored here, and the meaning
-// of the data starting at the rootOffset within vram is specific to
-// the video mode driver.
-// E.g. for a palettized pixmap, the root might point to an array of uint32_t
-// containing offsets to two palettes, an offset to a per-row palette
-// index, and an offset to allocated pixmap data for every span in the window.
-struct VideoWindowDescriptor {
-    void* vram;
-    uint32_t rootOffset;
 };
 
 typedef uint32_t (*VideoSubsystemAllocateFunc)(size_t size);
@@ -91,8 +79,7 @@ struct VideoModeDriver
     static constexpr uint32_t ALLOCATION_FAILED = 0xFFFFFFFF;
     virtual bool reallocateForWindow(Window& window,
         const std::vector<ScanlineRange>& ranges,
-        void *VRAM, void* newVRAM,
-        VideoSubsystemAllocateFunc allocate,
+        void* stagingVRAM, VideoSubsystemAllocateFunc allocate,
         bool *enqueueExposedRedrawEvents) = 0;
 };
 
@@ -109,7 +96,8 @@ struct PixmapModeDriver
     virtual void setRowPalette(Window& window,
         int row, PaletteIndex which) = 0;
     virtual void drawPixelRect(Window& window,
-        int left, int top, int width, int height, size_t rowBytes, unsigned char *pixmap) = 0; // packed like pixel format
+        int left, int top, int width, int height,
+        size_t rowBytes, unsigned char *pixmap) = 0; // packed like pixel format
 };
 
 
@@ -118,12 +106,12 @@ struct PixmapModeDriver
 
 struct TextportModeDriver
 {
-    virtual void setCursorPosition(const VideoWindowDescriptor* window, int col, int row) = 0;
-    virtual void setCursorAttributes(const VideoWindowDescriptor* window, uint32_t attributes) = 0;
-    virtual void clearArea(const VideoWindowDescriptor* window, int col, int row, int cols, int rows) = 0;
-    virtual void drawChar(const VideoWindowDescriptor* window, int col, int row, char c) = 0;
-    virtual void copyArea(const VideoWindowDescriptor* window, int col, int row, int cols, int rows, int newcol, int newrow) = 0;
-    virtual void drawArea(const VideoWindowDescriptor* window, int col, int row, int cols, int rows, const char *text) = 0;
+    virtual void setCursorPosition(Window& window, int col, int row) = 0;
+    virtual void setCursorAttributes(Window& window, uint32_t attributes) = 0;
+    virtual void clearArea(Window& window, int col, int row, int cols, int rows) = 0;
+    virtual void drawChar(Window& window, int col, int row, char c) = 0;
+    virtual void copyArea(Window& window, int col, int row, int cols, int rows, int newcol, int newrow) = 0;
+    virtual void drawArea(Window& window, int col, int row, int cols, int rows, const char *text) = 0;
 };
 
 
@@ -135,13 +123,12 @@ struct SegmentModeDriver : public VideoModeDriver
     // but this is variable size?  maybe there can only ever
     // be one of these and its reallocated last and allocates as
     // much as it can.
-    virtual int setScanlineSegments(const VideoWindowDescriptor* window,
-        int scanlineCount, const VideoSegmentedScanline *scanlines) = 0;
+    virtual int setScanlineSegments(Window& window, int scanlineCount, const VideoSegmentedScanline *scanlines) = 0;
 };
 
 struct WolfensteinModeDriver : public VideoModeDriver
 {
-    virtual void setElements(const VideoWindowDescriptor* window, const VideoWolfensteinElement* elements) = 0;
+    virtual void setElements(Window& window, const VideoWolfensteinElement* elements) = 0;
 };
 
 struct DCTModeDriver : public VideoModeDriver
@@ -182,10 +169,7 @@ struct VideoSubsystemDriver
 
 struct NTSCModeDriver : public VideoModeDriver
 {
-    virtual void fill(const VideoWindowDescriptor* window,
-        int columnStartOnScreen /* for color phase */, int screenRow /* for flipping chroma phase */,
-        int columnStartWithinWindow, int pixelCount, int rowWithinWindow,
-        unsigned char *rowData) = 0;
+    virtual void fillRow(uint32_t rootOffset, uint32_t startOnScreen /* for color phase */, uint32_t startWithinWindow, uint32_t length, uint32_t rowOnScreen /* for flipping ColorBurst */, uint32_t rowWithinWindow, uint8_t *rowBuffer) = 0;
 };
 
 extern "C" {
@@ -194,6 +178,9 @@ void VideoSetSubsystem(VideoSubsystemDriver *drv);
 void VideoStopSubsystem();
 VideoSubsystemDriver* GetNTSCVideoSubsystem();
 void NTSCVideoRegisterDriver(NTSCModeDriver* driver);
+
+extern uint8_t *VRAM;
+size_t GetVRAMSize();
 
 };
 

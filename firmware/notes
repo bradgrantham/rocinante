@@ -12,7 +12,11 @@ Call fillRow from... NTSC?
 implement fillRow
 
 come back to:
-    be consistent with
+    be consistent about:
+        window position (int16_t)
+        window size (uint16_t but > 32767 invalid so can operate on int16_t)
+        screen width and height (uint16_t but > 32767 invalid so can operate on int16_t)
+    be consistent with:
         range, span, segment,
         row, pixel, column, x, y,
         length vs count

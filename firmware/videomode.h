@@ -210,7 +210,8 @@ struct WindowResizeEvent {
 
 struct WindowRedrawEvent {
     int window;
-    int left, top, width, height;
+    int left, top;
+    int width, height;
 };
 
 struct WindowStatusEvent {
