@@ -139,17 +139,17 @@ public:
     }
 
 #pragma pack(push, 1)
-    // The "root" or "top" allocation for all information driver needs to draw a window during scanout
-    struct Root
+    // The "root" or "top" allocation for all information driver needs to scanout or draw into a window
+    struct PixmapRoot
     {
         uint32_t palettes[2][256];
-        uint32_t scanlineRangeCount;
+        uint16_t scanlineRangeCount;
         uint32_t scanlineRangeTableOffset;
-        uint32_t width, height; // Window width and height
+        uint16_t width, height; // Window width and height
     };
 
     // A vertical range of scanlines that have spans
-    struct ScanlineRange
+    struct PixmapScanlineRange
     {
         uint16_t start;
         uint16_t count;
@@ -157,7 +157,7 @@ public:
     };
 
     // Information describing a scanline
-    struct ScanlineInfo
+    struct PixmapScanlineInfo
     {
         uint16_t whichPalette;
         uint16_t spanCount;
@@ -178,60 +178,54 @@ public:
     // Each scanline's uint32_t points to an array of uint32_t, one for each span.
     // Each span's uint32_t points to an array of pixel data which is unpacked into NTSC waves
 
-    template <typename T>
-    static T& GetAllocationFromVRAM(const VideoWindowDescriptor* window, size_t offset)
+    static PixmapRoot& GetRoot(void* buffer, uint32_t rootOffset)
     {
-        return *(T*)(((uint8_t*)window->vram) + offset);
+        return GetAllocationFromBuffer<PixmapRoot>(buffer, rootOffset);
     }
 
-    static Root& GetRoot(const VideoWindowDescriptor* window)
+    // To get scanline range N, GetScanlineRanges(buffer, root)[N]
+    static PixmapScanlineRange* GetScanlineRanges(void* buffer, const PixmapRoot& root)
     {
-        return GetAllocationFromVRAM<Root>(window, window->rootOffset);
+        return &GetAllocationFromBuffer<PixmapScanlineRange>(buffer, root.scanlineRangeTableOffset);
     }
 
-    // To get scanline range N, GetScanlineRanges(window, root)[N]
-    static ScanlineRange* GetScanlineRanges(const VideoWindowDescriptor* window, const Root& root)
+    // To get the span header for a row, GetScanlineInfos(buffer, scanlineRange)[row - scanlineRange.start]
+    static PixmapScanlineInfo* GetScanlineInfos(void* buffer, const PixmapScanlineRange& scanlineRange)
     {
-        return &GetAllocationFromVRAM<ScanlineRange>(window, root.scanlineRangeTableOffset);
+        return &GetAllocationFromBuffer<PixmapScanlineInfo>(buffer, scanlineRange.scanlineInfoTableOffset);
     }
 
-    // To get the span header for a row, GetScanlineInfos(window, scanlineRange)[row - scanlineRange.start]
-    static ScanlineInfo* GetScanlineInfos(const VideoWindowDescriptor* window, const ScanlineRange& scanlineRange)
+    // Span N within a scanline is GetSpans(buffer, scanlineInfo)[span]
+    static PixmapSpan* GetSpans(void* buffer, const PixmapScanlineInfo& scanlineInfo)
     {
-        return &GetAllocationFromVRAM<ScanlineInfo>(window, scanlineRange.scanlineInfoTableOffset);
+        return &GetAllocationFromBuffer<PixmapSpan>(buffer, scanlineInfo.spanArrayOffset);
     }
 
-    // Span N within a scanline is GetSpans(window, scanlineInfo)[span]
-    static PixmapSpan* GetSpans(const VideoWindowDescriptor* window, const ScanlineInfo& scanlineInfo)
+    static uint8_t* GetPixelData(void *buffer, const PixmapSpan& span)
     {
-        return &GetAllocationFromVRAM<PixmapSpan>(window, scanlineInfo.spanArrayOffset);
+        return &GetAllocationFromBuffer<uint8_t>(buffer, span.pixelDataOffset);
     }
 
-    static uint8_t* GetPixelData(const VideoWindowDescriptor* window, const PixmapSpan& span)
+    static void dumpPixmapDescriptorTree(void *buffer, uint32_t rootOffset, const char *name)
     {
-        return &GetAllocationFromVRAM<uint8_t>(window, span.pixelDataOffset);
-    }
-
-    static void dumpPixmapDescriptorTree(const VideoWindowDescriptor* window, const char *name)
-    {
-        const auto& root = GetRoot(window);
-        const auto* scanlineRangeArray = GetScanlineRanges(window, root);
+        const auto& root = GetRoot(buffer, rootOffset);
+        const auto* scanlineRangeArray = GetScanlineRanges(buffer, root);
         FILE *fp = fopen(name, "w");
         fprintf(fp, "root = %d %p : { width = %d, height = %d, scanlineCount = %u, scanlineRangeTableOffset = %u }\n",
-            window->rootOffset, &root, root.width, root.height, root.scanlineRangeCount, root.scanlineRangeTableOffset); fflush(stdout);
-        const auto* ranges = GetScanlineRanges(window, root);
+            rootOffset, &root, root.width, root.height, root.scanlineRangeCount, root.scanlineRangeTableOffset); fflush(stdout);
+        const auto* ranges = GetScanlineRanges(buffer, root);
         for(int rangeIndex = 0; rangeIndex < root.scanlineRangeCount; rangeIndex++) {
             const auto& range = ranges[rangeIndex];
             fprintf(fp, "    range[%d] = %lu %p { start = %u, count = %u, scanlineInfoTableOffset = %u }\n", rangeIndex, root.scanlineRangeTableOffset + sizeof(range) * rangeIndex, scanlineRangeArray + rangeIndex, range.start, range.count, range.scanlineInfoTableOffset);
-            const auto* scanlineArray = GetScanlineInfos(window, range);
+            const auto* scanlineArray = GetScanlineInfos(buffer, range);
             for(int scanlineIndex = 0; scanlineIndex < range.count; scanlineIndex++) {
                 const auto& scanlineInfo = scanlineArray[scanlineIndex];
                 fprintf(fp, "        scanlineTable[%d] = %lu %p { spanCount  %u, spanArrayOffset = %u }\n", scanlineIndex, 
                     range.scanlineInfoTableOffset + sizeof(scanlineInfo) * scanlineIndex, scanlineArray + scanlineIndex, scanlineInfo.spanCount, scanlineInfo.spanArrayOffset); fflush(stdout);
-                const auto* spanArray = GetSpans(window, scanlineInfo);
+                const auto* spanArray = GetSpans(buffer, scanlineInfo);
                 for(int spanIndex = 0; spanIndex < scanlineInfo.spanCount; spanIndex++) {
                     const auto& span = spanArray[spanIndex];
-                    const auto* pixelData = GetPixelData(window, span);
+                    const auto* pixelData = GetPixelData(buffer, span);
                     fprintf(fp, "            span[%d] = %lu %p { %u, %u, %u (%p) }\n", spanIndex,
                         scanlineInfo.spanArrayOffset + sizeof(span) * spanIndex,
                         spanArray + spanIndex, span.start, span.length, span.pixelDataOffset,
@@ -242,9 +236,9 @@ public:
         fclose(fp);
     }
 
-    void dumpPixmapPPM(const VideoWindowDescriptor* window, const char *filename)
+    void dumpPixmapPPM(void* buffer, uint32_t rootOffset, const char *filename)
     {
-        auto& root = GetRoot(window);
+        auto& root = GetRoot(buffer, rootOffset);
         auto [bitsPerPixel, pixelsPerByte, pixelBitmask] = CalculateBitSizeOfPixel(fmt);
 
         FILE *fp = fopen(filename, "wb");
@@ -252,23 +246,23 @@ public:
         std::vector<uint8_t> image(root.width * root.height * 3);
         std::fill(image.begin(), image.end(), 0);
 
-        const auto* scanlineRangeArray = GetScanlineRanges(window, root);
+        const auto* scanlineRangeArray = GetScanlineRanges(buffer, root);
 
         for(int rangeIndex = 0; rangeIndex < root.scanlineRangeCount; rangeIndex++) {
 
             const auto& range = scanlineRangeArray[rangeIndex];
-            const auto* scanlineArray = GetScanlineInfos(window, range);
+            const auto* scanlineArray = GetScanlineInfos(buffer, range);
 
             for(int row = 0; row < range.count; row++) {
 
                 int rowWithinWindow = row + range.start;
                 const auto& scanlineInfo = scanlineArray[row];
-                const auto* spans = GetSpans(window, scanlineInfo);
+                const auto* spans = GetSpans(buffer, scanlineInfo);
 
                 for(int spanIndex = 0; spanIndex < scanlineInfo.spanCount; spanIndex++) {
 
                     const auto& span = spans[spanIndex];
-                    const auto* pixelData = GetPixelData(window, span);
+                    const auto* pixelData = GetPixelData(buffer, span);
 
                     for(int spanPixel = 0; spanPixel < span.length; spanPixel++) {
 
@@ -290,12 +284,12 @@ public:
         fclose(fp);
     }
 
-    virtual bool reallocateForWindow(uint32_t width, uint32_t height, int windowScanlineRangeCount, const struct ScanlineRangeList* windowScanlineRanges, const VideoWindowDescriptor* oldWindow, void* vramTemp, uint32_t *rootOffset, VideoSubsystemAllocateFunc allocate, bool copyContents, bool *enqueueExposeRedraws)
+    virtual bool reallocateForWindow(Window& window, const std::vector<ScanlineRange>& ranges, void *VRAM, void* newVRAM, VideoSubsystemAllocateFunc allocate, bool *enqueueExposedRedrawEvents) 
     {
 #if 0
         *rootOffset = allocate(sizeof(Root));
         if(*rootOffset == ALLOCATION_FAILED) {
-            printf("failed to allocate Root\n"); // XXX debug
+            printf("failed to allocate pixmap Root\n"); // XXX debug
             return false;
         }
 
@@ -307,7 +301,7 @@ public:
         root.height = height;
         root.scanlineRangeTableOffset = allocate(sizeof(ScanlineRange) * windowScanlineRangeCount);
         if(root.scanlineRangeTableOffset == ALLOCATION_FAILED) {
-            printf("failed to allocate scanlineRangeTableOffset\n"); // XXX debug
+            printf("failed to allocate pixmap scanlineRangeTableOffset\n"); // XXX debug
             return false;
         }
 
@@ -320,7 +314,7 @@ public:
 
             range = { requestedRange.start, requestedRange.count, allocate(sizeof(ScanlineInfo) * requestedRange.count) };
             if(range.scanlineInfoTableOffset == ALLOCATION_FAILED) {
-                printf("failed to allocate scanlineInfoTableOffset\n"); // XXX debug
+                printf("failed to allocate pixmap scanlineInfoTableOffset\n"); // XXX debug
                 return false;
             }
 
@@ -332,7 +326,7 @@ public:
 
                 scanlineInfo = { 0, requestedScanline.count, allocate(sizeof(PixmapSpan) * requestedScanline.count) };
                 if(scanlineInfo.spanArrayOffset == ALLOCATION_FAILED) {
-                    printf("failed to allocate spanArrayOffset for line %d\n", scanlineIndex); // XXX debug
+                    printf("failed to allocate pixmap spanArrayOffset for line %d\n", scanlineIndex); // XXX debug
                     return false;
                 }
 
@@ -345,7 +339,7 @@ public:
                     size_t pixelDataSize = CalculatePixelStorageRequired(fmt, requestedSpan.length);
                     span = { requestedSpan.start, requestedSpan.length, allocate(pixelDataSize) };
                     if(span.pixelDataOffset == ALLOCATION_FAILED) {
-                        printf("failed to allocate pixelDataOffset for line %d, span %d\n", scanlineIndex, spanIndex ); // XXX debug
+                        printf("failed to allocate pixmap pixelDataOffset for line %d, span %d\n", scanlineIndex, spanIndex ); // XXX debug
                         return false;
                         // ignore copyContents for now
                     }

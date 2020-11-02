@@ -10,14 +10,29 @@
 
 constexpr int MAX_WINDOWS = 64;
 
+struct ScanlineSpan
+{
+    int windowListIndex; // index in windowList
+    int start;
+    int length;
+};
+
+// A ScanlineRange represents a series of scanlines that all have the same spans
+struct ScanlineRange
+{
+    int start;
+    int count;
+    std::vector<ScanlineSpan> spans;
+};
+
 struct Window
 {
     int id = -1;
     int mode = -1;
     int position[2];
     int size[2];
-    void* subsystemPrivate;
-    void* modePrivate;
+    uint32_t subsystemRootOffset;
+    uint32_t modeRootOffset;
 };
 
 // A video mode driver allocates a private data structure for each
@@ -74,12 +89,10 @@ struct VideoModeDriver
         a backing store window like advanced Pixmap or Text or Wolfenstein could set to false;
     */
     static constexpr uint32_t ALLOCATION_FAILED = 0xFFFFFFFF;
-    virtual bool reallocateForWindow(uint32_t width, uint32_t height,
-        int windowScanlineRangeCount, const struct ScanlineRangeList* scanlineRanges,
-        const VideoWindowDescriptor* oldWindow,
-        void* vramTemp, uint32_t *rootOffset,
+    virtual bool reallocateForWindow(Window& window,
+        const std::vector<ScanlineRange>& ranges,
+        void *VRAM, void* newVRAM,
         VideoSubsystemAllocateFunc allocate,
-        bool copyContents,
         bool *enqueueExposedRedrawEvents) = 0;
 };
 
@@ -183,5 +196,12 @@ VideoSubsystemDriver* GetNTSCVideoSubsystem();
 void NTSCVideoRegisterDriver(NTSCModeDriver* driver);
 
 };
+
+template <typename T>
+static T& GetAllocationFromBuffer(void *buffer, size_t offset)
+{
+    return *(T*)(((uint8_t*)buffer) + offset);
+}
+
 
 #endif /* _VIDEO_MODE_INTERNAL_H_ */

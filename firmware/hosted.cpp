@@ -232,7 +232,6 @@ int VideoModeSetPaletteEntry(int palette, int entry, float r, float g, float b)
 #include "ntsc_constants.h"
 #include "dac_constants.h"
 
-ntsc_wave_t backgroundColorWave;
 bool addColorburst;
 
 class BinarySemaphore
@@ -361,6 +360,69 @@ void fillRowDebugOverlay(int frameNumber, int lineNumber, unsigned char* nextRow
 
 struct NTSCVideoSubsystem : VideoSubsystemDriver
 {
+#pragma pack(push, 1)
+    // The "root" or "top" allocation for all information subsystem driver needs to draw screen during scanout
+    struct NTSCRoot
+    {
+        uint16_t windowCount;
+        uint32_t windowTableOffset; // offset to array of NTSCWindow
+        uint16_t scanlineRangeCount;
+        uint32_t scanlineRangeTableOffset;
+    };
+
+    struct NTSCWindow
+    {
+        uint32_t id; // For later matching up against new window list
+        uint16_t position[2];
+        uint16_t mode; // Which driver for this window for fillRow
+        uint32_t modeRootOffset; 
+    };
+
+    // A vertical range of scanlines that have spans
+    struct NTSCScanlineRange
+    {
+        uint16_t start; // number of first row of scanline span on screen
+        uint16_t count; // number of scanlines
+        uint16_t spanCount;
+        uint32_t spanArrayOffset;
+    };
+
+    struct NTSCSpan
+    {
+        uint32_t windowIndex; 
+        uint16_t start; // number of first pixel of span on screen
+        uint16_t count; // number of pixels
+    };
+
+#pragma pack(pop)
+
+    static constexpr uint32_t RootOffset = 0; // First thing is always NTSC Root
+
+    static NTSCRoot& GetRoot(void* buffer, uint32_t rootOffset)
+    {
+        return GetAllocationFromBuffer<NTSCRoot>(buffer, rootOffset);
+    }
+
+    // To get window N, GetWindows(buffer, root)[N]
+    static NTSCWindow* GetWindows(void* buffer, const NTSCRoot& root)
+    {
+        return &GetAllocationFromBuffer<NTSCWindow>(buffer, root.windowTableOffset);
+    }
+
+    // To get scanline range N, GetRanges(buffer, root)[N]
+    static NTSCScanlineRange* GetRanges(void* buffer, const NTSCRoot& root)
+    {
+        return &GetAllocationFromBuffer<NTSCScanlineRange>(buffer, root.scanlineRangeTableOffset);
+    }
+
+    // Span N within a scanline is GetSpans(buffer, scanlineInfo)[windowIndex]
+    static NTSCSpan* GetSpans(void* buffer, const NTSCScanlineRange& range)
+    {
+        return &GetAllocationFromBuffer<NTSCSpan>(buffer, range.spanArrayOffset);
+    }
+
+    static ntsc_wave_t backgroundColorWave;
+
     virtual void start();
     virtual void stop();
     virtual void setBackgroundColor(float r, float g, float b);
@@ -369,7 +431,11 @@ struct NTSCVideoSubsystem : VideoSubsystemDriver
     virtual VideoModeDriver* getModeDriver(int n) const;
     virtual void waitFrame();
     virtual bool attemptWindowConfiguration(std::vector<Window>& windowsBackToFront);
+    static void fillRow(uint8_t* vram, int y, uint8_t* row);
+    static void dumpWindowConfiguration(uint8_t *vram);
 };
+
+ntsc_wave_t NTSCVideoSubsystem::backgroundColorWave;
 
 void NTSCVideoSubsystem::setBackgroundColor(float r, float g, float b)
 {
@@ -413,35 +479,21 @@ void NTSCVideoSubsystem::setDebugRow(int row, const char *rowText)
 }
 
 // XXX bringup
-uint8_t VRAM[128 * 1024];
-int top = 0;
+constexpr size_t VRAMsize = 128 * 1024;
+uint8_t VRAM[VRAMsize];
+int VRAMtop = 0;
 
 uint32_t allocateVRAM(size_t size)
 {
-    printf("allocateVRAM(%zd) at %d\n", size, top); fflush(stdout);
-    if(top + size >= sizeof(VRAM)) {
+    printf("allocateVRAM(%zd) at %d\n", size, VRAMtop); fflush(stdout);
+    if(VRAMtop + size >= sizeof(VRAM)) {
         printf(" --> failed\n"); fflush(stdout);
         return VideoModeDriver::ALLOCATION_FAILED;
     }
-    int where = top;
-    top += size;
+    int where = VRAMtop;
+    VRAMtop += size;
     return where;
 }
-
-struct ScanlineSpan
-{
-    int windowListIndex; // index in windowList
-    int start;
-    int length;
-};
-
-// A ScanlineRange represents a series of scanlines that all have the same spans
-struct ScanlineRange
-{
-    int start;
-    int count;
-    std::vector<ScanlineSpan> spans;
-};
 
 struct WindowFirstLast
 {
@@ -647,6 +699,37 @@ void WindowsToRanges(int screenWidth, int screenHeight, const std::vector<Window
     }
 }
 
+void NTSCVideoSubsystem::dumpWindowConfiguration(uint8_t *vram)
+{
+    auto& root = GetRoot(vram, RootOffset);
+    auto* windows = GetWindows(vram, root);
+    auto* ranges = GetRanges(vram, root);
+
+    printf("ntsc root { windowCount = %u, scanlineRangeCount = %u }\n",
+        root.windowCount, root.scanlineRangeCount);
+
+    for(int w = 0; w < root.windowCount; w++) {
+        auto& window = windows[w];
+        printf("    window %d: { id = %u, position = {%u, %u}, mode = %u, modeRootOffset = %u }\n",
+            w, window.id, window.position[0], window.position[1], window.mode,
+            window.modeRootOffset);
+    }
+
+    for(int r = 0; r < root.scanlineRangeCount; r++) {
+
+        auto& range = ranges[r];
+        printf("    range %d: { start = %u, count = %u, spanCount = %u, spanArrayOffset = %u }\n", 
+            r, range.start, range.count, range.spanCount, range.spanArrayOffset);
+
+        auto* spans = GetSpans(vram, range);
+
+        for(int s = 0; s < range.spanCount; s++) {
+            const auto& span = spans[s];
+            printf("        span %d: { windowIndex = %u, start = %u, count = %u }\n", 
+                s, span.windowIndex, span.start, span.count);
+        }
+    }
+}
 
 bool NTSCVideoSubsystem::attemptWindowConfiguration(std::vector<Window>& windowsBackToFront)
 {
@@ -662,19 +745,122 @@ bool NTSCVideoSubsystem::attemptWindowConfiguration(std::vector<Window>& windows
         }
     }
 
-#if 0
-    for(auto& window: windowsBackToFront) {
-        VideoModeDriver* modedriver = driver->getModeDriver(window.mode);
-        bool issueRedrawEvents;
-        bool success = modedriver->reallocateForWindow(window.size[0], window.size[1], 2, scanlineRanges, nullptr, VRAM, &window.rootOffset, allocateVRAM, false, &issueRedrawEvents);
-        if(!success) {
-            printf("reallocateForWindow failed\n");
-            exit(1);
+    VRAMtop = 0;
+    uint8_t newVRAM[VRAMsize];
+
+    uint32_t rootOffset = allocateVRAM(sizeof(NTSCRoot));
+    assert(rootOffset == RootOffset);
+    auto& root = GetRoot(newVRAM, RootOffset);
+
+    root.windowCount = windowsBackToFront.size();
+    root.windowTableOffset = allocateVRAM(windowsBackToFront.size() * sizeof(NTSCWindow));
+    if(root.windowTableOffset == VideoModeDriver::ALLOCATION_FAILED) {
+        printf("failed to allocate NTSC window table offset\n"); // XXX debug
+        return false;
+    }
+    auto* ntscWindows = GetWindows(newVRAM, root);
+
+    root.scanlineRangeCount = scanlineRanges.size();
+    root.scanlineRangeTableOffset = allocateVRAM(scanlineRanges.size() * sizeof(NTSCScanlineRange));
+    if(root.scanlineRangeTableOffset == VideoModeDriver::ALLOCATION_FAILED) {
+        printf("failed to allocate NTSC window table offset\n"); // XXX debug
+        return false;
+    }
+    auto* ntscRanges = GetRanges(newVRAM, root);
+
+    for(int r = 0; r < scanlineRanges.size(); r++) {
+        const auto& [rangeStart, rangeScanlineCount, spans] = scanlineRanges[r];
+        auto& ntscRange = ntscRanges[r];
+        ntscRange.start = rangeStart;
+        ntscRange.count = rangeScanlineCount;
+        ntscRange.spanCount = spans.size();
+        ntscRange.spanArrayOffset = allocateVRAM(spans.size() * sizeof(NTSCSpan));
+        if(ntscRange.spanArrayOffset == VideoModeDriver::ALLOCATION_FAILED) {
+            printf("failed to allocate NTSC span array offset\n"); // XXX debug
+            return false;
+        }
+        auto* ntscSpans = GetSpans(newVRAM, ntscRange);
+        for(int s = 0; s < spans.size(); s++) {
+            auto& ntscSpan = ntscSpans[s];
+            const auto& span = spans[s];
+            ntscSpan.windowIndex = span.windowListIndex;
+            ntscSpan.start = span.start;
+            ntscSpan.count = span.length;
         }
     }
-#endif
 
-    return true;
+    bool failed = false;
+    std::vector<uint32_t> previousModeOffsets;
+
+    for(int windowIndex = 0; (!failed) && (windowIndex < windowsBackToFront.size()); windowIndex++) {
+        auto& window = windowsBackToFront[windowIndex];
+        auto& ntscWindow = ntscWindows[windowIndex];
+        ntscWindow.mode = window.mode;
+        ntscWindow.id = window.id;
+        ntscWindow.position[0] = window.position[0];
+        ntscWindow.position[1] = window.position[1];
+        VideoModeDriver* modedriver = drivers[window.mode];
+
+        std::vector<ScanlineRange> windowRanges;
+        for(auto& [rangeStart, rangeScanlineCount, spans]: scanlineRanges) {
+            std::vector<ScanlineSpan> windowSpans;
+            std::copy_if(spans.begin(), spans.end(), std::back_inserter(windowSpans), [&](const ScanlineSpan& span){return span.windowListIndex == windowIndex;});
+            if(!windowSpans.empty()) {
+                windowRanges.push_back({rangeStart, rangeScanlineCount, std::move(windowSpans)});
+            }
+        }
+
+        previousModeOffsets.push_back(window.modeRootOffset);
+
+        bool issueRedraw; // ignored at this time
+        // XXX Just recreate all windows at this time - At a later date pass in old offset within old VRAM
+        bool success = modedriver->reallocateForWindow(window, windowRanges, nullptr /* old VRAM */, newVRAM, allocateVRAM, &issueRedraw);
+        ntscWindows[windowIndex].modeRootOffset = window.modeRootOffset;
+        if(!success) {
+            failed = true;
+            printf("reallocateForWindow failed\n");
+        }
+    }
+    if(false) dumpWindowConfiguration(newVRAM);
+
+    if(failed) {
+        for(int windowIndex = 0; windowIndex < previousModeOffsets.size(); windowIndex++) {
+            windowsBackToFront[windowIndex].modeRootOffset = previousModeOffsets[windowIndex];
+        }
+    } else {
+        // XXX this REALLY needs to happen during VBLANK
+        std::copy(newVRAM, newVRAM + sizeof(newVRAM), VRAM);
+    }
+
+    return !failed;
+}
+
+void NTSCVideoSubsystem::fillRow(uint8_t *vram, int row, uint8_t* rowBuffer)
+{
+    uint32_t *rowWords = (uint32_t*)rowBuffer;
+    for(int x = 0; x < ScreenWidth / 4; x++) {
+        rowWords[x] = backgroundColorWave; // Should try to only fill areas without windows
+    }
+
+    auto& root = GetRoot(vram, RootOffset);
+    auto* windows = GetWindows(vram, root);
+    auto* ranges = GetRanges(vram, root);
+
+    for(int r = 0; r < root.scanlineRangeCount; r++) {
+
+        auto& range = ranges[r];
+
+        if((row >= range.start) && (row < range.start + range.count)) {
+            auto* spans = GetSpans(vram, range);
+
+            for(int s = 0; s < range.spanCount; s++) {
+                const auto& span = spans[s];
+                auto& window = windows[span.windowIndex];
+                VideoModeDriver* modedriver = drivers[window.mode];
+                (void) modedriver; // modedriver->fillRow(vram, window.modeRootOffset, row, rowBuffer);
+            }
+        }
+    }
 }
 
 static NTSCVideoSubsystem NTSCVideo;
@@ -748,18 +934,13 @@ void NTSCConvertDACRowToRGB(uint8_t *dacRow, uint8_t (*screenRow)[3], int width,
 
 void VideoModeFillGLTexture()
 {
-    for(int y = 0; y < ScreenHeight; y++) {
-        uint8_t *row = NTSCScanlines[y];
+    for(int row = 0; row < ScreenHeight; row++) {
+        uint8_t *rowBuffer = NTSCScanlines[row];
 
-        // Fill with background color
-        uint32_t *rowWords = (uint32_t*)row;
-        for(int x = 0; x < ScreenWidth / 4; x++) {
-            rowWords[x] = backgroundColorWave;
-        }
+        // Fill with background color ...?  Or should only do this for pixels not covered by range?
+        NTSCVideoSubsystem::fillRow(VRAM, row, rowBuffer);
 
-        // Call video mode drivers to fill the rest of the row 
-
-        NTSCConvertDACRowToRGB(row, ScreenImage[y], ScreenWidth, addColorburst);
+        NTSCConvertDACRowToRGB(rowBuffer, ScreenImage[row], ScreenWidth, addColorburst);
     }
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, ScreenWidth, ScreenHeight, 0, GL_RGB, GL_UNSIGNED_BYTE, ScreenImage);
 }
