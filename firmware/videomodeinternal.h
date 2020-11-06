@@ -42,6 +42,7 @@ struct VideoModeDriver
     virtual const char *getName() const = 0;
     virtual VideoModeType getModeType() const = 0;
     virtual void getAspectRatio(int *aspectX, int *aspectY) const = 0;
+    virtual void getPixelScale(int *scaleX, int *scaleY) const = 0;
     virtual bool isMonochrome() const = 0; // NTSC might use this, e.g., to turn off colorburst if FRONT window is monochrome
 
     // fixed size, e.g. TMS9918A or Woz or Channel F, NTSC knows

@@ -114,6 +114,7 @@ Status VideoModeGetInfo(int modeIndex, void *infovoid, size_t infoSize)
                 return VIDEO_MODE_DOES_NOT_MATCH;
             }
             modedriver->getAspectRatio(&info->aspectX, &info->aspectY);
+            modedriver->getPixelScale(&info->scaleX, &info->scaleY);
             info->mono = modedriver->isMonochrome();
 
             const PixmapModeDriver* pixmapdriver = dynamic_cast<PixmapModeDriver*>(driver->getModeDriver(modeIndex));

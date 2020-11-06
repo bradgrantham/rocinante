@@ -141,6 +141,7 @@ typedef struct VideoPixmapInfo
 {
     VideoModeType type;         // for error-checking, must be VIDEO_MODE_PIXMAP
     int aspectX, aspectY;       // X:Y aspect ratio
+    int scaleX, scaleY;         // number of screen pixels covered by a pixmap pixel in X and Y
     PixmapFormat pixmapFormat;
     PaletteSize paletteSize;
     int mono;
@@ -170,6 +171,7 @@ typedef enum WindowParameter
     PREFERRED_SIZE = 1, /* followed by int w, int h, int failIfNotPreferredSize */
     FULLSCREEN_OVERSCAN = 3,
     FULLSCREEN_UNDERSCAN = 4,
+    // WINDOW_SHAPE = 5, /* followed by { width, height, #rows, {#spans, {start, length}[#spans] }[#rows] } ; values are relative to window position */
 } WindowParameter;
 
 // Always produces "RESIZE" and "REDRAW" events - get width and height that way

@@ -867,7 +867,7 @@ void NTSCVideoSubsystem::fillRow(int row, uint8_t* rowBuffer)
                 const auto& span = spans[s];
                 auto& window = windows[span.windowIndex];
                 NTSCModeDriver* modedriver = drivers[window.mode];
-                modedriver->fillRow(window.modeRootOffset, span.start, span.start - window.position[0], span.count, row, row - window.position[1], rowBuffer);
+                modedriver->fillRow(window.modeRootOffset, span.start, span.start - window.position[0], span.count, row, row - window.position[1], rowBuffer + 160 + span.start);
             }
         }
     }

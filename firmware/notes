@@ -1,15 +1,47 @@
-fillRect
-    ScanlineInfo -> Scanline
-    I had assumed a Scanline for entire height of window.
-        If a window wants to keep its own backing store, I think it probably wants to receive an entire drawRect
-            And if a window wants to keep its own backing store, I imagine it will also want to say whether the Windowing system should send a partial REDRAW on surface exposure or whether it should send a complete REDRAW only on initial creation and on RESIZE
-            Maybe on reallocate?
-            This means the driver needs to know the window's complete dimensions
-            pass width and height into reallocate, driver can store them in root allocation or not
-            
-    I had assumed I'd pass the entire 
-Call fillRow from... NTSC?
-implement fillRow
+pixmap scale
+    std::list<PixmapSpan> candidateSpans = {}
+    // for all N scanlines in an aligned ScanlineRange, candidateSpans will be the same (pixmap data will be different)
+    rowsBegin = ranges[0].start;
+    rowsEnd = ranges.back().start + ranges.back().count;
+    for(row = 0; row < rowsBegin; row++) {
+        commit row // will be empty
+    }
+    auto range = ranges.begin();
+    for(row = rowsBegin; row < rowsEnd; row++) {
+        while((range < ranges.end()) && (row >= range.start + range.count)) {
+            range++;
+        }
+        if(range < ranges.end()) {
+            if(row % scale == 0)
+            commit row
+        }
+    }
+    for(; row < height ; row++) {
+        commit empty row
+    }
+    OR
+    std::list<PixmapSpan> candidateSpans = {}
+    auto currentRangeIterator = ranges.begin();
+    auto copiedRange = ranges.end(); // or any iterator which doesn't point to a valid Range
+    for(int row = 0; row < height; row++) { // beginning of a Pixmap row
+        if(row % scale == 0) {
+            if(row > 0) {
+                // Also the end of the previous Pixmap row; flush candidateSpans to the Pixmap row
+            }
+            if(row < currentRangeIterator->start + currentRangeIterator->count) {
+                // If this Pixmap row started within a Range and the previous candidateSpans was already exactly the Range's spans, 
+                if(copiedRangeIterator != currentRangeIterator) {
+                }
+                CopySpans(requestedRange, candidateSpans);
+            }
+        }
+        // If a new range starts within this Pixmap row, merge its spans with candidateSpans)
+        while(row < currentRangeIterator.start && currentRangeIterator.start < (row + scale)) {
+            MergeSpans(requestedRange, candidateSpans);
+            currentRangeIterator++;
+            isAMergedRow = true;
+        };
+    }
 
 come back to:
     be consistent about:
@@ -22,7 +54,10 @@ come back to:
         length vs count
     be consistent with window, windowIndex, windowID : windowID?  Make a typedef int "Window"?  But Window is already the struct for windowing
     are VideoGetModeCount() and VideoModeGetType() inconsistent? - consider, make consistent, record policy here
+    convert this doc to Markdown
+
 ----------------------------
+
 Stated explicitly:
     Make silicon do as much as possible - as few and as cheap external components as possible
         So avoid external DAC (expensive), use weighted resistor DAC
@@ -34,6 +69,7 @@ Stated explicitly:
         But write something nice enough that someone else *could* use it.
     C++17 interfaces and code internally
     Windowing, then Processes (and pipes? signals?), then Loader
+
 -----------------------------
 
 to plumb through windowing API, edit showimage
@@ -78,13 +114,33 @@ Modularizing video
             }
 
 New Video API
-    Make ::fill be part of the driver specific to a subsystem?
+    PixmapModeDriver should be templated on format, palette, scale, whether it's mono (and maybe some other things)
+    Make ::fillRow be part of the driver specific to a subsystem?
+    fillRow
+        It's probably important to enable writing by uint32_t into rowBuffer for optimization
+            Do I hand off an aligned pointer and a pad?
+            Or do I hand off the current pointer and make fillRow pad to the next uint32_t?
+        fillRow is kind of too-flexible.  I don't really want to walk the Range for every span...
+            fillStartRange(uint16_t rowWithinWindow) called on or before the first window row
+            fillEndScanline(uint16_t rowWithinWindow) called to finish a scanline (increment scanline pointer, reset span pointer)
+            fillNextSpan() called to draw the next span
+    fillRect
+        ScanlineInfo -> Scanline
+        I had assumed a Scanline for entire height of window.
+            If a window wants to keep its own backing store, I think it probably wants to receive an entire drawRect
+                And if a window wants to keep its own backing store, I imagine it will also want to say whether the Windowing system should send a partial REDRAW on surface exposure or whether it should send a complete REDRAW only on initial creation and on RESIZE
+                Maybe on reallocate?
+                This means the driver needs to know the window's complete dimensions
+                pass width and height into reallocate, driver can store them in root allocation or not
     Need mode driver "free" function for when a window is closed, to go through old data structure and free any real memory pointers
     main loop routes events to video - VideoSubsystem->routeEvent(EventBase *event)
     Need pixmap mode drivers to be able to express a pixel resolution (pixmap pixel to screen pixel)
         want a way to request highest-res mode if desired (old MAXRES mode)
         if there was a pixel resolution (1x1, 1x2, 2x2, 4x4 etc) would that be sufficient?
             Or should this be dependent on window size or maybe by coverage of video mode...
+        But all size specifications at the moment are in screen pixels.
+            App will want to specify a certain size pixmap sometimes.  But that's specific to Pixmap.
+            Pixmap could have a convenience function taking requested size and returning the WindowCreate attributes to request that size on-screen...
     Video Subsystem keeps track of window location, size, Z order, whether it's fullscreen, and its mode
     Application API exposed by video subsystem:
         Mode specific functions. These can return INVALID_CALL_FOR_MODE.
