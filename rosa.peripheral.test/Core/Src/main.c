@@ -110,20 +110,42 @@ int main(void)
 
   int i = 0;
     const char *message = "Hello World\n";
-    if(HAL_UART_Transmit(&huart2, (uint8_t *)message, strlen(message), HAL_MAX_DELAY) != HAL_OK) {
+    if(HAL_UART_Transmit_IT(&huart2, (uint8_t *)message, strlen(message)) != HAL_OK) {
         panic();
     }
 
   while (1)
   {
+      static char message[512];
+      int lightLED = 0;
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    HAL_Delay(500);
-    HAL_GPIO_WritePin(DEBUG_LED_GPIO_Port, DEBUG_LED_Pin, GPIO_PIN_SET);
-    HAL_Delay(500);
-    HAL_GPIO_WritePin(DEBUG_LED_GPIO_Port, DEBUG_LED_Pin, GPIO_PIN_RESET);
-    if(i++ > 4) panic();
+    if(HAL_GPIO_ReadPin(USER1_GPIO_Port, USER1_Pin)) {
+        // sprintf("user 1\n");
+        // if(HAL_UART_Transmit_IT(&huart2, (uint8_t *)message, strlen(message)) != HAL_OK) {
+            // panic();
+        // }
+        // HAL_Delay(100);
+        lightLED = 1;
+    }
+    if(HAL_GPIO_ReadPin(USER2_GPIO_Port, USER2_Pin)) {
+        // sprintf("user 2\n");
+        // if(HAL_UART_Transmit_IT(&huart2, (uint8_t *)message, strlen(message)) != HAL_OK) {
+            // panic();
+        // }
+        // HAL_Delay(100);
+        lightLED = 1;
+    }
+    if(HAL_GPIO_ReadPin(USER3_GPIO_Port, USER3_Pin)) {
+        // sprintf("user 2\n");
+        // if(HAL_UART_Transmit_IT(&huart2, (uint8_t *)message, strlen(message)) != HAL_OK) {
+            // panic();
+        // }
+        // HAL_Delay(100);
+        lightLED = 1;
+    }
+    HAL_GPIO_WritePin(DEBUG_LED_GPIO_Port, DEBUG_LED_Pin, lightLED ? GPIO_PIN_SET : GPIO_PIN_RESET);
   }
   /* USER CODE END 3 */
 }
@@ -245,6 +267,12 @@ static void MX_GPIO_Init(void)
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(DEBUG_LED_GPIO_Port, DEBUG_LED_Pin, GPIO_PIN_RESET);
+
+  /*Configure GPIO pins : USER1_Pin USER2_Pin USER3_Pin */
+  GPIO_InitStruct.Pin = USER1_Pin|USER2_Pin|USER3_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_PULLDOWN;
+  HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
 
   /*Configure GPIO pin : DEBUG_LED_Pin */
   GPIO_InitStruct.Pin = DEBUG_LED_Pin;
