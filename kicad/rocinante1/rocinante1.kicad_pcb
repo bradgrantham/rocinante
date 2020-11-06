@@ -6734,7 +6734,7 @@
   (gr_text NSS (at 91.151905 90.505) (layer F.SilkS) (tstamp 5F67D2DE)
     (effects (font (size 1 1) (thickness 0.15)) (justify left))
   )
-  (gr_text SCK (at 90.17 88) (layer F.SilkS) (tstamp 5F67D2E7)
+  (gr_text SCK (at 91.05 88.03) (layer F.SilkS) (tstamp 5FA3AB25)
     (effects (font (size 1 1) (thickness 0.15)) (justify left))
   )
   (gr_text MISO (at 90.78 85.33) (layer F.SilkS) (tstamp 5F67D2E4)
