@@ -44,6 +44,8 @@
 
 /* Private variables ---------------------------------------------------------*/
 
+SPI_HandleTypeDef hspi4;
+
 UART_HandleTypeDef huart2;
 
 SDRAM_HandleTypeDef hsdram1;
@@ -57,6 +59,7 @@ void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_USART2_UART_Init(void);
 static void MX_FMC_Init(void);
+static void MX_SPI4_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -106,29 +109,53 @@ void delayNanos(uint16_t nanos)
     } while(elapsedCycles < cycles);
 }
 
-void WS2812_byte_to_SPI_bytes(uint8_t ws2812, uint32_t *spi)
+const int WS2812B_bitlength_nanos = 400;
+const int WS2812B_reset_micros = 50;
+
+// This one expands every bit into 3 , LSBit first
+void one_byte_to_three_bytes(uint8_t byte, uint32_t *pattern)
 {
-    *spi = 0;
+    *pattern = 0;
     for(int i = 0; i < 8; i++) {
         int bits[3];
-        if(ws2812 & (1 << (7 - i))) {
+        if(byte & (1 << i)) {
+            bits[0] = 1; bits[1] = 1; bits[2] = 1;
+        } else {
+            bits[0] = 0; bits[1] = 0; bits[2] = 0;
+        }
+        for(int j = 0; j < 3; j++) {
+            int bit = (i * 3 + j);
+            *pattern |= (bits[j] << bit);
+        }
+    }
+}
+
+// This one expands every bit into WS2812's weird modulation, MSBit first.
+void byte_to_WS2812_bit_pattern(uint8_t byte, uint32_t *pattern)
+{
+    static int bits[3];
+    *pattern = 0;
+    for(int i = 0; i < 8; i++) {
+        if(byte & (1 << (7 - i))) {
             bits[0] = 1; bits[1] = 1; bits[2] = 0;
         } else {
             bits[0] = 1; bits[1] = 0; bits[2] = 0;
         }
         for(int j = 0; j < 3; j++) {
             int bit = (i * 3 + j);
-            *spi |= (bits[j] << bit);
+            *pattern |= (bits[j] << bit);
         }
     }
 }
 
 void write24Bits(uint32_t bits)
 {
+#if 0
     for(int i = 0; i < 24; i++) {
         int bit = bits & (1 << i);
         HAL_GPIO_WritePin(RGBLED_GPIO_Port, RGBLED_Pin, bit ? GPIO_PIN_SET : GPIO_PIN_RESET);
-        delayNanos(400);
+        // This could be hosed by an interrupt
+        delayNanos(WS2812B_bitlength_nanos);
         if(0) {
             if(bit) {
                 HAL_GPIO_WritePin(DEBUG_LED_GPIO_Port, DEBUG_LED_Pin, GPIO_PIN_SET);
@@ -143,19 +170,79 @@ void write24Bits(uint32_t bits)
             }
         }
     }
+#else
+    int result = HAL_SPI_Transmit_IT(&hspi4, (unsigned char *)&bits, 3);
+    if(result != HAL_OK){
+        static char message[512];
+        sprintf(message, "SPI_Transmit_IT error %d\n", result);
+        HAL_UART_Transmit_IT(&huart2, (uint8_t *)message, strlen(message));
+        panic();
+    }
+#endif
+}
+
+void threebytes_to_ninebytes(uint32_t bitpattern, uint8_t *bytes)
+{
+    uint32_t bitpattern2;
+    one_byte_to_three_bytes((bitpattern >> 0) & 0xFF, &bitpattern2);
+    bytes[0] = (bitpattern2 >> 0) & 0xFF;
+    bytes[1] = (bitpattern2 >> 8) & 0xFF;
+    bytes[2] = (bitpattern2 >> 16) & 0xFF;
+    one_byte_to_three_bytes((bitpattern >> 8) & 0xFF, &bitpattern2);
+    bytes[3] = (bitpattern2 >> 0) & 0xFF;
+    bytes[4] = (bitpattern2 >> 8) & 0xFF;
+    bytes[5] = (bitpattern2 >> 16) & 0xFF;
+    one_byte_to_three_bytes((bitpattern >> 16) & 0xFF, &bitpattern2);
+    bytes[6] = (bitpattern2 >> 0) & 0xFF;
+    bytes[7] = (bitpattern2 >> 8) & 0xFF;
+    bytes[8] = (bitpattern2 >> 16) & 0xFF;
+}
+
+size_t rgb_to_WS2812_pattern(uint8_t r, uint8_t g, uint8_t b, uint8_t *buffer)
+{
+    uint8_t *p = buffer;
+    uint32_t bitpattern;
+    byte_to_WS2812_bit_pattern(g, &bitpattern);
+    threebytes_to_ninebytes(bitpattern, p); p += 9;
+    byte_to_WS2812_bit_pattern(r, &bitpattern);
+    threebytes_to_ninebytes(bitpattern, p); p += 9;
+    byte_to_WS2812_bit_pattern(b, &bitpattern);
+    threebytes_to_ninebytes(bitpattern, p); p += 9;
+    return p - buffer;
 }
 
 void writeColor(uint8_t r, uint8_t g, uint8_t b)
 {
-    uint32_t spi;
-    WS2812_byte_to_SPI_bytes(g, &spi);
-    write24Bits(spi);
-    WS2812_byte_to_SPI_bytes(r, &spi);
-    write24Bits(spi);
-    WS2812_byte_to_SPI_bytes(b, &spi);
-    write24Bits(spi);
-    HAL_GPIO_WritePin(RGBLED_GPIO_Port, RGBLED_Pin, GPIO_PIN_RESET);
-    delayMicros(50);
+    static uint8_t buffer[28];
+    static uint8_t *p = buffer;
+
+    if(1) {
+        // If I don't first send 0's, I get a weird long spike for the first bit.
+        *p++ = 0x0;
+    }
+    p += rgb_to_WS2812_pattern(r, g, b, p);
+
+    int result = HAL_SPI_Transmit(&hspi4, (unsigned char *)buffer, p - buffer, 1000000);
+    if(result != HAL_OK){
+        static char message[512];
+        sprintf(message, "SPI_Transmit error %d\n", result);
+        HAL_UART_Transmit_IT(&huart2, (uint8_t *)message, strlen(message));
+        panic();
+    }
+    HAL_GPIO_WritePin(RGBLED_SPI_GPIO_Port, RGBLED_SPI_Pin, GPIO_PIN_RESET);
+}
+
+void resetLEDstring()
+{
+    static uint8_t buffer[50];
+    memset(buffer, 0, sizeof(buffer));
+    int result = HAL_SPI_Transmit(&hspi4, (unsigned char *)buffer, sizeof(buffer), 1000000);
+    if(result != HAL_OK){
+        static char message[512];
+        sprintf(message, "SPI_Transmit error %d\n", result);
+        HAL_UART_Transmit_IT(&huart2, (uint8_t *)message, strlen(message));
+        panic();
+    }
 }
 
 /* USER CODE END 0 */
@@ -190,6 +277,7 @@ int main(void)
   MX_GPIO_Init();
   MX_USART2_UART_Init();
   MX_FMC_Init();
+  MX_SPI4_Init();
   /* USER CODE BEGIN 2 */
 
   /* USER CODE END 2 */
@@ -197,21 +285,23 @@ int main(void)
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
 
+  HAL_GPIO_WritePin(RGBLED_SPI_GPIO_Port, RGBLED_SPI_Pin, GPIO_PIN_RESET);
+
     static char message[512];
     sprintf(message, "Hello World\n");
     if(HAL_UART_Transmit_IT(&huart2, (uint8_t *)message, strlen(message)) != HAL_OK) {
         panic();
     }
-    HAL_Delay(200);
+    HAL_Delay(100);
 
     sprintf(message, "System clock is %lu\n", HAL_RCC_GetSysClockFreq());
     if(HAL_UART_Transmit_IT(&huart2, (uint8_t *)message, strlen(message)) != HAL_OK) {
         panic();
     }
-    HAL_Delay(200);
+    HAL_Delay(100);
 
     uint32_t bits;
-    WS2812_byte_to_SPI_bytes(0xA5, &bits);
+    byte_to_WS2812_bit_pattern(0xA5, &bits);
     // 6592CB -> 0110 0101 1001 0010 1100 1011
     // -> 110100110100100110100110
     // A5 is 10100101, should be 110100110100100110100110
@@ -219,8 +309,28 @@ int main(void)
     if(HAL_UART_Transmit_IT(&huart2, (uint8_t *)message, strlen(message)) != HAL_OK) {
         panic();
     }
+    HAL_Delay(100);
+    if(0){
+        static uint8_t bytes[27];
+        rgb_to_WS2812_pattern(0xFF, 0xFF, 0xFF, bytes);
+        for(int i = 0; i < 27; i++) {
+            sprintf(message, "%d%d%d%d%d%d%d%d\n",
+                (bytes[i] >> 7) & 1,
+                (bytes[i] >> 6) & 1,
+                (bytes[i] >> 5) & 1,
+                (bytes[i] >> 4) & 1,
+                (bytes[i] >> 3) & 1,
+                (bytes[i] >> 2) & 1,
+                (bytes[i] >> 1) & 1,
+                (bytes[i] >> 0) & 1);
+            if(HAL_UART_Transmit_IT(&huart2, (uint8_t *)message, strlen(message)) != HAL_OK) {
+                panic();
+            }
+            HAL_Delay(100);
+        }
+    }
 
-    while(1) {
+    while(0) {
         for(int i = 0; i < 1000000; i++) {
             delayNanos(1000);
         }
@@ -231,13 +341,18 @@ int main(void)
         HAL_GPIO_WritePin(DEBUG_LED_GPIO_Port, DEBUG_LED_Pin, GPIO_PIN_RESET );
     }
 
-  int LEDvalue = 255;
+  int LEDvalue = 127;
+  resetLEDstring();
+  writeColor(0x0F, 0, 0);
+  writeColor(0, 0x0F, 0);
+  writeColor(0, 0, 0x0F);
   while (1)
   {
       int lightLED = 0;
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+#if 0
     if(HAL_GPIO_ReadPin(USER1_GPIO_Port, USER1_Pin)) {
         // sprintf("user 1\n");
         // if(HAL_UART_Transmit_IT(&huart2, (uint8_t *)message, strlen(message)) != HAL_OK) {
@@ -246,6 +361,7 @@ int main(void)
         // HAL_Delay(100);
         lightLED = 1;
     }
+#endif
     if(HAL_GPIO_ReadPin(USER2_GPIO_Port, USER2_Pin)) {
         // sprintf("user 2\n");
         // if(HAL_UART_Transmit_IT(&huart2, (uint8_t *)message, strlen(message)) != HAL_OK) {
@@ -264,8 +380,13 @@ int main(void)
     }
     HAL_GPIO_WritePin(DEBUG_LED_GPIO_Port, DEBUG_LED_Pin, lightLED ? GPIO_PIN_SET : GPIO_PIN_RESET);
 
-    writeColor(LEDvalue, LEDvalue, LEDvalue);
-    LEDvalue = (LEDvalue + 1) % 256;
+    if(lightLED) {
+        resetLEDstring();
+        writeColor(LEDvalue, 0, 0);
+        writeColor(0, LEDvalue, 0);
+        writeColor(0, 0, LEDvalue);
+        LEDvalue = (LEDvalue + 1) % 256;
+    }
   }
   /* USER CODE END 3 */
 }
@@ -324,13 +445,63 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
-  PeriphClkInitStruct.PeriphClockSelection = RCC_PERIPHCLK_USART2|RCC_PERIPHCLK_FMC;
+  PeriphClkInitStruct.PeriphClockSelection = RCC_PERIPHCLK_USART2|RCC_PERIPHCLK_SPI4
+                              |RCC_PERIPHCLK_FMC;
   PeriphClkInitStruct.FmcClockSelection = RCC_FMCCLKSOURCE_D1HCLK;
+  PeriphClkInitStruct.Spi45ClockSelection = RCC_SPI45CLKSOURCE_D2PCLK1;
   PeriphClkInitStruct.Usart234578ClockSelection = RCC_USART234578CLKSOURCE_D2PCLK1;
   if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInitStruct) != HAL_OK)
   {
     Error_Handler();
   }
+}
+
+/**
+  * @brief SPI4 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_SPI4_Init(void)
+{
+
+  /* USER CODE BEGIN SPI4_Init 0 */
+
+  /* USER CODE END SPI4_Init 0 */
+
+  /* USER CODE BEGIN SPI4_Init 1 */
+
+  /* USER CODE END SPI4_Init 1 */
+  /* SPI4 parameter configuration*/
+  hspi4.Instance = SPI4;
+  hspi4.Init.Mode = SPI_MODE_MASTER;
+  hspi4.Init.Direction = SPI_DIRECTION_2LINES_TXONLY;
+  hspi4.Init.DataSize = SPI_DATASIZE_8BIT;
+  hspi4.Init.CLKPolarity = SPI_POLARITY_LOW;
+  hspi4.Init.CLKPhase = SPI_PHASE_1EDGE;
+  hspi4.Init.NSS = SPI_NSS_SOFT;
+  hspi4.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_16;
+  hspi4.Init.FirstBit = SPI_FIRSTBIT_LSB;
+  hspi4.Init.TIMode = SPI_TIMODE_DISABLE;
+  hspi4.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
+  hspi4.Init.CRCPolynomial = 0x0;
+  hspi4.Init.NSSPMode = SPI_NSS_PULSE_DISABLE;
+  hspi4.Init.NSSPolarity = SPI_NSS_POLARITY_LOW;
+  hspi4.Init.FifoThreshold = SPI_FIFO_THRESHOLD_01DATA;
+  hspi4.Init.TxCRCInitializationPattern = SPI_CRC_INITIALIZATION_ALL_ZERO_PATTERN;
+  hspi4.Init.RxCRCInitializationPattern = SPI_CRC_INITIALIZATION_ALL_ZERO_PATTERN;
+  hspi4.Init.MasterSSIdleness = SPI_MASTER_SS_IDLENESS_00CYCLE;
+  hspi4.Init.MasterInterDataIdleness = SPI_MASTER_INTERDATA_IDLENESS_00CYCLE;
+  hspi4.Init.MasterReceiverAutoSusp = SPI_MASTER_RX_AUTOSUSP_DISABLE;
+  hspi4.Init.MasterKeepIOState = SPI_MASTER_KEEP_IO_STATE_ENABLE;
+  hspi4.Init.IOSwap = SPI_IO_SWAP_DISABLE;
+  if (HAL_SPI_Init(&hspi4) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN SPI4_Init 2 */
+
+  /* USER CODE END SPI4_Init 2 */
+
 }
 
 /**
@@ -447,10 +618,10 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOD_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOE, DEBUG_LED_Pin|RGBLED_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(DEBUG_LED_GPIO_Port, DEBUG_LED_Pin, GPIO_PIN_RESET);
 
-  /*Configure GPIO pins : USER1_Pin USER2_Pin USER3_Pin */
-  GPIO_InitStruct.Pin = USER1_Pin|USER2_Pin|USER3_Pin;
+  /*Configure GPIO pins : USER2_Pin USER3_Pin */
+  GPIO_InitStruct.Pin = USER2_Pin|USER3_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_PULLDOWN;
   HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
@@ -461,13 +632,6 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(DEBUG_LED_GPIO_Port, &GPIO_InitStruct);
-
-  /*Configure GPIO pin : RGBLED_Pin */
-  GPIO_InitStruct.Pin = RGBLED_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_PULLDOWN;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(RGBLED_GPIO_Port, &GPIO_InitStruct);
 
 }
 
