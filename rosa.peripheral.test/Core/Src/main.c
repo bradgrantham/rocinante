@@ -109,42 +109,6 @@ void delayNanos(uint16_t nanos)
     } while(elapsedCycles < cycles);
 }
 
-const int WS2812B_bitlength_nanos = 400;
-const int WS2812B_reset_micros = 50;
-
-void write24Bits(uint32_t bits)
-{
-#if 0
-    for(int i = 0; i < 24; i++) {
-        int bit = bits & (1 << i);
-        HAL_GPIO_WritePin(RGBLED_GPIO_Port, RGBLED_Pin, bit ? GPIO_PIN_SET : GPIO_PIN_RESET);
-        // This could be hosed by an interrupt
-        delayNanos(WS2812B_bitlength_nanos);
-        if(0) {
-            if(bit) {
-                HAL_GPIO_WritePin(DEBUG_LED_GPIO_Port, DEBUG_LED_Pin, GPIO_PIN_SET);
-                HAL_Delay(900);
-                HAL_GPIO_WritePin(DEBUG_LED_GPIO_Port, DEBUG_LED_Pin, GPIO_PIN_RESET);
-                HAL_Delay(100);
-            } else {
-                HAL_GPIO_WritePin(DEBUG_LED_GPIO_Port, DEBUG_LED_Pin, GPIO_PIN_SET);
-                HAL_Delay(100);
-                HAL_GPIO_WritePin(DEBUG_LED_GPIO_Port, DEBUG_LED_Pin, GPIO_PIN_RESET);
-                HAL_Delay(900);
-            }
-        }
-    }
-#else
-    int result = HAL_SPI_Transmit_IT(&hspi4, (unsigned char *)&bits, 3);
-    if(result != HAL_OK){
-        static char message[512];
-        sprintf(message, "SPI_Transmit_IT error %d\n", result);
-        HAL_UART_Transmit_IT(&huart2, (uint8_t *)message, strlen(message));
-        panic();
-    }
-#endif
-}
-
 enum FirstBit {
     MSB, LSB
 };
@@ -231,6 +195,9 @@ void write3LEDString(uint8_t colors[3][3])
     static uint8_t buffer[reset_bytes + 1 + 27 * 3 + reset_bytes];
     uint8_t *p = buffer;
 
+    // Wait for SPI to finish transmitting the previous color
+    while (hspi4.State != HAL_SPI_STATE_READY);
+
     *p++ = 0;
     for(int i = 0; i < 3; i++) {
         // Write colors to SPI buffer
@@ -239,7 +206,7 @@ void write3LEDString(uint8_t colors[3][3])
     // Write latch / reset to SPI buffer
     memset(p, 0, reset_bytes); p += reset_bytes;
 
-    int result = HAL_SPI_Transmit(&hspi4, (unsigned char *)buffer, p - buffer, 2);
+    int result = HAL_SPI_Transmit_IT(&hspi4, (unsigned char *)buffer, p - buffer); // , 2);
     if(result != HAL_OK){
         static char message[512];
         sprintf(message, "SPI_Transmit error %d, error code %08lX, status %08lX\n", result, hspi4.ErrorCode, SPI4->SR);
