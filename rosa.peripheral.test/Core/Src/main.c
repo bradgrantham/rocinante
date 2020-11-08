@@ -222,31 +222,23 @@ size_t rgb_to_WS2812_NZR(uint8_t r, uint8_t g, uint8_t b, uint8_t *buffer)
     return p - buffer;
 }
 
-#define reset_bytes 500
+// 47 bytes at 7.5Mbit/s yields a touch more than 50uS
+// But in practice I needed this many bytes to reliably latch/reset.
+#define reset_bytes 150
+
 void write3LEDString(uint8_t colors[3][3])
 {
     static uint8_t buffer[reset_bytes + 1 + 27 * 3 + reset_bytes];
     uint8_t *p = buffer;
 
-    memset(p, 0, reset_bytes); p += reset_bytes;
-    if(1) {
-        // If I don't first send 0's, I get a weird long spike for the first bit.
-        *p++ = 0x0;
-    }
+    *p++ = 0;
     for(int i = 0; i < 3; i++) {
+        // Write colors to SPI buffer
         p += rgb_to_WS2812_NZR(colors[i][0], colors[i][1], colors[i][2], p);
     }
-    if(1) {
-        *p++ = 0x0;
-    }
+    // Write latch / reset to SPI buffer
     memset(p, 0, reset_bytes); p += reset_bytes;
 
-    {
-        static char message[512];
-        sprintf(message, "transmit %d bytes\n", p - buffer);
-        HAL_UART_Transmit_IT(&huart2, (uint8_t *)message, strlen(message));
-        HAL_Delay(100);
-    }
     int result = HAL_SPI_Transmit(&hspi4, (unsigned char *)buffer, p - buffer, 2);
     if(result != HAL_OK){
         static char message[512];
