@@ -6,7 +6,7 @@ I call it Rocinante.
 
 It's named after Don Quixote's horse in the novel by Miguel de Cervantes. Quixote is proud of his horse and views Rocinante as his noble steed that carries him boldy into battle.  Like Don Quixote, Rocinante is actually awkward, past his prime, and engaged in a task beyond his capacities.
 
-I reached the limit of what I could do comfortably on a protoboard, so I designed a PCB with the peripherals I thought I might need for a beefy version of the thing.  I had PCBWay make the boards and place the SMD parts.  The boards arrived November 4th, 2020.
+I reached the limit of what I could do comfortably on a protoboard, so I designed a PCB with the peripherals I thought I might need for a beefy version of the thing.  I had PCBWay make the boards and place the SMD parts.  The boards arrived November 4th, 2020.  I installed the through-hole parts myself.
 
 ![Rosa V1](RosaV1.jpg)
 
