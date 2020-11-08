@@ -112,42 +112,6 @@ void delayNanos(uint16_t nanos)
 const int WS2812B_bitlength_nanos = 400;
 const int WS2812B_reset_micros = 50;
 
-// This one expands every bit into 3 , LSBit first
-void one_byte_to_three_bytes(uint8_t byte, uint32_t *pattern)
-{
-    *pattern = 0;
-    for(int i = 0; i < 8; i++) {
-        int bits[3];
-        if(byte & (1 << i)) {
-            bits[0] = 1; bits[1] = 1; bits[2] = 1;
-        } else {
-            bits[0] = 0; bits[1] = 0; bits[2] = 0;
-        }
-        for(int j = 0; j < 3; j++) {
-            int bit = (i * 3 + j);
-            *pattern |= (bits[j] << bit);
-        }
-    }
-}
-
-// This one expands every bit into WS2812's weird modulation, MSBit first.
-void byte_to_WS2812_bit_pattern(uint8_t byte, uint32_t *pattern)
-{
-    static int bits[3];
-    *pattern = 0;
-    for(int i = 0; i < 8; i++) {
-        if(byte & (1 << (7 - i))) {
-            bits[0] = 1; bits[1] = 1; bits[2] = 0;
-        } else {
-            bits[0] = 1; bits[1] = 0; bits[2] = 0;
-        }
-        for(int j = 0; j < 3; j++) {
-            int bit = (i * 3 + j);
-            *pattern |= (bits[j] << bit);
-        }
-    }
-}
-
 void write24Bits(uint32_t bits)
 {
 #if 0
@@ -181,69 +145,151 @@ void write24Bits(uint32_t bits)
 #endif
 }
 
-void threebytes_to_ninebytes(uint32_t bitpattern, uint8_t *bytes)
+enum FirstBit {
+    MSB, LSB
+};
+
+void set_bit(enum FirstBit firstBit, int bitIndex, uint8_t *bitmap, int value)
 {
-    uint32_t bitpattern2;
-    one_byte_to_three_bytes((bitpattern >> 0) & 0xFF, &bitpattern2);
-    bytes[0] = (bitpattern2 >> 0) & 0xFF;
-    bytes[1] = (bitpattern2 >> 8) & 0xFF;
-    bytes[2] = (bitpattern2 >> 16) & 0xFF;
-    one_byte_to_three_bytes((bitpattern >> 8) & 0xFF, &bitpattern2);
-    bytes[3] = (bitpattern2 >> 0) & 0xFF;
-    bytes[4] = (bitpattern2 >> 8) & 0xFF;
-    bytes[5] = (bitpattern2 >> 16) & 0xFF;
-    one_byte_to_three_bytes((bitpattern >> 16) & 0xFF, &bitpattern2);
-    bytes[6] = (bitpattern2 >> 0) & 0xFF;
-    bytes[7] = (bitpattern2 >> 8) & 0xFF;
-    bytes[8] = (bitpattern2 >> 16) & 0xFF;
+    int bitInByte = (bitIndex % 8);
+    int byteIndex = bitIndex / 8;
+    uint8_t mask;
+    if(firstBit == MSB) {
+        mask = 0x80U >> bitInByte;
+    } else {
+        mask = 0x01U << bitInByte;
+    }
+    uint8_t cleared = bitmap[byteIndex] & ~mask;
+    uint8_t newBit = value ? mask : 0;
+    bitmap[byteIndex] = cleared | newBit;
 }
 
-size_t rgb_to_WS2812_pattern(uint8_t r, uint8_t g, uint8_t b, uint8_t *buffer)
+int get_bit(enum FirstBit firstBit, int bitIndex, uint8_t *bitmap)
+{
+    int bitInByte = (bitIndex % 8);
+    int byteIndex = bitIndex / 8;
+    uint8_t mask;
+    if(firstBit == MSB) {
+        mask = 0x80 >> bitInByte;
+    } else {
+        mask = 0x01 << bitInByte;
+    }
+    return (bitmap[byteIndex] & mask) != 0;
+}
+
+const int spi_bits_per_ws2812_bit = 3;
+
+void expand_bit_pattern_lsb(int srcBitCount, int srcBitOffset, uint8_t *srcPattern, int dstBitsPerSrcBit, int dstBitOffset, uint8_t *dstPattern)
+{
+    for(int i = 0; i < srcBitCount; i++) {
+        int srcBit = get_bit(LSB, i + srcBitOffset, srcPattern);
+        for(int j = 0; j < dstBitsPerSrcBit; j++) {
+            set_bit(LSB, i * dstBitsPerSrcBit + j + dstBitOffset, dstPattern, srcBit);
+        }
+    }
+}
+
+// Assumes MSB-first bits in src will be streamed as LSB-first from dst
+void expand_bits_to_WS2812(int bitCount, uint8_t *srcPattern, uint8_t *dstPattern)
+{
+    for(int i = 0; i < bitCount; i++) {
+        int bit = get_bit(MSB, i, srcPattern);
+        if(bit) {
+            set_bit(LSB, i * 3 + 0, dstPattern, 1);
+            set_bit(LSB, i * 3 + 1, dstPattern, 1);
+            set_bit(LSB, i * 3 + 2, dstPattern, 0);
+        } else {
+            set_bit(LSB, i * 3 + 0, dstPattern, 1);
+            set_bit(LSB, i * 3 + 1, dstPattern, 0);
+            set_bit(LSB, i * 3 + 2, dstPattern, 0);
+        }
+    }
+}
+
+size_t rgb_to_WS2812_NZR(uint8_t r, uint8_t g, uint8_t b, uint8_t *buffer)
 {
     uint8_t *p = buffer;
-    uint32_t bitpattern;
-    byte_to_WS2812_bit_pattern(g, &bitpattern);
-    threebytes_to_ninebytes(bitpattern, p); p += 9;
-    byte_to_WS2812_bit_pattern(r, &bitpattern);
-    threebytes_to_ninebytes(bitpattern, p); p += 9;
-    byte_to_WS2812_bit_pattern(b, &bitpattern);
-    threebytes_to_ninebytes(bitpattern, p); p += 9;
+    uint8_t expanded[9];
+
+    // 3 bytes (24 bits) will be expanded to 9 bytes (72 bits)
+    expand_bits_to_WS2812(8, &g, expanded + 0);
+    expand_bits_to_WS2812(8, &r, expanded + 3);
+    expand_bits_to_WS2812(8, &b, expanded + 6);
+
+    // 9 bytes (72 bits) will be expanded to 27 bytes (216 bits)
+    expand_bit_pattern_lsb(72, 0, expanded, spi_bits_per_ws2812_bit, 0, p); p += 27;
+
     return p - buffer;
 }
 
-void writeColor(uint8_t r, uint8_t g, uint8_t b)
+#define reset_bytes 500
+void write3LEDString(uint8_t colors[3][3])
 {
-    static uint8_t buffer[28];
-    static uint8_t *p = buffer;
+    static uint8_t buffer[reset_bytes + 1 + 27 * 3 + reset_bytes];
+    uint8_t *p = buffer;
 
+    memset(p, 0, reset_bytes); p += reset_bytes;
     if(1) {
         // If I don't first send 0's, I get a weird long spike for the first bit.
         *p++ = 0x0;
     }
-    p += rgb_to_WS2812_pattern(r, g, b, p);
+    for(int i = 0; i < 3; i++) {
+        p += rgb_to_WS2812_NZR(colors[i][0], colors[i][1], colors[i][2], p);
+    }
+    if(1) {
+        *p++ = 0x0;
+    }
+    memset(p, 0, reset_bytes); p += reset_bytes;
 
-    int result = HAL_SPI_Transmit(&hspi4, (unsigned char *)buffer, p - buffer, 1000000);
+    {
+        static char message[512];
+        sprintf(message, "transmit %d bytes\n", p - buffer);
+        HAL_UART_Transmit_IT(&huart2, (uint8_t *)message, strlen(message));
+        HAL_Delay(100);
+    }
+    int result = HAL_SPI_Transmit(&hspi4, (unsigned char *)buffer, p - buffer, 2);
     if(result != HAL_OK){
         static char message[512];
-        sprintf(message, "SPI_Transmit error %d\n", result);
+        sprintf(message, "SPI_Transmit error %d, error code %08lX, status %08lX\n", result, hspi4.ErrorCode, SPI4->SR);
         HAL_UART_Transmit_IT(&huart2, (uint8_t *)message, strlen(message));
         panic();
     }
     HAL_GPIO_WritePin(RGBLED_SPI_GPIO_Port, RGBLED_SPI_Pin, GPIO_PIN_RESET);
 }
 
-void resetLEDstring()
+void HSVToRGB3f(float h, float s, float v, float *r, float *g, float *b)
 {
-    static uint8_t buffer[50];
-    memset(buffer, 0, sizeof(buffer));
-    int result = HAL_SPI_Transmit(&hspi4, (unsigned char *)buffer, sizeof(buffer), 1000000);
-    if(result != HAL_OK){
-        static char message[512];
-        sprintf(message, "SPI_Transmit error %d\n", result);
-        HAL_UART_Transmit_IT(&huart2, (uint8_t *)message, strlen(message));
-        panic();
+    if(s < .00001) {
+        *r = v; *g = v; *b = v;
+    } else {
+    	int i;
+	float p, q, t, f;
+
+	h = fmodf(h, M_PI * 2);	/* wrap just in case */
+
+        i = floorf(h / (M_PI / 3));
+
+	/*
+	 * would have used "f = fmod(h, M_PI / 3);", but fmod seems to have
+	 * a bug under Linux.
+	 */
+
+	f = h / (M_PI / 3) - floorf(h / (M_PI / 3));
+
+	p = v * (1 - s);
+	q = v * (1 - s * f);
+	t = v * (1 - s * (1 - f));
+	switch(i) {
+	    case 0: *r = v; *g = t; *b = p; break;
+	    case 1: *r = q; *g = v; *b = p; break;
+	    case 2: *r = p; *g = v; *b = t; break;
+	    case 3: *r = p; *g = q; *b = v; break;
+	    case 4: *r = t; *g = p; *b = v; break;
+	    case 5: *r = v; *g = p; *b = q; break;
+	}
     }
 }
+
 
 /* USER CODE END 0 */
 
@@ -300,34 +346,23 @@ int main(void)
     }
     HAL_Delay(100);
 
-    uint32_t bits;
-    byte_to_WS2812_bit_pattern(0xA5, &bits);
-    // 6592CB -> 0110 0101 1001 0010 1100 1011
-    // -> 110100110100100110100110
-    // A5 is 10100101, should be 110100110100100110100110
-    sprintf(message, "bits would become %08lX\n", bits);
-    if(HAL_UART_Transmit_IT(&huart2, (uint8_t *)message, strlen(message)) != HAL_OK) {
-        panic();
-    }
-    HAL_Delay(100);
     if(0){
         static uint8_t bytes[27];
-        rgb_to_WS2812_pattern(0xFF, 0xFF, 0xFF, bytes);
-        for(int i = 0; i < 27; i++) {
-            sprintf(message, "%d%d%d%d%d%d%d%d\n",
-                (bytes[i] >> 7) & 1,
-                (bytes[i] >> 6) & 1,
-                (bytes[i] >> 5) & 1,
-                (bytes[i] >> 4) & 1,
-                (bytes[i] >> 3) & 1,
-                (bytes[i] >> 2) & 1,
-                (bytes[i] >> 1) & 1,
-                (bytes[i] >> 0) & 1);
-            if(HAL_UART_Transmit_IT(&huart2, (uint8_t *)message, strlen(message)) != HAL_OK) {
-                panic();
-            }
-            HAL_Delay(100);
+        rgb_to_WS2812_NZR(0xFF, 0xFF, 0xFF, bytes);
+        char *p = message;
+        for(int i = 0; i < 27 * 8; i++) {
+            if(i % 3 == 0)
+                *p++ = ' ';
+            if(i % 9 == 0)
+                *p++ = ' ';
+            *p++ = get_bit(LSB, i, bytes) ? '1' : '0';
         }
+        *p++ = '\n';
+        *p++ = '\0';
+        if(HAL_UART_Transmit_IT(&huart2, (uint8_t *)message, strlen(message)) != HAL_OK) {
+            panic();
+        }
+        HAL_Delay(100);
     }
 
     while(0) {
@@ -341,13 +376,17 @@ int main(void)
         HAL_GPIO_WritePin(DEBUG_LED_GPIO_Port, DEBUG_LED_Pin, GPIO_PIN_RESET );
     }
 
-  int LEDvalue = 127;
-  resetLEDstring();
-  writeColor(0x0F, 0, 0);
-  writeColor(0, 0x0F, 0);
-  writeColor(0, 0, 0x0F);
+  uint8_t colors[3][3];
+
+  colors[0][0] = 0x10; colors[0][1] = 0; colors[0][2] = 0;
+  colors[1][0] = 0; colors[1][1] = 0x10; colors[1][2] = 0;
+  colors[2][0] = 0; colors[2][1] = 0; colors[2][2] = 0x10;
+  write3LEDString(colors);
+
+  int LEDcounter = 0;
   while (1)
   {
+      float now = HAL_GetTick() / 1000.0f;
       int lightLED = 0;
     /* USER CODE END WHILE */
 
@@ -380,13 +419,28 @@ int main(void)
     }
     HAL_GPIO_WritePin(DEBUG_LED_GPIO_Port, DEBUG_LED_Pin, lightLED ? GPIO_PIN_SET : GPIO_PIN_RESET);
 
-    if(lightLED) {
-        resetLEDstring();
-        writeColor(LEDvalue, 0, 0);
-        writeColor(0, LEDvalue, 0);
-        writeColor(0, 0, LEDvalue);
-        LEDvalue = (LEDvalue + 1) % 256;
+    int halves = (int)(now * 2);
+    if(halves % 2) {
+        colors[0][0] = 0; colors[0][1] = 0; colors[0][2] = 0;
+    } else {
+        colors[0][0] = 0xFF; colors[0][1] = 0; colors[0][2] = 0;
     }
+
+    float h = now / 4.0f * 3.14159;
+    float s = 1.0f;
+    float v = 1.0f;
+    float r, g, b;
+    HSVToRGB3f(h, s, v, &r, &g, &b);
+    colors[1][0] = r * 255; colors[1][1] = g * 255; colors[1][2] = b * 255;
+
+    int phase = (int)now % 2;
+    float value = phase ? (now - (int)now) : (1 - (now - (int)now));
+    colors[2][0] = value * 255; colors[2][1] = value * 255; colors[2][2] = value * 255;
+
+    write3LEDString(colors);
+
+    LEDcounter = (LEDcounter + 1) % 65536;
+
   }
   /* USER CODE END 3 */
 }
