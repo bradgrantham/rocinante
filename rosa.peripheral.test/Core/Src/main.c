@@ -415,7 +415,7 @@ int main(void)
     if(halves % 2) {
         colors[0][0] = 0; colors[0][1] = 0; colors[0][2] = 0;
     } else {
-        colors[0][0] = 0xFF; colors[0][1] = 0; colors[0][2] = 0;
+        colors[0][0] = 32; colors[0][1] = 0; colors[0][2] = 0;
     }
 
     float h = now / 4.0f * 3.14159;
@@ -423,11 +423,11 @@ int main(void)
     float v = 1.0f;
     float r, g, b;
     HSVToRGB3f(h, s, v, &r, &g, &b);
-    colors[1][0] = r * 255; colors[1][1] = g * 255; colors[1][2] = b * 255;
+    colors[1][0] = r * 32; colors[1][1] = g * 32; colors[1][2] = b * 32;
 
     int phase = (int)now % 2;
     float value = phase ? (now - (int)now) : (1 - (now - (int)now));
-    colors[2][0] = value * 255; colors[2][1] = value * 255; colors[2][2] = value * 255;
+    colors[2][0] = value * 32; colors[2][1] = value * 32; colors[2][2] = value * 32;
 
     write3LEDString(colors);
 
