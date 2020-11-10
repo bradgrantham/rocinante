@@ -46,6 +46,8 @@
 
 SPI_HandleTypeDef hspi4;
 
+TIM_HandleTypeDef htim2;
+
 UART_HandleTypeDef huart2;
 
 SDRAM_HandleTypeDef hsdram1;
@@ -60,6 +62,7 @@ static void MX_GPIO_Init(void);
 static void MX_USART2_UART_Init(void);
 static void MX_FMC_Init(void);
 static void MX_SPI4_Init(void);
+static void MX_TIM2_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -249,6 +252,10 @@ void HSVToRGB3f(float h, float s, float v, float *r, float *g, float *b)
     }
 }
 
+uint8_t ps2_byte;
+int ps2_byte_ready = 0;
+uint32_t ps2_bytes_received = 0;
+// ???
 
 /* USER CODE END 0 */
 
@@ -283,8 +290,16 @@ int main(void)
   MX_USART2_UART_Init();
   MX_FMC_Init();
   MX_SPI4_Init();
+  MX_TIM2_Init();
   /* USER CODE BEGIN 2 */
 
+  if(0){
+      GPIO_InitTypeDef GPIO_InitStruct = {0};
+      GPIO_InitStruct.Pin = USER1_Pin;
+      GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+      GPIO_InitStruct.Pull = GPIO_PULLDOWN;
+      HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
+  }
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -342,11 +357,50 @@ int main(void)
   colors[2][0] = 0; colors[2][1] = 0; colors[2][2] = 0x10;
   write3LEDString(colors);
 
+  uint32_t tim2state = 0;
+     int status = HAL_TIM_IC_Start(&htim2, TIM_CHANNEL_1);
+    if(status != HAL_OK) {
+        printf("HAL_TIM_IC_Start status %d\n", status);
+        panic();
+    }
+
   int LEDcounter = 0;
   while (1)
   {
       float now = HAL_GetTick() / 1000.0f;
       int lightLED = 0;
+
+      if(ps2_byte_ready) {
+          ps2_byte_ready = 0;
+          sprintf(message, "ps2 transmission %lu : %02X\n", ps2_bytes_received, ps2_byte);
+          HAL_UART_Transmit_IT(&huart2, (uint8_t *)message, strlen(message));
+          HAL_Delay(100);
+      }
+
+      if(tim2state != newstate) {
+          int tif = 0;
+          int cc1of = 0;
+          uint32_t ccr1;
+
+          if(TIM2->SR & TIM_SR_TIF) {
+              TIM2->SR &= ~TIM_SR_TIF;
+              tif = 1;
+          }
+          if(TIM2->SR & TIM_SR_CC1OF) {
+              ccr1 = TIM2->CCR1;
+              cc1of = 1;
+              TIM2->SR &= ~TIM_SR_CC1OF;
+          }
+          tim2state = TIM2->SR;
+          sprintf(message, "TIM2 %08lX", newstate);
+          if(tif) 
+              sprintf(message + strlen(message), ", T");
+          if(cc1of) 
+              sprintf(message + strlen(message), ", CCR1 %08lX", ccr1);
+          sprintf(message + strlen(message), "\n");
+          HAL_UART_Transmit_IT(&huart2, (uint8_t *)message, strlen(message));
+          HAL_Delay(10);
+      }
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -385,7 +439,7 @@ int main(void)
         colors[0][0] = 32; colors[0][1] = 0; colors[0][2] = 0;
     }
 
-    float h = now / 4.0f * 3.14159;
+    float h = now * 2.0f * 3.14159;
     float s = 1.0f;
     float v = 1.0f;
     float r, g, b;
@@ -518,6 +572,54 @@ static void MX_SPI4_Init(void)
 }
 
 /**
+  * @brief TIM2 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM2_Init(void)
+{
+
+  /* USER CODE BEGIN TIM2_Init 0 */
+
+  /* USER CODE END TIM2_Init 0 */
+
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+  TIM_IC_InitTypeDef sConfigIC = {0};
+
+  /* USER CODE BEGIN TIM2_Init 1 */
+
+  /* USER CODE END TIM2_Init 1 */
+  htim2.Instance = TIM2;
+  htim2.Init.Prescaler = 0;
+  htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim2.Init.Period = 0;
+  htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_IC_Init(&htim2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_OC1;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim2, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sConfigIC.ICPolarity = TIM_INPUTCHANNELPOLARITY_FALLING;
+  sConfigIC.ICSelection = TIM_ICSELECTION_DIRECTTI;
+  sConfigIC.ICPrescaler = TIM_ICPSC_DIV1;
+  sConfigIC.ICFilter = 0;
+  if (HAL_TIM_IC_ConfigChannel(&htim2, &sConfigIC, TIM_CHANNEL_1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM2_Init 2 */
+
+  /* USER CODE END TIM2_Init 2 */
+
+}
+
+/**
   * @brief USART2 Initialization Function
   * @param None
   * @retval None
@@ -629,6 +731,7 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOG_CLK_ENABLE();
   __HAL_RCC_GPIOD_CLK_ENABLE();
+  __HAL_RCC_GPIOB_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(DEBUG_LED_GPIO_Port, DEBUG_LED_Pin, GPIO_PIN_RESET);
@@ -645,6 +748,22 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(DEBUG_LED_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : PA10 */
+  GPIO_InitStruct.Pin = GPIO_PIN_10;
+  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  GPIO_InitStruct.Alternate = GPIO_AF7_USART1;
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : PB6 */
+  GPIO_InitStruct.Pin = GPIO_PIN_6;
+  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  GPIO_InitStruct.Alternate = GPIO_AF7_USART1;
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
 }
 
