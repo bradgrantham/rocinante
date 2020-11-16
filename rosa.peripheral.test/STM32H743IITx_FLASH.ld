@@ -149,6 +149,17 @@ SECTIONS
     _edata = .;        /* define a global symbol at data end */
   } >DTCMRAM AT> FLASH
 
+  .ram_d1 :
+  {
+      . = ALIGN(4);
+    _sram_d1 = .;       /* create a global symbol at ccmram start */
+    *(.ram_d1)
+    *(.ram_d1*)
+    
+    . = ALIGN(4);
+    _eram_d1 = .;       /* create a global symbol at ccmram end */
+  } >RAM_D1 AT> FLASH
+
   
   /* Uninitialized data section */
   . = ALIGN(4);

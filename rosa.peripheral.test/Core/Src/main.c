@@ -28,6 +28,7 @@
 
 #include <string.h>
 #include <stdio.h>
+#include <stdarg.h>
 
 /* USER CODE END Includes */
 
@@ -49,14 +50,16 @@
 
 SPI_HandleTypeDef hspi4;
 
+TIM_HandleTypeDef htim1;
+DMA_HandleTypeDef hdma_tim1_ch2;
+
 UART_HandleTypeDef huart2;
 
 SDRAM_HandleTypeDef hsdram1;
 
 /* USER CODE BEGIN PV */
-
-#if 0
-unsigned char testNTSCImage_bytes[] = {
+// unsigned char __attribute__((section (".ram_d1"))) testNTSCImage_RAM[238420];
+const unsigned char testNTSCImage_bytes[] = {
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
     0x00, 0x00, 0x00, 0x00, 0x37, 0x37, 0x37, 0x37, 0x37, 0x37, 0x37, 0x37, 0x37, 0x37, 0x37, 0x37, 
@@ -14961,16 +14964,17 @@ unsigned char testNTSCImage_bytes[] = {
     0x37, 0x37, 0x37, 0x37, 
 };
 unsigned int testNTSCImage_length = 238420;
-#endif
 
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
+static void MX_DMA_Init(void);
 static void MX_USART2_UART_Init(void);
 static void MX_FMC_Init(void);
 static void MX_SPI4_Init(void);
+static void MX_TIM1_Init(void);
 void MX_USB_HOST_Process(void);
 
 /* USER CODE BEGIN PFP */
@@ -14988,6 +14992,21 @@ void panic()
         HAL_Delay(200);
         HAL_GPIO_WritePin(DEBUG_LED_GPIO_Port, DEBUG_LED_Pin, GPIO_PIN_RESET);
     }
+}
+
+char sprintfBuffer[512];
+
+void msgprintf(const char *fmt, ...)
+{
+    va_list args;
+
+    va_start(args, fmt);
+    vsnprintf(sprintfBuffer, sizeof(sprintfBuffer), fmt, args);
+    va_end(args);
+    if(HAL_UART_Transmit_IT(&huart2, (uint8_t *)sprintfBuffer, strlen(sprintfBuffer)) != HAL_OK) {
+        panic();
+    }
+    HAL_Delay(10);
 }
 
 void USBH_HID_EventCallback(USBH_HandleTypeDef *phost)
@@ -15179,6 +15198,89 @@ void HSVToRGB3f(float h, float s, float v, float *r, float *g, float *b)
     }
 }
 
+uint8_t __attribute__((section (".ram_d1"))) rowDoubleBuffer[910 * 2];
+int rowNumber = 0;
+int frameNumber = 0;
+
+int why;
+
+void HAL_TIM_IC_CaptureHalfCpltCallback(TIM_HandleTypeDef *htim)
+{
+    rowNumber = (rowNumber + 1) % 262;
+    if(rowNumber == 0) {
+        frameNumber ++;
+    }
+    uint8_t *rowDest = rowDoubleBuffer + 0;
+    memcpy(rowDest, testNTSCImage_bytes + rowNumber * 910, 910);
+    memset(rowDest, 0, 910); // XXX
+}
+
+void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim)
+{
+    rowNumber = (rowNumber + 1) % 262;
+    if(rowNumber == 0) {
+        frameNumber ++;
+    }
+    uint8_t *rowDest = rowDoubleBuffer + 910;
+    memcpy(rowDest, testNTSCImage_bytes + rowNumber * 910, 910);
+    memset(rowDest, 0xFF, 910); // XXX
+}
+
+void HAL_TIM_ErrorCallback(TIM_HandleTypeDef *htim)
+{
+    sprintf(sprintfBuffer, "error code %08lX, state %08X, line %d\n", hdma_tim1_ch2.ErrorCode, hdma_tim1_ch2.State, why);
+    HAL_UART_Transmit_IT(&huart2, (uint8_t *)sprintfBuffer, strlen(sprintfBuffer));
+    // panic();
+}
+
+void startNTSCScanout()
+{
+    HAL_StatusTypeDef status;
+    // memcpy(testNTSCImage_RAM, testNTSCImage_bytes, sizeof(testNTSCImage_bytes));
+    memcpy(rowDoubleBuffer + 0, testNTSCImage_bytes + 0, 910);
+    memcpy(rowDoubleBuffer + 910, testNTSCImage_bytes + 910, 910);
+    rowNumber = 1; // the previous row that was filled in
+
+    memset(rowDoubleBuffer + 0, 0, 910);
+    memset(rowDoubleBuffer + 910, 0xff, 910);
+
+#if 0
+
+    // TIM1->DIER |= TIM_DIER_CC2DE;
+    DMA2_Stream1->PAR = (uint32_t)&GPIOI->ODR;  // Destination address
+    status = HAL_TIM_IC_Start_DMA(&htim1, TIM_CHANNEL_2, (uint32_t*)rowDoubleBuffer, sizeof(rowDoubleBuffer));
+
+#else
+
+    // Set DMA request on capture-compare channel 1
+    TIM1->DIER |= TIM_DIER_CC2DE;
+    DMA2_Stream1->PAR = (uint32_t)&GPIOI->ODR;  // Destination address
+    DMA2_Stream1->M0AR = (uint32_t)rowDoubleBuffer;  // Destination address
+    DMA2_Stream1->NDTR = sizeof(rowDoubleBuffer);
+    DMA2_Stream1->CR |= DMA_SxCR_TCIE;    /* enable transfer complete interrupt */
+    DMA2_Stream1->CR |= DMA_SxCR_HTIE;    /* enable half transfer interrupt */
+    DMA2_Stream1->CR |= DMA_SxCR_EN;    /* enable DMA */
+
+    status = HAL_TIM_IC_Start(&htim1, TIM_CHANNEL_2);
+
+#endif
+
+    msgprintf("DMA2_Stream1->CR = %08lX\n", DMA2_Stream1->CR);
+    msgprintf("DMA2_Stream1->NDTR = %08lX\n", DMA2_Stream1->NDTR);
+    msgprintf("DMA2_Stream1->PAR = %08lX\n", DMA2_Stream1->PAR);
+    msgprintf("DMA2_Stream1->M0AR = %08lX\n", DMA2_Stream1->M0AR);
+    msgprintf("DMA2_Stream1->M1AR = %08lX\n", DMA2_Stream1->M1AR);
+    msgprintf("DMA2_Stream1->FCR = %08lX\n", DMA2_Stream1->FCR);
+
+    if(status != HAL_OK){
+        sprintf(sprintfBuffer, "DMA error %08d, error code %08lX, line %d\n", status, hdma_tim1_ch2.ErrorCode, why);
+        HAL_UART_Transmit_IT(&huart2, (uint8_t *)sprintfBuffer, strlen(sprintfBuffer));
+        panic();
+    }
+}
+
+int hey;
+
 /* USER CODE END 0 */
 
 /**
@@ -15190,6 +15292,9 @@ int main(void)
   /* USER CODE BEGIN 1 */
 
   /* USER CODE END 1 */
+
+  /* Enable I-Cache---------------------------------------------------------*/
+  SCB_EnableICache();
 
   /* MCU Configuration--------------------------------------------------------*/
 
@@ -15209,11 +15314,17 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+  MX_DMA_Init();
   MX_USART2_UART_Init();
   MX_FMC_Init();
   MX_SPI4_Init();
   MX_USB_HOST_Init();
+  MX_TIM1_Init();
   /* USER CODE BEGIN 2 */
+
+    sprintf(sprintfBuffer, "Hey %d\n", hey);
+    HAL_UART_Transmit_IT(&huart2, (uint8_t *)sprintfBuffer, strlen(sprintfBuffer));
+    HAL_Delay(100);
 
   if(0){
       GPIO_InitTypeDef GPIO_InitStruct = {0};
@@ -15279,6 +15390,9 @@ int main(void)
   colors[2][0] = 0; colors[2][1] = 0; colors[2][2] = 0x10;
   write3LEDString(colors);
 
+  startNTSCScanout();
+        HAL_GPIO_WritePin(DEBUG_LED_GPIO_Port, DEBUG_LED_Pin, GPIO_PIN_SET );
+
   int DACvalue = 0;
   while (1) {
 
@@ -15317,7 +15431,7 @@ int main(void)
         lightLED = 1;
     }
     // ----- DEBUG LED test
-    HAL_GPIO_WritePin(DEBUG_LED_GPIO_Port, DEBUG_LED_Pin, lightLED ? GPIO_PIN_SET : GPIO_PIN_RESET);
+    // HAL_GPIO_WritePin(DEBUG_LED_GPIO_Port, DEBUG_LED_Pin, lightLED ? GPIO_PIN_SET : GPIO_PIN_RESET);
 
     // ----- WS2812B RGB LED test
     int halves = (int)(now * 2);
@@ -15340,13 +15454,13 @@ int main(void)
 
     write3LEDString(colors);
 
+    msgprintf("Frame %d, row %d, DMA2_Stream1->NDTR = %08lX\n", frameNumber, rowNumber, DMA2_Stream1->NDTR);
+    memset(rowDoubleBuffer + 0, colors[2][0] * 8, 910);
+    memset(rowDoubleBuffer + 910, colors[1][0] * 8, 910);
+
     // ----- Composite DAC test
-    DACvalue = (DACvalue + 1) % 256;
-    GPIOI->ODR = (GPIOI->ODR & 0xFFFFFF00) | DACvalue;
-    // while(1) {
-        // uint8_t DACvalue = testNTSCImage_bytes
-        // GPIOI->ODR = (GPIOI->ODR & 0xFFFFFF00) | DACvalue; testNTSCImage_bytes
-    // }
+    // DACvalue = (DACvalue + 1) % 256;
+    // GPIOI->ODR = (GPIOI->ODR & 0xFFFFFF00) | DACvalue;
   }
 
   /* USER CODE END 3 */
@@ -15471,6 +15585,56 @@ static void MX_SPI4_Init(void)
 }
 
 /**
+  * @brief TIM1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM1_Init(void)
+{
+
+  /* USER CODE BEGIN TIM1_Init 0 */
+
+  /* USER CODE END TIM1_Init 0 */
+
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+  TIM_IC_InitTypeDef sConfigIC = {0};
+
+  /* USER CODE BEGIN TIM1_Init 1 */
+
+  /* USER CODE END TIM1_Init 1 */
+  htim1.Instance = TIM1;
+  htim1.Init.Prescaler = 0;
+  htim1.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim1.Init.Period = 0;
+  htim1.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim1.Init.RepetitionCounter = 0;
+  htim1.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_IC_Init(&htim1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_OC1;
+  sMasterConfig.MasterOutputTrigger2 = TIM_TRGO2_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim1, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sConfigIC.ICPolarity = TIM_INPUTCHANNELPOLARITY_RISING;
+  sConfigIC.ICSelection = TIM_ICSELECTION_DIRECTTI;
+  sConfigIC.ICPrescaler = TIM_ICPSC_DIV1;
+  sConfigIC.ICFilter = 0;
+  if (HAL_TIM_IC_ConfigChannel(&htim1, &sConfigIC, TIM_CHANNEL_2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM1_Init 2 */
+
+  /* USER CODE END TIM1_Init 2 */
+
+}
+
+/**
   * @brief USART2 Initialization Function
   * @param None
   * @retval None
@@ -15515,6 +15679,22 @@ static void MX_USART2_UART_Init(void)
   /* USER CODE BEGIN USART2_Init 2 */
 
   /* USER CODE END USART2_Init 2 */
+
+}
+
+/**
+  * Enable DMA controller clock
+  */
+static void MX_DMA_Init(void)
+{
+
+  /* DMA controller clock enable */
+  __HAL_RCC_DMA2_CLK_ENABLE();
+
+  /* DMA interrupt init */
+  /* DMA2_Stream1_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA2_Stream1_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA2_Stream1_IRQn);
 
 }
 
@@ -15604,14 +15784,6 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(DEBUG_LED_GPIO_Port, &GPIO_InitStruct);
-
-  /*Configure GPIO pin : PA9 */
-  GPIO_InitStruct.Pin = GPIO_PIN_9;
-  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  GPIO_InitStruct.Alternate = GPIO_AF1_TIM1;
-  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
   /*Configure GPIO pins : PI0 PI1 PI2 PI3
                            PI4 PI5 PI6 PI7 */
