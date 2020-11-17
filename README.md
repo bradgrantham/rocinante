@@ -31,6 +31,8 @@ I reached the limit of what I could do comfortably on a protoboard, so I designe
 
 I'm keeping a spreadsheet of [the status of hardware features](https://docs.google.com/spreadsheets/d/15A8a8_nsbp0DDcee_6BzvSB4MXrgqT0VfsGb4YH8E2E/edit#gid=0) as I bring them up.
 
+I'm keeping rework notes for Rev1 in [rework.md]().
+
 # The Fundmental Idea
 
 There is no framebuffer, per se, in Rocinante.
