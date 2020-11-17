@@ -542,32 +542,18 @@ $EndComp
 $Comp
 L RCJ-044:RCJ-044 J3
 U 1 1 5F5089A0
-P 6825 10300
-F 0 "J3" H 6495 10254 50  0000 R CNN
-F 1 "COMPOSITE" H 6495 10345 50  0000 R CNN
-F 2 "CUI_RCJ-044:CUI_RCJ-044" H 6825 10300 50  0001 L BNN
-F 3 "Manufacturer Recommendations" H 6825 10300 50  0001 L BNN
-F 4 "CUI Devices" H 6825 10300 50  0001 L BNN "Manufacturer"
-F 5 "RCJ-044" H 6825 10300 50  0001 L BNN "Manufacturer PN"
-F 6 "yellow RCA/Phono jack" H 6825 10300 50  0001 C CNN "Description"
-F 7 "do not place" H 6825 10300 50  0001 C CNN "Do Not Place"
-F 8 "PTH" H 6825 10300 50  0001 C CNN "Type"
-	1    6825 10300
+P 6950 10300
+F 0 "J3" H 6620 10254 50  0000 R CNN
+F 1 "COMPOSITE" H 6620 10345 50  0000 R CNN
+F 2 "CUI_RCJ-044:CUI_RCJ-044" H 6950 10300 50  0001 L BNN
+F 3 "Manufacturer Recommendations" H 6950 10300 50  0001 L BNN
+F 4 "CUI Devices" H 6950 10300 50  0001 L BNN "Manufacturer"
+F 5 "RCJ-044" H 6950 10300 50  0001 L BNN "Manufacturer PN"
+F 6 "yellow RCA/Phono jack" H 6950 10300 50  0001 C CNN "Description"
+F 7 "do not place" H 6950 10300 50  0001 C CNN "Do Not Place"
+F 8 "PTH" H 6950 10300 50  0001 C CNN "Type"
+	1    6950 10300
 	-1   0    0    -1  
-$EndComp
-$Comp
-L Device:C_Small C20
-U 1 1 5F5089A6
-P 6325 10650
-F 0 "C20" H 6417 10696 50  0000 L CNN
-F 1 "1nF" H 6417 10605 50  0000 L CNN
-F 2 "Capacitor_SMD:C_0603_1608Metric" H 6325 10650 50  0001 C CNN
-F 3 "~" H 6325 10650 50  0001 C CNN
-F 4 "0603" H 12150 1900 60  0001 L CNN "Package"
-F 5 "1nF ceramic capacitor" H 6325 10650 50  0001 C CNN "Description"
-F 6 "SMD" H 6325 10650 50  0001 C CNN "Type"
-	1    6325 10650
-	1    0    0    -1  
 $EndComp
 Wire Wire Line
 	6175 10200 6325 10200
@@ -3954,8 +3940,6 @@ Wire Wire Line
 Connection ~ 6425 2750
 Wire Wire Line
 	6425 2750 6600 2750
-Wire Wire Line
-	6325 10750 6325 10850
 $Comp
 L ColecoHat2-rescue:R R5
 U 1 1 5F5D3678
@@ -4781,6 +4765,25 @@ F 6 "do not place" H 14900 5700 50  0001 C CNN "Do Not Place"
 	1    0    0    -1  
 $EndComp
 Connection ~ 6325 10200
+$Comp
+L Device:C_Small C20
+U 1 1 5F5089A6
+P 6325 10300
+F 0 "C20" H 6417 10346 50  0000 L CNN
+F 1 "1nF" H 6417 10255 50  0000 L CNN
+F 2 "Capacitor_SMD:C_0603_1608Metric" H 6325 10300 50  0001 C CNN
+F 3 "~" H 6325 10300 50  0001 C CNN
+F 4 "0603" H 12150 1550 60  0001 L CNN "Package"
+F 5 "1nF ceramic capacitor" H 6325 10300 50  0001 C CNN "Description"
+F 6 "SMD" H 6325 10300 50  0001 C CNN "Type"
+	1    6325 10300
+	1    0    0    -1  
+$EndComp
 Wire Wire Line
-	6325 10550 6325 10400
+	6325 10200 6450 10200
+Wire Wire Line
+	6325 10400 6450 10400
+Wire Wire Line
+	6325 10400 6325 10850
+Connection ~ 6325 10400
 $EndSCHEMATC
