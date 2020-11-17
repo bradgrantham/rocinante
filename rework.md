@@ -6,7 +6,7 @@ USB + power
 * route +5 from barrel to TP2
 * route GND from barrel to I2S GND
 
-Composite
+Composite, https://github.com/bradgrantham/rocinante/issues/1
 
 * cut trace from composite pin 1 (shield / GND) to C20
 * Add bodge from composite pin 2 (signal) to C20
