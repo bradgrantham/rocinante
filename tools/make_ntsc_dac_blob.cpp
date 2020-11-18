@@ -197,9 +197,9 @@ inline int voltageToDACValueFixed16NoBounds(int voltage)
 
 #define NTSC_COLORBURST_FREQUENCY       3579545
 
-// Number of samples we target; if we're doing 4x colorburst at 227.5 cycles, that's 910 samples at 14.318180MHz
+// Number of samples we target; if we're doing 4x colorburst at 228 cycles, that's 912 samples at 14.318180MHz
 
-#define ROW_SAMPLES        910
+#define ROW_SAMPLES        912
 #define NTSC_EQPULSE_LINES	3
 #define NTSC_VSYNC_LINES	3
 #define NTSC_VBLANK_LINES	11
@@ -385,7 +385,7 @@ void NTSCAddColorburst(unsigned char *rowBuffer, int row)
 {
     static const int startOfColorburstClocks = 76; // 80 - 3 * 4; // XXX magic number for current clock
 
-    int rowCBOffset = (row % 2) * 2;
+    int rowCBOffset = (row * ROW_SAMPLES) % 4;
     for(int col = startOfColorburstClocks; col < startOfColorburstClocks + NTSC_COLORBURST_CYCLES * 4; col++) {
         switch((col - startOfColorburstClocks + rowCBOffset) % 4) {
             case 0: rowBuffer[col] = NTSCColorburst0; break;
@@ -522,14 +522,22 @@ void NTSCFillRowBuffer(int frameNumber, int lineNumber, unsigned char *rowBuffer
         }
 #endif
 
+        int rowCBOffset = (lineNumber * ROW_SAMPLES) % 4;
         for(int col = 0; col < 704; col++) {
+#if 1
             int s = col * imageWidth / 704;
             int t = (lineNumber - 20) * imageHeight / 242;
             float red = imagePixels[(t * imageWidth + s) * 4 + 0];
             float green = imagePixels[(t * imageWidth + s) * 4 + 1];
             float blue = imagePixels[(t * imageWidth + s) * 4 + 2];
+#else
+            int checker = (col / 35 + lineNumber / 10) % 2;
+            float red = checker ? 1.0f : 0.0f;
+            float green = checker ? 0.0f : 0.0f;
+            float blue = checker ? 0.0f : 0.0f;
+#endif
             ntsc_wave_t wave = NTSCRGBToWave(red, green, blue);
-            int shift = (col % 4 + (lineNumber % 2) * 2) * 8;
+            int shift = (col % 4 + rowCBOffset) * 8;
             int value = (wave >> shift) & 0xFF;
             rowBuffer[col + 164] = value;
         }
@@ -563,15 +571,15 @@ int main(int argc, char **argv)
         exit(EXIT_FAILURE);
     }
 
-    uint8_t blob[910 * 262];
+    uint8_t blob[ROW_SAMPLES * 262];
 
     NTSCCalculateParameters();
     NTSCGenerateLineBuffers();
 
     for(int row = 0; row < 262; row++) {
-        NTSCFillRowBuffer(0, row, blob + 910 * row);
+        NTSCFillRowBuffer(0, row, blob + ROW_SAMPLES * row);
     }
     FILE *fp = fopen("ntsc.bin", "wb");
-    fwrite(blob, 1, 910 * 262, fp);
+    fwrite(blob, 1, ROW_SAMPLES * 262, fp);
     fclose(fp);
 }
