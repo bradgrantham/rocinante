@@ -293,7 +293,9 @@ void HSVToRGB3f(float h, float s, float v, float *r, float *g, float *b)
     }
 }
 
-uint8_t __attribute__((section (".ram_d1"))) rowDoubleBuffer[910 * 2];
+#define ROW_SAMPLES 912
+
+uint8_t __attribute__((section (".ram_d1"))) rowDoubleBuffer[ROW_SAMPLES * 2];
 int rowNumber = 0;
 int frameNumber = 0;
 
@@ -311,11 +313,11 @@ void DMA2_Stream1_IRQHandler(void)
         rowDest = rowDoubleBuffer + 0;
     } else if(DMA2->LISR & DMA_FLAG_TCIF1_5) {
         DMA2->LIFCR |= DMA_LIFCR_CTCIF1;
-        rowDest = rowDoubleBuffer + 910;
+        rowDest = rowDoubleBuffer + ROW_SAMPLES;
     } else {
         panic();
     }
-    memcpy(rowDest, testNTSCImage_bytes + rowNumber * 910, 910);
+    memcpy(rowDest, testNTSCImage_bytes + rowNumber * ROW_SAMPLES, ROW_SAMPLES);
 
     if(DMA2->LISR) {
         // oldLISR = DMA2->LISR;
@@ -332,8 +334,8 @@ void HAL_TIM_IC_CaptureHalfCpltCallback(TIM_HandleTypeDef *htim)
         frameNumber ++;
     }
     uint8_t *rowDest = rowDoubleBuffer + 0;
-    memcpy(rowDest, testNTSCImage_bytes + rowNumber * 910, 910);
-    memset(rowDest, 0, 910); // XXX
+    memcpy(rowDest, testNTSCImage_bytes + rowNumber * ROW_SAMPLES, ROW_SAMPLES);
+    memset(rowDest, 0, ROW_SAMPLES); // XXX
 }
 
 void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim)
@@ -343,9 +345,9 @@ void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim)
     if(rowNumber == 0) {
         frameNumber ++;
     }
-    uint8_t *rowDest = rowDoubleBuffer + 910;
-    memcpy(rowDest, testNTSCImage_bytes + rowNumber * 910, 910);
-    memset(rowDest, 0xFF, 910); // XXX
+    uint8_t *rowDest = rowDoubleBuffer + ROW_SAMPLES;
+    memcpy(rowDest, testNTSCImage_bytes + rowNumber * ROW_SAMPLES, ROW_SAMPLES);
+    memset(rowDest, 0xFF, ROW_SAMPLES); // XXX
 }
 #endif
 
@@ -360,8 +362,8 @@ void startNTSCScanout()
 {
     HAL_StatusTypeDef status;
     // memcpy(testNTSCImage_RAM, testNTSCImage_bytes, sizeof(testNTSCImage_bytes));
-    memcpy(rowDoubleBuffer + 0, testNTSCImage_bytes + 0, 910);
-    memcpy(rowDoubleBuffer + 910, testNTSCImage_bytes + 910, 910);
+    memcpy(rowDoubleBuffer + 0, testNTSCImage_bytes + 0, ROW_SAMPLES);
+    memcpy(rowDoubleBuffer + ROW_SAMPLES, testNTSCImage_bytes + ROW_SAMPLES, ROW_SAMPLES);
     rowNumber = 1; // the previous row that was filled in
 
     // Set DMA request on capture-compare channel 1
