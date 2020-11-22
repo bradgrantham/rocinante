@@ -523,15 +523,18 @@ void NTSCFillRowBuffer(int frameNumber, int lineNumber, unsigned char *rowBuffer
 #endif
 
         int rowCBOffset = (lineNumber * ROW_SAMPLES) % 4;
+        int rowWithin = (lineNumber % 263) * 2 + lineNumber / 263 - 20;
         for(int col = 0; col < 704; col++) {
 #if 1
+            // Sample loaded image
             int s = col * imageWidth / 704;
-            int t = (lineNumber - 20) * imageHeight / 242;
+            int t = rowWithin * imageHeight / 505;
             float red = imagePixels[(t * imageWidth + s) * 4 + 0];
             float green = imagePixels[(t * imageWidth + s) * 4 + 1];
             float blue = imagePixels[(t * imageWidth + s) * 4 + 2];
 #else
-            int checker = (col / 35 + lineNumber / 10) % 2;
+            // Red checkerboard to verify colorburst alignment
+            int checker = (col / 35 + rowWithin / 20) % 2;
             float red = checker ? 1.0f : 0.0f;
             float green = checker ? 0.0f : 0.0f;
             float blue = checker ? 0.0f : 0.0f;
@@ -571,15 +574,15 @@ int main(int argc, char **argv)
         exit(EXIT_FAILURE);
     }
 
-    uint8_t blob[ROW_SAMPLES * 262];
+    uint8_t blob[ROW_SAMPLES * 525];
 
     NTSCCalculateParameters();
     NTSCGenerateLineBuffers();
 
-    for(int row = 0; row < 262; row++) {
+    for(int row = 0; row < 525; row++) {
         NTSCFillRowBuffer(0, row, blob + ROW_SAMPLES * row);
     }
     FILE *fp = fopen("ntsc.bin", "wb");
-    fwrite(blob, 1, ROW_SAMPLES * 262, fp);
+    fwrite(blob, 1, ROW_SAMPLES * 525, fp);
     fclose(fp);
 }
