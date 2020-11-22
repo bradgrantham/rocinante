@@ -599,6 +599,23 @@ struct WindowSet
     }
 };
 
+bool spansAreContiguous(const ScanlineSpan& first, const ScanlineSpan& second)
+{
+    bool sameWindow = (first.windowListIndex == second.windowListIndex);
+    bool contiguousSpan = (first.start + first.length) == second.start;
+
+    return sameWindow && contiguousSpan;
+}
+
+void extendOrAddNewScanlineSpan(std::vector<ScanlineSpan>& currentSpans, int topmostWindow, uint16_t currentPixel, uint16_t length)
+{
+    if((currentSpans.size() > 0) && spansAreContiguous(currentSpans.back(), {topmostWindow, currentPixel, length})) {
+        currentSpans.back().length += length;
+    } else {
+        currentSpans.push_back({topmostWindow, currentPixel, length});
+    }
+}
+
 void WindowsToRanges(int screenWidth, int screenHeight, const std::vector<Window>& windowsBackToFront, std::vector<ScanlineRange>& scanlineRanges)
 {
     constexpr bool debug = false;
@@ -682,7 +699,7 @@ void WindowsToRanges(int screenWidth, int screenHeight, const std::vector<Window
                     }
                     puts("");
                 }
-                currentSpans.push_back({topmostWindow, static_cast<uint16_t>(currentPixel), static_cast<uint16_t>(pe->location - currentPixel)});
+                extendOrAddNewScanlineSpan(currentSpans, topmostWindow, static_cast<uint16_t>(currentPixel), static_cast<uint16_t>(pe->location - currentPixel));
             }
             currentPixel = pe->location;
 
@@ -697,7 +714,7 @@ void WindowsToRanges(int screenWidth, int screenHeight, const std::vector<Window
         }
         if((currentPixel < screenWidth) && (activeWindowsOnThisScanline.size() > 0)) {
             int topmostWindow = activeWindowsOnThisScanline.last();
-            currentSpans.push_back({topmostWindow, static_cast<uint16_t>(currentPixel), static_cast<uint16_t>(screenWidth - currentPixel)});
+            extendOrAddNewScanlineSpan(currentSpans, topmostWindow, static_cast<uint16_t>(currentPixel), static_cast<uint16_t>(screenWidth - currentPixel));
         }
     }
     if((currentScanline < screenHeight) && (!currentSpans.empty())) {

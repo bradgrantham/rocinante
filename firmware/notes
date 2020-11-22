@@ -1,49 +1,6 @@
-pixmap scale
-    std::list<PixmapSpan> candidateSpans = {}
-    // for all N scanlines in an aligned ScanlineRange, candidateSpans will be the same (pixmap data will be different)
-    rowsBegin = ranges[0].start;
-    rowsEnd = ranges.back().start + ranges.back().count;
-    for(row = 0; row < rowsBegin; row++) {
-        commit row // will be empty
-    }
-    auto range = ranges.begin();
-    for(row = rowsBegin; row < rowsEnd; row++) {
-        while((range < ranges.end()) && (row >= range.start + range.count)) {
-            range++;
-        }
-        if(range < ranges.end()) {
-            if(row % scale == 0)
-            commit row
-        }
-    }
-    for(; row < height ; row++) {
-        commit empty row
-    }
-    OR
-    std::list<PixmapSpan> candidateSpans = {}
-    auto currentRangeIterator = ranges.begin();
-    auto copiedRange = ranges.end(); // or any iterator which doesn't point to a valid Range
-    for(int row = 0; row < height; row++) { // beginning of a Pixmap row
-        if(row % scale == 0) {
-            if(row > 0) {
-                // Also the end of the previous Pixmap row; flush candidateSpans to the Pixmap row
-            }
-            if(row < currentRangeIterator->start + currentRangeIterator->count) {
-                // If this Pixmap row started within a Range and the previous candidateSpans was already exactly the Range's spans, 
-                if(copiedRangeIterator != currentRangeIterator) {
-                }
-                CopySpans(requestedRange, candidateSpans);
-            }
-        }
-        // If a new range starts within this Pixmap row, merge its spans with candidateSpans)
-        while(row < currentRangeIterator.start && currentRangeIterator.start < (row + scale)) {
-            MergeSpans(requestedRange, candidateSpans);
-            currentRangeIterator++;
-            isAMergedRow = true;
-        };
-    }
-
-come back to:
+Go back and make sure
+    VideoSetBackgroundColor - should be only for topmost window, and black if not set
+    is "Video" the right name for video/window functions?
     be consistent about:
         window position (int16_t)
         window size (uint16_t but > 32767 invalid so can operate on int16_t)
@@ -55,6 +12,13 @@ come back to:
     be consistent with window, windowIndex, windowID : windowID?  Make a typedef int "Window"?  But Window is already the struct for windowing
     are VideoGetModeCount() and VideoModeGetType() inconsistent? - consider, make consistent, record policy here
     convert this doc to Markdown
+
+to do 
+    convenience function for converting window rect to pixmap rect
+    allocate memory in showimage using pixmap scale
+    redraw rect in showimage using pixmap scale
+    implement window pixmap draw rect 
+    implement window pixmap fillRow
 
 ----------------------------
 
@@ -69,52 +33,34 @@ Stated explicitly:
         But write something nice enough that someone else *could* use it.
     C++17 interfaces and code internally
     Windowing, then Processes (and pipes? signals?), then Loader
+        Or does it really help to have Loader first, so I can have multiple apps at one time?
+        Initially apps can have no globals, that should work for multiple apps with no loader...
 
 -----------------------------
 
-to plumb through windowing API, edit showimage
-    instead of mode, take bit depth and whether to force mono, and find matching buffer
-        --1bit, --2bit, --4bit, --8bit, --gray, --color
-        default is 8bit color
-    could read image and make colormap here
-    WindowCreate
-    enter loop
-        read event
-        WINDOWED / FULLSCREEN - ignore?
-        FRONT - ignore?
-        RESIZE:
-            if buffer, free old buffer
-            malloc resized buffer
-            reread the image resized to window, call ProcessYield() after each line
-            rereading and dithering can be very slow...  May be fast enough at 500MHz?
-            redraw rows as they are read
-        REDRAW: redraw image rectangle from buffer
-
 to plumb through fullscreen API, add a Woz fullscreen text mode and do playback of text memory writes from apple2e
 
-Modularizing video
-    Window coverage, range, span sample diagram: https://docs.google.com/drawings/d/1fAEjk5LkpoVFAkQtjVpDIjrKxcilrsKm9ytVupJzXDs/edit
-    Abstraction 
-        An app calls
-            optionally void VideoSetBackgroundColor(float r, float g, float b);
-            VideoGetModeCount() to get number of modes, then loops through them
-                VideoSubsystem has vector of VideoModeDriver*
-            VideoModeGetType(int n) to get mode
-                VideoSubsystem calls VideoModeDriver->getType();
-            Status VideoModeGetInfo(int n, ModeInformation* info, size) to determine if it meets needs (or skip this)
-            window = WindowCreate(mode, parameters)
-                // enqueues WINDOWED or FULLSCREEN
-                // enqueues FRONT
-                // enqueues RESIZE
-                // enqueues REDRAW
-            while((status = EventPoll(&event)) {
-                switch(event.type) (
-                    ...
-                }
-            }
-
-New Video API
+Modularizing video (best reference is source code for apps!)
     PixmapModeDriver should be templated on format, palette, scale, whether it's mono (and maybe some other things)
+    Window coverage, range, span sample diagram: https://docs.google.com/drawings/d/1fAEjk5LkpoVFAkQtjVpDIjrKxcilrsKm9ytVupJzXDs/edit
+    App Abstraction 
+        optionally VideoSetBackgroundColor(float r, float g, float b); - this is background when window is FRONT, otherwise black
+        VideoGetModeCount() to get number of modes, then loops through them
+            VideoSubsystem has vector of VideoModeDriver*
+        Status VideoModeGetType(int n, VideoModeType &type) to get mode
+            VideoSubsystem calls VideoModeDriver->getType();
+        Status VideoModeGetInfo(int n, ModeInformation* info, size) to determine if it meets needs (or skip this)
+        Status = WindowCreate(mode, "title", parameters, &window)
+            // enqueues WINDOWED or FULLSCREEN
+            // enqueues FRONT
+            // enqueues RESIZE
+            // enqueues REDRAW
+        while((status = EventPoll(&event)) {
+            switch(event.type) (
+                ...
+            }
+        }
+
     Make ::fillRow be part of the driver specific to a subsystem?
     fillRow
         It's probably important to enable writing by uint32_t into rowBuffer for optimization
@@ -194,16 +140,13 @@ Close on segmented framebuffer
         max 62 segments in one row
         max 11426 segments in frame
         max 64728 trapezoids
-Measured MCO/5 as HSE at 4.00086MHz on freq counter, so 20MHz crystal is giving me 20.00430 Mhz
+Measured MCO/5 as HSE at 4.00086MHz on freq counter, so 20MHz crystal on protoboard is giving me 20.00430 Mhz
 Move Wolf to palette-RGB-style textures (reduce bandwidth to make up lookup & process cost?)
 honor aspect ratio in "show"
 Some things to improve in "show"
-    [--gray] - use a grayscale palette
     fix skipped lines in "hosted" - img lower resolution than framebuffer
     antialias
 Make circle renderer find pixel center coordinates to see if the weird jumpiness is being caused by integer snapping - can't expect decent lit or textured rendering if the coordinates are going to jump around for some reason
-DB-9 Coleco game controller
-PS/2 keyboard and mouse
 Some things to improve living
     textport should be virtual and overlaid on screen in text mode and preserved for returning to text mode
         so then textport output would ALWAYS work and be recorded, and switching back to text would restore the old viewport.
@@ -214,16 +157,8 @@ Some things to improve living
         tab should autocomplete at CLI
             tab in first completes commands
             tab in second et al completes filenames
-    system button kicks back to text 0?
-        or at least pops textport while button is down
-        need a way to interrupt
-        need a way to cancel and return from apps - longjmp?
     frame stats should be a histogram
         get TIM frequency nailed down
-    serial and keyboard should interrupt and fill one buffer
-    image viewer should add together lines and pixels so data is antialiased
-Potential improvements
-    use SDMMC peripheral
     There really should be a non-interlaced video mode
 DCT video mode - make it so JPG blocks can be the source of the video scanout
 MP3 player - target something simple and straightforward, like 128, 160, and 256 constant bitrate joint-stereo.
@@ -236,13 +171,12 @@ hosted
 Video API notes
     ** part of the *novelty* of the project is that video is generated at a higher resolution than RAM allows. **
             e.g. very small palettes - 1, 2, 4 bit; RLE; DCT; specialized renderer (e.g. Wolfenstein, spin)
-    NTSC output is by necessity Waves (DAC samples represent NTSC waveform at 14.31818 MHZ)
+    NTSC output is by necessity "waves" (DAC samples represent NTSC waveform at 14.31818 MHZ)
         Probably not much point in having R8G8B8 at 912 pixels per row - can't be represented
         So need to filter at least chroma down to 3.58MHz - Gaussian of 5 samples?  Could do box filter for start
             yiq can range from 
         Individual VideoModes could filter, or just the ones I care about could filter
         SET_AND_INCREMENT_WAVE(y, i, q)
-    Hook up to Parallax 332 DAC to test VGA (and maybe dither), create 565 DAC later
     HDMI can be whatever as long as I have 3 bytes of RGB to look up in a table
 setup a software interrupt for VBlank processing (e.g. update scanout stats, audio goop) and trigger it from row=262 and row = 525 -> event interrupt?
 help and other output should be paged -
@@ -250,27 +184,30 @@ help and other output should be paged -
     OutputSetPaging(int paging)
 Move Audio goop to another .c
 Add some things to shell
+    make this look like bash or zsh
+    Can the commands below be separate apps?
     startup.sh # run from disk, quit scripting on blue button
     # run from a file
         will recursion work the way you've set it up?
     # parse between "" as one word
     # break commands on ";" outside ""
     # ignore everything after '#' outside ""
-    sleep floatseconds # easy
+    sleep floatseconds # easy app
     # variables - "$var"?
-    menu var menufile # show a menu, return the option chosen in var
-    getchar [var] # get a single character
-    read [var] # get everything up to ENTER
-    echo everything afterwards is echoed # easy
+    menu var menufile # show a menu, return the option chosen in var - app
+    getchar [var] # get a single character - needs to be part of shell
+    read [var] # get everything up to ENTER - needs to be part of shell
+    echo everything afterwards is echoed # easy - app
     # pixmap only :
+        make these part of BASIC or some other thing? windowed graphics scripting?
         palette N r g b
         circle N x y r
         line N x0 y0 x1 y1
         clear N
     # expressions
-    for var = A to B [step C] ; ... ; end
-    for var in A B C D E F G ; ... ; end
-everything should return 0 on success or non-zero error or void if it can't fail
+    for var = A to B [step C] ; ... ; end # part of shell
+    for var in A B C D E F G ; ... ; end # part of shell
+EVERYTHING should return 0 on success or non-zero error or void if it can't fail
 audio
     22050Hz?  11025Hz?  8000Hz?
     write audio sample immediately on entry to line ISR?  Then calculate next one right after that, then do video calculation?
@@ -288,21 +225,6 @@ vile sucks, figure it out or replace it; issues:
     a and then enter does not scroll down
     #G uses line numbers off by one - is this termios?
 VT102 handling (in combination with vile) doesn't handle inserting a line?
-would be nice if video modes could have multiple submodes
-    pixmap *and* text for last 4 rows
-    wolfenstein *and* pixmap for bottom stats *and* upper-left small pixmap or text for FPS
-special segment mode - 320 pixels wide (so 640 clocks, 2 clocks wide)
-    app
-        transforms lit, gouraud triangles to screen
-        intersect scanlines with triangles
-            output list of scanline edges
-            do intersection and clipping of edges in depth
-            sort in X including background
-    video mode
-        walks segments in turn assuming they touch all pixels
-        interpolating, what?  RGB probably too slow - HSV?
-        test program = circle
-    Look up texture?  May be too hard to do perspective correction?
 Should debug overlay XOR or just have black background?
     find pixel under and set white or black based on that?
 Get DB9 joystick working
@@ -316,15 +238,13 @@ Raycaster game!
     bottom row shows health, points
     health powerups?
     put texture on ceiling and floor
-video needs a "switching" mode
-    old mode -> blank (fillrow does black) -> new mode
-PS/2 mouse?
 "Apps"
     Threading? (multitasking, task switching)
         all system functions have to be thread-safe...  Wrap locks around them
         then need scheduler
         if multiple apps can run simultaneously, then pipes would work
-    compile all apps with TinyCC
+    compile all apps with TinyCC or other small compiler
+        (can g++ run within 16MB?)
         run as THUMB in emulator or QEMU in hosted, or
         run as x86 apps in emulator and have x86-specific thread context
     System APIs that Apps can call
@@ -353,15 +273,8 @@ PS/2 mouse?
     Colecovision
     Apple2e
     WeFAX decoder
-Additional video modes
-    TMS 9918A mode - expose the chip I/O
-        TMS pixels area is 192 lines high
-    Apple //e mode - give pointers to memory and soft switches
-    DCT mode
-    scanline edge rendered mode - make RGB-to-byte as fast as possible
 Channel F emulator, 9pin header adapters (bake into controller for Bart)
     need 16 pins for two controllers!
-Some kind of 3D uberdemo, realtime scan out, buffer of sorted scanline segments?
 BASIC
     just implement 80x24 text mode for now
     video N # set video mode N
@@ -448,7 +361,6 @@ Video modes
         175 quad pixels wide, 40250 pixels in frame, could support 8 bit
 
 for reference, H is 63555.56us
-Scope only locks to my video at line #5
 
 221 capacitor is 220 pF / .22 nF
     3x = .66 nF
@@ -478,23 +390,6 @@ optimize Wolf Row more
     You should MIPmaps for quality but you're probably not thrashing cache, and that's going to slow you down.
     Maybe go to 2X pixels and 350 samples - can maybe MIPmap.
 
-interlaced?  Does there need to be a non-interlaced vs interlaced mode?
-    let VideoMode handle it in width, height, and aspect
-    Then rowNumber to FillRow functions sequential line number?  so lineNumber = 262 is half the end of odd field, half the beginning of even field?
-        240P modes would render lineNumber for odd field, lineNumber - 263 for even field
-        480i modes would calculate lineNumber * 2 as rowNumber for even field, or (lineNumber 263) * 2 + 1 as rowNumber for odd field
-        line 263 through 264 are handled specially by rowFill (copying in half of the next line)x
-    implementation (starting from line 0)
-        line 262 - overwrite last 405 samples with first 405 samples of EQ pulse
-        lines 263, 264 - last 405 of eq pulse then first 405 of eq pulse
-        lines 265 - last 405 of eq pulse then first 405 of vsync
-        lines 266, 267 - last 405 of vsync then first 405 of vsync
-        lines 268 - last 405 of vsync then first 405 of eq pulse
-        lines 269, 270 - last 405 of eq pulse then first 405 of eq pulse
-        line 271 - last 405 of eq pulse then 405 of SyncPorch
-        special line 282 - write SyncPorch fron BackPorch to middle of line after mode's fillRow()
-        fix all fillRows to handle row > 250
-
 Why is there purple where there should be brown? -> palette setting failure?  Clamping in YIQ calculations?
     looks like a DAC issue - switch from 0x7F to 0x80 is a big voltage drop
     Assume this would get fixed with .1% tolerance resistors (or even 1% tolerance)
@@ -508,29 +403,9 @@ glitching appears no different if nothing is in CCM.  :(
 
 NTSC was not stable with internal oscillator without correction - could not nail down correction
 
-Should NTSC modes take an RGB and use some kind of optimized lookup of 4 pixels at a time?
-    I couldn't figure out a way for this to be done in one scanline's time
-    If DVDs really have 700 vertical lines resolution, what do they do when going to Composite?
-
 What *are* the time bases for all TIM?  It seems like I can't get this right.
     the specs seem to point out correct behavior for TIMPRE.
     Also can verify the results in the CubeMX timing configurator.
-
-Is the 746 actually running at 1/2 the clock I think it is?
-    I don't think so
-        now clocks.py DMA_BEATS output is correct
-        the image is stable
-        UART works
-        SysClock output matches what I expect
-        MCO2 outputting PLL / 5 yields 40MHz on the scope, which is 1/5 of 200 MHz
-
-Does DMA fire on one edge or both?  Why do I have to /2 the TIM ARR for the 746?
-    Because I had a higher divider for APB2, where TIM1 lives
-
-speed issues - seems to be like 60%-80% speed of 415.  Should be 160% the speed of 415.
-    ICache and DCache are disabled on boot
-    ICache improves speed to more like what I expect.
-    DCache causes video modes to fail.  UART still worked, so system booted and partially worked...  Need to look into the data cache.
 
 enum Timer {
     TIM1 = 0, TIM2, TIM3, TIM4, TIM5, TIM6, TIM7, TIM8,
@@ -588,7 +463,6 @@ void MemoryCopyDMA(unsigned char* dst, unsigned char* src, size_t size)
         0;
     DMA2_Stream1->CR |= DMA_SxCR_EN;    /* enable DMA */
 } 
-
 
 May 14: Strange bands of color May 14 is caused by DAC; verified
 by running segtest monochrome with gradient 0 to 1

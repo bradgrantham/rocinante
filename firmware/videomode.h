@@ -185,7 +185,8 @@ Status WindowClose(int window);
 enum PaletteIndex { PALETTE0, PALETTE1 };
 Status WindowPixmapSetPalette(int window, PaletteIndex whichPalette, uint8_t (*palette)[3]);
 Status WindowPixmapSetRowPalette(int window, int row, PaletteIndex whichPalette);
-Status VideoPixmapDrawRect(int myWindow, int x, int y, int w, int h, size_t rowBytes, uint8_t *pixels);
+Status WindowPixmapDrawRect(int myWindow, int x, int y, int w, int h, size_t rowBytes, uint8_t *pixels);
+Status WindowPixmapGetPixelScale(int myWindow, int *scaleX, int *scaleY);
 
 // Event stuff should be in a separate header
 

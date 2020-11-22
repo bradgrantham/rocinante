@@ -42,7 +42,6 @@ struct VideoModeDriver
     virtual const char *getName() const = 0;
     virtual VideoModeType getModeType() const = 0;
     virtual void getAspectRatio(int *aspectX, int *aspectY) const = 0;
-    virtual void getPixelScale(int *scaleX, int *scaleY) const = 0;
     virtual bool isMonochrome() const = 0; // NTSC might use this, e.g., to turn off colorburst if FRONT window is monochrome
 
     // fixed size, e.g. TMS9918A or Woz or Channel F, NTSC knows
@@ -59,6 +58,7 @@ struct VideoModeDriver
     virtual void getNearestNotLarger(int w, int h, int *nearestNotLargerW, int *nearestNotLargerH) = 0;
 
     /*
+    Ranges are always clipped to the screen dimensions before calling this function
     allocates per-scanline or per-window as necessary, keeps track of its own kind of allocation
     might make a per-window allocation e.g. colormap
     allocate a "root" buffer containing additional allocations and store root buffer in rootOffset
@@ -91,6 +91,7 @@ struct VideoModeDriver
 struct PixmapModeDriver
 {
     virtual PixmapFormat getPixmapFormat() const = 0;
+    virtual void getPixelScale(int *scaleX, int *scaleY) const = 0;
     virtual PaletteSize getPaletteSize() const = 0;
     virtual void setPaletteContents(Window& window,
         PaletteIndex which, unsigned char (*palette)[3]) = 0;

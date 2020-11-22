@@ -1,15 +1,18 @@
 #include <vector>
+#include <list>
 #include <string>
 #include <tuple>
 #include <algorithm>
 #include <cassert>
 #include <cstdio>
+#include <cstdarg>
 #include <videomodeinternal.h>
 #include <ntsc_constants.h>
 
+
 enum PixelScale { SCALE_1X1, SCALE_2X2 };
 
-std::tuple<int, int> CalculatePixmapPixelSizeOnScreenPixelScale scale)
+std::tuple<int, int> CalculatePixmapPixelSizeOnScreen(PixelScale scale) 
 {
     switch(scale) {
         case SCALE_1X1: return {1, 1}; break;
@@ -17,7 +20,14 @@ std::tuple<int, int> CalculatePixmapPixelSizeOnScreenPixelScale scale)
     }
 }
 
-size_t CalculatePixelStorageRequired(PixmapFormat fmt, int screenPixels, PixelScale scale)
+std::tuple<int, int> CalculatePixmapSizeFromWindow(int windowWidth, int windowHeight, int scaleX, int scaleY) 
+{
+    int pixmapWidth = (windowWidth + scaleX - 1) / scaleX;
+    int pixmapHeight = (windowHeight + scaleY - 1) / scaleY;
+    return {pixmapWidth, pixmapHeight};
+}
+
+size_t CalculatePixelStorageRequired(PixmapFormat fmt, int screenPixels, PixelScale scale) 
 {
     auto [scaleX, scaleY] = CalculatePixmapPixelSizeOnScreen(scale);
     int pixmapPixels = screenPixels / scaleX;
@@ -43,30 +53,55 @@ std::tuple<int, int, int> CalculateBitSizeOfPixel(PixmapFormat fmt)
 // XXX bringup
 static uint8_t debugPalette[256][3];
 
+#if HOSTED
+
+int indent = 0;
+
+void dbgprintf(const char *fmt, ...)
+{
+    static FILE *logfile = nullptr;
+    if(!logfile) {
+        logfile = fopen("debug.out", "w");
+    }
+
+    fprintf(logfile, "%*s", indent, "");
+    va_list args;
+    va_start(args, fmt);
+    vfprintf(logfile, fmt, args);
+    va_end(args);
+    fflush(logfile);
+}
+
+#else
+
+#define dbgprintf if(false)printf
+
+#endif
+
+struct dbgScope
+{
+    dbgScope(const char *funcName) { dbgprintf("%s\n", funcName); indent += 4; }
+    ~dbgScope() { indent -= 4; }
+};
+
+template<PixelScale SCALE, PixmapFormat FMT>
+// XXX Need static assert of some sort that fmt is not 1BIT, because that's not palettized
 class PixmapPalettizedMode : public NTSCModeDriver, public PixmapModeDriver
 {
-    PixelScale scale;
-    PixmapFormat fmt;
+    // PixelScale scale;
+    // PixmapFormat fmt;
     const char *name;
 
 public:
 
-    PixmapPalettizedMode(PixmapFormat fmt, const char *name, PixelScale scale) :
-        scale(scale),
-        fmt(fmt),
+    PixmapPalettizedMode(const char *name) :
         name(name)
     {
-        assert(fmt != PIXMAP_1_BIT);
     }
 
     virtual const char *getName() const
     {
         return name;
-    }
-
-    virtual PixmapFormat getPixelFormat() const
-    {
-        return fmt;
     }
 
     virtual VideoModeType getModeType() const
@@ -81,7 +116,7 @@ public:
 
     virtual void getMinimumSize(int *w, int *h) const
     {
-        switch(scale) {
+        switch(SCALE) {
             case SCALE_1X1:
                 *w = 1; *h = 1;
                 break;
@@ -99,7 +134,7 @@ public:
 
     virtual void getPixelScale(int *scaleX, int *scaleY) const
     {
-        switch(scale) {
+        switch(SCALE) {
             case SCALE_1X1:
                 *scaleX = 1;
                 *scaleY = 1;
@@ -113,7 +148,7 @@ public:
 
     virtual void getNearestNotLarger(int w, int h, int *nearestNotLargerW, int *nearestNotLargerH)
     {
-        switch(scale) {
+        switch(SCALE) {
             case SCALE_1X1:
                 *nearestNotLargerW = w;
                 *nearestNotLargerH = h;
@@ -132,12 +167,12 @@ public:
 
     virtual PixmapFormat getPixmapFormat() const
     {
-        return fmt;
+        return FMT;
     }
 
     virtual PaletteSize getPaletteSize() const
     {
-        switch(fmt) {
+        switch(FMT) {
             case PIXMAP_1_BIT:
                 /* notreached */
                 return NO_PALETTE;
@@ -159,22 +194,13 @@ public:
     struct PixmapRoot
     {
         uint32_t palettes[2][256];
-        uint16_t rowRangeCount;
-        uint32_t rowRangeTableOffset;
-        uint16_t width, height; // Window width and height in pixmap pixels but mostly for debugging
+        uint16_t width, height; // Window width and height in screen pixels but mostly for debugging
         uint16_t scale; // 1 for SCALE_1X1 or 2 for SCALE_2X2
-    };
-
-    // A vertical range of rows that have spans
-    struct PixmapRowRange
-    {
-        uint16_t start; // in pixmap pixels, not screen pixels
-        uint16_t count; // in pixmap pixels, not screen pixels
-        uint32_t rowInfoTableOffset;
+        uint32_t rowTableOffset; // table has height * PixmapRowInfo
     };
 
     // Information describing a row
-    struct PixmapRowInfo
+    struct PixmapRow
     {
         uint16_t whichPalette;
         uint16_t spanCount;
@@ -200,20 +226,14 @@ public:
         return GetAllocationFromBuffer<PixmapRoot>(buffer, rootOffset);
     }
 
-    // To get row range N, GetRowRanges(buffer, root)[N]
-    static PixmapRowRange* GetRowRanges(void* buffer, const PixmapRoot& root)
+    // To get the span header for a row, GetRows(buffer, root)[rowIndex]
+    static PixmapRow* GetRows(void* buffer, const PixmapRoot& root)
     {
-        return &GetAllocationFromBuffer<PixmapRowRange>(buffer, root.rowRangeTableOffset);
+        return &GetAllocationFromBuffer<PixmapRow>(buffer, root.rowTableOffset);
     }
 
-    // To get the span header for a row, GetRowInfos(buffer, rowRange)[row - rowRange.start]
-    static PixmapRowInfo* GetRowInfos(void* buffer, const PixmapRowRange& rowRange)
-    {
-        return &GetAllocationFromBuffer<PixmapRowInfo>(buffer, rowRange.rowInfoTableOffset);
-    }
-
-    // Span N within a row is GetSpans(buffer, rowInfo)[span]
-    static PixmapSpan* GetSpans(void* buffer, const PixmapRowInfo& rowInfo)
+    // Span N within a row is GetSpans(buffer, row)[span]
+    static PixmapSpan* GetSpans(void* buffer, const PixmapRow& rowInfo)
     {
         return &GetAllocationFromBuffer<PixmapSpan>(buffer, rowInfo.spanArrayOffset);
     }
@@ -226,28 +246,29 @@ public:
     static void dumpPixmapDescriptorTree(void *buffer, uint32_t rootOffset, const char *name)
     {
         const auto& root = GetRoot(buffer, rootOffset);
-        const auto* rowRangeArray = GetRowRanges(buffer, root);
+        auto [scaleX, scaleY] = CalculatePixmapPixelSizeOnScreen(SCALE);
+        auto [pixmapWidth, pixmapHeight] = CalculatePixmapSizeFromWindow(root.width, root.height, scaleX, scaleY);
+
         FILE *fp = fopen(name, "w");
-        fprintf(fp, "root = %d %p : { width = %u, height = %u, scale = %u, rowRangeCount = %u, rowRangeTableOffset = %u }\n",
-            rootOffset, &root, root.width, root.height, root.scale, root.rowRangeCount, root.rowRangeTableOffset); fflush(stdout);
-        const auto* ranges = GetRowRanges(buffer, root);
-        for(int rangeIndex = 0; rangeIndex < root.rowRangeCount; rangeIndex++) {
-            const auto& range = ranges[rangeIndex];
-            fprintf(fp, "    range[%d] = %lu %p { start = %u, count = %u, rowInfoTableOffset = %u }\n", rangeIndex, root.rowRangeTableOffset + sizeof(range) * rangeIndex, rowRangeArray + rangeIndex, range.start, range.count, range.rowInfoTableOffset);
-            const auto* rowArray = GetRowInfos(buffer, range);
-            for(int rowIndex = 0; rowIndex < range.count; rowIndex++) {
-                const auto& rowInfo = rowArray[rowIndex];
-                fprintf(fp, "        rowTable[%d] = %lu %p { spanCount  %u, spanArrayOffset = %u }\n", rowIndex, 
-                    range.rowInfoTableOffset + sizeof(rowInfo) * rowIndex, rowArray + rowIndex, rowInfo.spanCount, rowInfo.spanArrayOffset); fflush(stdout);
-                const auto* spanArray = GetSpans(buffer, rowInfo);
-                for(int spanIndex = 0; spanIndex < rowInfo.spanCount; spanIndex++) {
-                    const auto& span = spanArray[spanIndex];
-                    const auto* pixelData = GetPixelData(buffer, span);
-                    fprintf(fp, "            span[%d] = %lu %p { %u, %u, %u (%p) }\n", spanIndex,
-                        rowInfo.spanArrayOffset + sizeof(span) * spanIndex,
+        fprintf(fp, "root = %d %p : { width = %u, height = %u, scale = %u, rowTableOffset = %u }\n",
+            rootOffset, &root, root.width, root.height, root.scale, root.rowTableOffset); fflush(stdout);
+
+        const auto* rowArray = GetRows(buffer, root);
+        for(int rowIndex = 0; rowIndex < pixmapHeight; rowIndex++) {
+
+            const auto& row = rowArray[rowIndex];
+
+            fprintf(fp, "        rowTable[%d] = %lu %p { spanCount  %u, spanArrayOffset = %u }\n", rowIndex, 
+                root.rowTableOffset + sizeof(row) * rowIndex, rowArray + rowIndex, row.spanCount, row.spanArrayOffset); fflush(stdout);
+
+            const auto* spanArray = GetSpans(buffer, row);
+            for(int spanIndex = 0; spanIndex < row.spanCount; spanIndex++) {
+                const auto& span = spanArray[spanIndex];
+                const auto* pixelData = GetPixelData(buffer, span);
+                fprintf(fp, "            span[%d] = %lu %p { %u, %u, %u (%p) }\n", spanIndex,
+                        row.spanArrayOffset + sizeof(span) * spanIndex,
                         spanArray + spanIndex, span.start, span.length, span.pixelDataOffset,
                         pixelData); fflush(stdout);
-                }
             }
         }
         fclose(fp);
@@ -256,109 +277,358 @@ public:
     void dumpPixmapPPM(void* buffer, uint32_t rootOffset, const char *filename)
     {
         auto& root = GetRoot(buffer, rootOffset);
-        auto [bitsPerPixel, pixelsPerByte, pixelBitmask] = CalculateBitSizeOfPixel(fmt);
+        auto [bitsPerPixel, pixelsPerByte, pixelBitmask] = CalculateBitSizeOfPixel(FMT);
+
+        auto [scaleX, scaleY] = CalculatePixmapPixelSizeOnScreen(SCALE);
+        auto [pixmapWidth, pixmapHeight] = CalculatePixmapSizeFromWindow(root.width, root.height, scaleX, scaleY);
 
         FILE *fp = fopen(filename, "wb");
-        fprintf(fp, "P6 %d %d 255\n", root.width, root.height);
-        std::vector<uint8_t> image(root.width * root.height * 3);
+        fprintf(fp, "P6 %d %d 255\n", pixmapWidth, pixmapHeight);
+        std::vector<uint8_t> image(pixmapWidth * pixmapHeight * 3);
         std::fill(image.begin(), image.end(), 0);
 
-        const auto* rowRangeArray = GetRowRanges(buffer, root);
+        const auto* rowArray = GetRows(buffer, root);
 
-        for(int rangeIndex = 0; rangeIndex < root.rowRangeCount; rangeIndex++) {
+        for(int rowIndex = 0; rowIndex < pixmapHeight; rowIndex++) {
 
-            const auto& range = rowRangeArray[rangeIndex];
-            const auto* rowArray = GetRowInfos(buffer, range);
+            const auto& row = rowArray[rowIndex];
+            const auto* spans = GetSpans(buffer, row);
 
-            for(int row = 0; row < range.count; row++) {
+            for(int spanIndex = 0; spanIndex < row.spanCount; spanIndex++) {
 
-                int rowWithinWindow = row + range.start;
-                const auto& rowInfo = rowArray[row];
-                const auto* spans = GetSpans(buffer, rowInfo);
+                const auto& span = spans[spanIndex];
+                const auto* pixelData = GetPixelData(buffer, span);
 
-                for(int spanIndex = 0; spanIndex < rowInfo.spanCount; spanIndex++) {
+                for(int spanPixel = 0; spanPixel < span.length; spanPixel++) {
 
-                    const auto& span = spans[spanIndex];
-                    const auto* pixelData = GetPixelData(buffer, span);
+                    int colWithinWindow = spanPixel + span.start;
+                    int srcByte = spanPixel / pixelsPerByte;
+                    int srcShift = (spanPixel % pixelsPerByte) * bitsPerPixel;
+                    int srcPixel = (pixelData[srcByte] >> srcShift) & pixelBitmask;
 
-                    for(int spanPixel = 0; spanPixel < span.length; spanPixel++) {
+                    uint8_t* dstPixel = image.data() + (rowIndex * pixmapWidth + colWithinWindow) * 3;
 
-                        int colWithinWindow = spanPixel + span.start;
-                        int srcByte = spanPixel / pixelsPerByte;
-                        int srcShift = (spanPixel % pixelsPerByte) * bitsPerPixel;
-                        int srcPixel = (pixelData[srcByte] >> srcShift) & pixelBitmask;
-
-                        uint8_t* dstPixel = image.data() + (rowWithinWindow * root.width + colWithinWindow) * 3;
-
-                        dstPixel[0] = debugPalette[srcPixel][0];
-                        dstPixel[1] = debugPalette[srcPixel][1];
-                        dstPixel[2] = debugPalette[srcPixel][2];
-                    }
+                    dstPixel[0] = debugPalette[srcPixel][0];
+                    dstPixel[1] = debugPalette[srcPixel][1];
+                    dstPixel[2] = debugPalette[srcPixel][2];
                 }
             }
         }
-        fwrite(image.data(), 3, root.width * root.height, fp);
+
+        fwrite(image.data(), 3, pixmapWidth * pixmapHeight, fp);
         fclose(fp);
     }
 
-    virtual bool reallocateForWindow(Window& window, const std::vector<ScanlineRange>& ranges, void* stagingVRAM, VideoSubsystemAllocateFunc allocate, bool *enqueueExposedRedrawEvents) 
+    static PixmapSpan windowSpanToPixmapSpan(const ScanlineSpan& span, int scaleX)
     {
+        uint16_t pixmapStart = span.start / scaleX;
+        uint16_t pixmapLength = (span.start + span.length + scaleX - 1) / scaleX - pixmapStart;
+        return {pixmapStart, pixmapLength, 0};
+    }
+
+    void windowSpansToPixmapSpans(const std::vector<ScanlineSpan>& windowSpans, int scaleX, std::vector<PixmapSpan>& pixmapSpans)
+    {
+        for(const auto& span: windowSpans) {
+            pixmapSpans.push_back(windowSpanToPixmapSpan(span, scaleX));
+        }
+    }
+
+    bool allocateAndStoreSpans(void* buffer, VideoSubsystemAllocateFunc allocate, const std::vector<PixmapSpan>& candidateSpans, PixmapRow& row) 
+    {
+        row.spanCount = candidateSpans.size();
+
+        if(row.spanCount == 0) {
+            row.spanArrayOffset = 0;
+            return true;
+        }
+
+        row.spanArrayOffset = allocate(sizeof(PixmapSpan) * row.spanCount);
+        if(row.spanArrayOffset == ALLOCATION_FAILED) {
+            dbgprintf("failed to allocate pixmap row spanArrayOffset\n"); // XXX debug
+            return false;
+        }
+        auto* spanArray = GetSpans(buffer, row);
+        for(size_t spanIndex = 0; spanIndex < candidateSpans.size(); spanIndex++) {
+            auto& span = spanArray[spanIndex];
+            span = candidateSpans[spanIndex];
+
+            size_t pixelDataSize = CalculatePixelStorageRequired(FMT, span.length, SCALE);
+            span.pixelDataOffset = allocate(pixelDataSize);
+            if(span.pixelDataOffset == ALLOCATION_FAILED) {
+                dbgprintf("failed to allocate pixmap pixelDataOffset for span %zd\n", spanIndex); // XXX debug
+                return false;
+            }
+            // ignore copyContents for now
+        }
+        return true;
+    }
+
+    static bool pixmapRowIntersectsWindowScanlineRange(int pixmapRowIndex, int scaleY, const ScanlineRange& range)
+    {
+        int rangeFirstInPixmap = range.start / scaleY;
+        int rangeLastInPixmap = (range.start + range.count - 1) / scaleY;
+        return (pixmapRowIndex >= rangeFirstInPixmap) && (pixmapRowIndex <= rangeLastInPixmap);
+    }
+
+    static bool windowScanlineRangeEndsBeforePixmapRow(int pixmapRowIndex, int scaleY, const ScanlineRange& range)
+    {
+        int rangeLastInPixmap = (range.start + range.count - 1) / scaleY;
+        return rangeLastInPixmap < pixmapRowIndex;
+    }
+
+    static void mergePixmapSpans(const std::vector<PixmapSpan>& newSpans, std::vector<PixmapSpan>& accumulatedSpans)
+    {
+        dbgScope newScope(__FUNCTION__);
+        auto currentNewSpan = newSpans.begin();
+        auto currentAccumulatedSpan = accumulatedSpans.begin();
+
+        while((currentNewSpan < newSpans.end()) && (currentAccumulatedSpan < accumulatedSpans.end())) {
+            dbgprintf("new span {%d, %d}, accumulated span {%d, %d}\n",
+                currentNewSpan->start, currentNewSpan->length,
+                currentAccumulatedSpan->start, currentAccumulatedSpan->length);
+            if(currentNewSpan->start + currentNewSpan->length - 1 < currentAccumulatedSpan->start) {
+                // If currentNewSpan is entirely before currentAccumulatedSpan, add it 
+                dbgprintf("add it\n");
+                accumulatedSpans.insert(currentAccumulatedSpan, *currentNewSpan);
+                currentNewSpan++;
+            } else if(currentAccumulatedSpan->start + currentAccumulatedSpan->length - 1 < currentNewSpan->start) {
+                // If currentNewSpan is entirely after currentAccumulatedSpan, increment currentAccumulatedSpan and continue
+                dbgprintf("increment\n");
+                currentAccumulatedSpan++;
+            } else {
+                // currentNewSpan and currentAccumulatedSpan overlap, so 
+                // extend currentAccumulatedSpan to include currentNewSpan
+                dbgprintf("extend accumulated\n");
+                uint16_t newStart = std::min(currentAccumulatedSpan->start, currentNewSpan->start);
+                uint16_t newLength = std::max(currentAccumulatedSpan->start + currentAccumulatedSpan->length, currentNewSpan->start + currentNewSpan->length) - newStart;
+                dbgprintf("new one is {%d, %d}\n", newStart, newLength);
+                *currentAccumulatedSpan = {newStart, newLength};
+                // And move on to the next currentNewSpan
+                currentNewSpan++;
+            }
+        }
+
+        for(;currentNewSpan < newSpans.end(); currentNewSpan++) {
+            dbgprintf("add span {%d, %d}\n",
+                currentNewSpan->start, currentNewSpan->length);
+            accumulatedSpans.insert(currentAccumulatedSpan, *currentNewSpan);
+        }
+    }
+
+    virtual bool reallocateForWindow(Window& window, const std::vector<ScanlineRange>& requestedRanges, void* buffer, VideoSubsystemAllocateFunc allocate, bool *enqueueExposedRedrawEvents) 
+    {
+        dbgScope newScope(__FUNCTION__);
+        auto [scaleX, scaleY] = CalculatePixmapPixelSizeOnScreen(SCALE);
+
         window.modeRootOffset = allocate(sizeof(PixmapRoot));
         if(window.modeRootOffset == ALLOCATION_FAILED) {
-            printf("failed to allocate pixmap Root\n"); // XXX debug
+            dbgprintf("failed to allocate pixmap Root\n"); // XXX debug
             return false;
         }
 
-        auto& root = GetRoot(stagingVRAM, window.modeRootOffset);
-        root.rowRangeCount = ranges.size();
+        auto& root = GetRoot(buffer, window.modeRootOffset);
         root.width = window.size[0];
         root.height = window.size[1];
-        root.rowRangeTableOffset = allocate(sizeof(PixmapRowRange) * ranges.size());
-        if(root.rowRangeTableOffset == ALLOCATION_FAILED) {
-            printf("failed to allocate pixmap rowRangeTableOffset\n"); // XXX debug
+
+        auto [pixmapWidth, pixmapHeight] = CalculatePixmapSizeFromWindow(root.width, root.height, scaleX, scaleY);
+
+        root.rowTableOffset = allocate(sizeof(PixmapRow) * pixmapHeight);
+        if(root.rowTableOffset == ALLOCATION_FAILED) {
+            dbgprintf("failed to allocate pixmap row table\n"); // XXX debug
             return false;
         }
 
-        auto* rowRangeArray = GetRowRanges(stagingVRAM, root);
+        auto* rowArray = GetRows(buffer, root);
+        for(int i = 0; i < pixmapHeight; i++) {
+            rowArray[i].whichPalette = 0;
+        }
 
-        // Loop over ranges
-        for(int rangeIndex = 0; rangeIndex < ranges.size(); rangeIndex++) {
+        auto range = requestedRanges.begin();
+
+        std::vector<PixmapSpan> candidateSpans;
+
+        // possible optimization is fill empty pixmap rows before first range
+
+        for(int pixmapRowIndex = 0; pixmapRowIndex < pixmapHeight; pixmapRowIndex ++) {
+
+            dbgprintf("pixmap row %d; window = {%d %d %d %d}\n", pixmapRowIndex,
+                window.position[0], window.position[1], window.size[0], window.size[1]);
+
+            // for all ranges touching this pixmap row, merge in row spans
+
+            // possible optimization is store same merged candidateSpans as long as only one range covers the pixmapRows
+            // For now, do the naive thing of filling candidateSpans every time
+            candidateSpans = {};
+
+#if 0
+            // get to next range that intersects this pixmap row or end
+            while((range != requestedRanges.end()) && !pixmapRowIntersectsWindowScanlineRange(pixmapRowIndex, scaleY, *range)) { 
+                dbgprintf("increment past range {%d, %d} to get to one that intersects pixmap\n", range->start, range->count);
+                range++;
+            }
+#endif
+
+            // If range intersects this pixmap row, merge range's spans with candidateSpans, and if the range
+            // ends within this pixmap row, increment and repeat
+            bool continueMergingRows = true;
+            while(continueMergingRows && (range != requestedRanges.end())) {
+
+                if(pixmapRowIntersectsWindowScanlineRange(pixmapRowIndex, scaleY, *range)) {
+                    std::vector<PixmapSpan> newSpans;
+                    windowSpansToPixmapSpans(range->spans, scaleX, newSpans);
+                    mergePixmapSpans(newSpans, candidateSpans);
+                }
+
+                if(windowScanlineRangeEndsBeforePixmapRow(pixmapRowIndex + 1, scaleY, *range)) { 
+		    // If this range ends inside this pixmap row,
+		    // increment the range, and continue processing
+		    // if the next range also intersects the row.
+                    range++;
+                    dbgprintf("go again\n");
+                    continueMergingRows = (range != requestedRanges.end()) && pixmapRowIntersectsWindowScanlineRange(pixmapRowIndex, scaleY, *range);
+                } else {
+                    continueMergingRows = false;
+                }
+            }
+
+            dbgprintf("allocate and store spans\n");
+            // allocate and store spans, padded to X scale 
+            auto& row = rowArray[pixmapRowIndex];
+            bool success = allocateAndStoreSpans(buffer, allocate, candidateSpans, row);
+            if(!success) {
+                dbgprintf("failed to allocate pixmap pixelDataOffset for line %d\n", pixmapRowIndex); // XXX debug
+                return false;
+            }
+        }
+
+        // possible optimization is to fill empty pixmap rows after last range
+
+#if 0
+
+        int windowRowIndex = 0;
+
+        // set as empty all pixmap rows before first requested range
+        while(windowRowIndex + scaleY - 1 < range->start) {
+            rowArray[windowRowIndex / scaleY].spanCount = 0;
+            windowRowIndex += scaleY;
+        }
+
+        // walk all rows within first to last requested ranges, adding ranges within pixmap rows
+
+        std::vector<PixmapSpan> candidateSpans;
+
+        // Set initial candidateSpans to content of first range
+        windowSpansToPixmapSpans(range->spans, scaleX, candidateSpans);
+        for(const auto& span: range->spans) {
+            candidateSpans.push_back(windowSpanToPixmapSpan(span, scaleX));
+        }
+        auto singleRange = range;
+
+        while((range != requestedRanges.end()) && (windowRowIndex < root.height)) {
+            // If row stepped out of current range, go to next range
+            if(windowRowIndex >= range->start + range->count) {
+                range++;
+            }
+
+            // If range is valid (not past end of requestedRanges)
+            if(range < requestedRanges.end()) {
+                // If range is not the same range spans was initialized from
+                if(range != singleRange) {
+                    std::vector<PixmapSpan> newSpans;
+                    windowSpansToPixmapSpans(range->spans, scaleX, newSpans);
+                    // then merge this requested range's spans with the pixmap row's spans
+                    fprintf(out, "merge new range with candidateSpans\n");
+                    // mergePixmapSpans(newSpans, candidateSpans);
+                    singleRange = requestedRanges.end();
+                }
+            }
+
+            // If this window row is the last within a pixmap row, store the possibly merged pixmap ranges
+            if((windowRowIndex % scaleY) == (scaleY - 1)) {
+                // allocate and store spans, padded to X scale 
+                auto& row = rowArray[windowRowIndex / scaleY];
+                bool success = allocateAndStoreSpans(buffer, allocate, candidateSpans, row);
+                if(!success) {
+                    fprintf(out, "failed to allocate pixmap pixelDataOffset for line %d\n", windowRowIndex / scaleY); // XXX debug
+                    return false;
+                }
+
+                // increment range until it's one including windowRowIndex + 1
+                while((range != requestedRanges.end()) && !(((windowRowIndex + 1) >= range->start) && ((windowRowIndex + 1) < range->start + range->count))) {
+                    range++;
+                }
+
+                // set candidateSpans from current range
+                candidateSpans.clear();
+                if(range < requestedRanges.end()) {
+                    windowSpansToPixmapSpans(range->spans, scaleX, candidateSpans);
+                }
+
+                singleRange = range;
+            }
+            windowRowIndex++;
+        }
+
+        // walk remaining rows
+        while(windowRowIndex < root.height) {
+            // If this window row is the last within a pixmap row, store the pixmap ranges
+            if((windowRowIndex % scaleY) == (scaleY - 1)) {
+                // allocate and store spans padded to X scale
+                auto& row = rowArray[windowRowIndex / scaleY];
+                bool success = allocateAndStoreSpans(buffer, allocate, candidateSpans, row);
+                if(!success) {
+                    fprintf(out, "failed to allocate pixmap pixelDataOffset for line %d\n", windowRowIndex / scaleY); // XXX debug
+                    return false;
+                }
+                candidateSpans = {};
+            }
+            windowRowIndex++;
+        }
+
+#endif
+
+#if 0
+        auto* rowRangeArray = GetRowRanges(buffer, root);
+
+        // Loop over requestedRanges
+        for(int rangeIndex = 0; rangeIndex < requestedRanges.size(); rangeIndex++) {
             auto& range = rowRangeArray[rangeIndex];
-            const auto& requestedRange = ranges[rangeIndex];
+            const auto& requestedRange = requestedRanges[rangeIndex];
 
             range = { requestedRange.start, requestedRange.count, allocate(sizeof(PixmapRowInfo) * requestedRange.count) };
             if(range.rowInfoTableOffset == ALLOCATION_FAILED) {
-                printf("failed to allocate pixmap rowInfoTableOffset\n"); // XXX debug
+                dbgprintf("failed to allocate pixmap rowInfoTableOffset\n"); // XXX debug
                 return false;
             }
 
             // Loop over rows
-            auto* rowArray = GetRowInfos(stagingVRAM, range);
+            auto* rowArray = GetRowInfos(buffer, range);
             for(int rowIndex = 0; rowIndex < range.count; rowIndex++) {
                 auto& rowInfo = rowArray[rowIndex];
 
                 rowInfo = { 0, static_cast<uint16_t>(requestedRange.spans.size()), allocate(sizeof(PixmapSpan) * requestedRange.spans.size()) };
                 if(rowInfo.spanArrayOffset == ALLOCATION_FAILED) {
-                    printf("failed to allocate pixmap spanArrayOffset for line %d\n", rowIndex); // XXX debug
+                    dbgprintf("failed to allocate pixmap spanArrayOffset for line %d\n", rowIndex); // XXX debug
                     return false;
                 }
 
-                auto* spanArray = GetSpans(stagingVRAM, rowInfo);
+                auto* spanArray = GetSpans(buffer, rowInfo);
 
                 for(int spanIndex = 0; spanIndex < requestedRange.spans.size(); spanIndex++) {
                     auto& span = spanArray[spanIndex];
                     const auto& requestedSpan = requestedRange.spans[spanIndex];
 
-                    size_t pixelDataSize = CalculatePixelStorageRequired(fmt, requestedSpan.length, scale);
+                    size_t pixelDataSize = CalculatePixelStorageRequired(FMT, requestedSpan.length, SCALE);
                     span = { requestedSpan.start, requestedSpan.length, allocate(pixelDataSize) };
                     if(span.pixelDataOffset == ALLOCATION_FAILED) {
-                        printf("failed to allocate pixmap pixelDataOffset for line %d, span %d\n", rowIndex, spanIndex ); // XXX debug
+                        dbgprintf("failed to allocate pixmap pixelDataOffset for line %d, span %d\n", rowIndex, spanIndex ); // XXX debug
                         return false;
                         // ignore copyContents for now
                     }
                 }
             }
         }
+#endif
 
         *enqueueExposedRedrawEvents = true;
 
@@ -373,8 +643,9 @@ public:
 
     virtual void fillRow(uint32_t rootOffset, uint32_t startOnScreen /* for color phase */, uint32_t startWithinWindow, uint32_t length, uint32_t rowOnScreen /* for flipping ColorBurst */, uint32_t rowWithinWindow, uint8_t *rowBuffer)
     {
+#if 0
         auto& root = GetRoot(VRAM, rootOffset);
-        auto [bitsPerPixel, pixelsPerByte, pixelBitmask] = CalculateBitSizeOfPixel(fmt);
+        auto [bitsPerPixel, pixelsPerByte, pixelBitmask] = CalculateBitSizeOfPixel(FMT);
 
         const auto* rowRangeArray = GetRowRanges(VRAM, root);
 
@@ -415,7 +686,7 @@ public:
                 break;
             }
         }
-
+#endif
     }
 
     virtual void setPaletteContents(Window& window, PaletteIndex which, uint8_t (*palette)[3])
@@ -423,7 +694,7 @@ public:
         auto& root = GetRoot(VRAM, window.modeRootOffset);
 
         int paletteEntries = 0;
-        switch(fmt) {
+        switch(FMT) {
             case PIXMAP_1_BIT:
                 /* notreached for Pixmap */
                 paletteEntries = 0;
@@ -446,7 +717,7 @@ public:
             debugPalette[i][0] = palette[i][0];
             debugPalette[i][1] = palette[i][1];
             debugPalette[i][2] = palette[i][2];
-            printf("debug palette %d %d %d\n",
+            dbgprintf("debug palette %d %d %d\n",
                 debugPalette[i][0], debugPalette[i][1], debugPalette[i][2]);
         }
     }
@@ -454,22 +725,15 @@ public:
     virtual void setRowPalette(Window& window, int row, PaletteIndex which)
     {
         auto& root = GetRoot(VRAM, window.modeRootOffset);
-        auto* ranges = GetRowRanges(VRAM, root);
-        for(int i = 0; i < root.rowRangeCount; i++) {
-            auto& range = ranges[i];
-            if(row >= range.start && row < range.start + range.count) {
-                auto* rowArray = GetRowInfos(VRAM, range);
-                auto& rowInfo = rowArray[row - range.start];
-                rowInfo.whichPalette = which;
-                break;
-            }
-        }
+        auto* rowArray = GetRows(VRAM, root);
+        rowArray[row].whichPalette = which;
     }
 
     virtual void drawPixelRect(Window& window,
         int left, int top, int width, int height, size_t rowBytes, uint8_t *source)
     {
-        auto [bitsPerPixel, pixelsPerByte, pixelBitmask] = CalculateBitSizeOfPixel(fmt);
+#if 0
+        auto [bitsPerPixel, pixelsPerByte, pixelBitmask] = CalculateBitSizeOfPixel(FMT);
 
         auto& root = GetRoot(VRAM, window.modeRootOffset);
         auto* ranges = GetRowRanges(VRAM, root);
@@ -522,6 +786,7 @@ public:
                 }
             }
         }
+#endif
         if(true) {
             // dump for debugging
             std::string fname = "pixmap2_" + std::to_string(window.id) + ".out";
@@ -542,7 +807,8 @@ public:
     // this would still not export that.
 };
 
-static PixmapPalettizedMode Pixmap8Bit(PIXMAP_8_BITS, "NTSC 8-bit palettized pixmap", SCALE_2X2);
+static PixmapPalettizedMode<SCALE_2X2, PIXMAP_8_BITS> Pixmap8Bit("NTSC 8-bit palettized pixmap");
+// static PixmapPalettizedMode Pixmap8Bit(PIXMAP_8_BITS, "NTSC 8-bit palettized pixmap", SCALE_2X2);
 // static PixmapMonoMode Grayscale(PIXMAP_8_BITS, "NTSC 8-bit grayscale");
 
 static void RegisterPixmapModes() __attribute__((constructor));

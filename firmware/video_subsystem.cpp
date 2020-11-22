@@ -114,7 +114,6 @@ Status VideoModeGetInfo(int modeIndex, void *infovoid, size_t infoSize)
                 return VIDEO_MODE_DOES_NOT_MATCH;
             }
             modedriver->getAspectRatio(&info->aspectX, &info->aspectY);
-            modedriver->getPixelScale(&info->scaleX, &info->scaleY);
             info->mono = modedriver->isMonochrome();
 
             const PixmapModeDriver* pixmapdriver = dynamic_cast<PixmapModeDriver*>(driver->getModeDriver(modeIndex));
@@ -123,6 +122,7 @@ Status VideoModeGetInfo(int modeIndex, void *infovoid, size_t infoSize)
             }
             info->pixmapFormat = pixmapdriver->getPixmapFormat();
             info->paletteSize = pixmapdriver->getPaletteSize();
+            pixmapdriver->getPixelScale(&info->scaleX, &info->scaleY);
             break;
         }
 
@@ -235,6 +235,23 @@ Status WindowClose(int windowID)
     return SUCCESS;
 }
 
+Status WindowPixmapGetPixelScale(int windowID, int *scaleX, int *scaleY)
+{
+    auto found = std::find_if(gWindowList.begin(), gWindowList.end(), [&](const Window& w){ return w.id == windowID; });
+    if(found == gWindowList.end()) {
+        return INVALID_WINDOW;
+    }
+    auto &window = *found;
+
+    PixmapModeDriver* pixmapdriver = dynamic_cast<PixmapModeDriver*>(driver->getModeDriver(window.mode));
+    if(!pixmapdriver) {
+        return VIDEO_MODE_DOES_NOT_MATCH;
+    }
+    pixmapdriver->getPixelScale(scaleX, scaleY);
+
+    return SUCCESS;
+}
+
 Status WindowPixmapSetPalette(int windowID, PaletteIndex whichPalette, uint8_t (*palette)[3])
 {
     auto found = std::find_if(gWindowList.begin(), gWindowList.end(), [&](const Window& w){ return w.id == windowID; });
@@ -252,7 +269,7 @@ Status WindowPixmapSetPalette(int windowID, PaletteIndex whichPalette, uint8_t (
     return SUCCESS;
 }
 
-Status VideoPixmapDrawRect(int windowID, int x, int y, int w, int h, size_t rowBytes, uint8_t *pixels)
+Status WindowPixmapDrawRect(int windowID, int x, int y, int w, int h, size_t rowBytes, uint8_t *pixels)
 {
     auto found = std::find_if(gWindowList.begin(), gWindowList.end(), [&](const Window& w){ return w.id == windowID; });
     if(found == gWindowList.end()) {

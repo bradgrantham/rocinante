@@ -315,6 +315,7 @@ bool loadImageResized(const char *filename, int imageWidth, int imageHeight, flo
             prevY = y;
             currentErrorRow = nextErrorRow;
         }
+        ProcessYield();
     }
 
     fclose(fp);
@@ -326,7 +327,7 @@ bool loadImageResized(const char *filename, int imageWidth, int imageHeight, flo
 void redrawImage(int myWindow, int x, int y, int w, int h, size_t rowBytes, int windowWidth, int windowHeight, uint8_t* imageBuffer)
 {
     printf("redraw to %d x %d at %d, %d\n", w, h, x, y);
-    VideoPixmapDrawRect(myWindow, 0, 0, windowWidth, windowHeight, rowBytes, imageBuffer);
+    WindowPixmapDrawRect(myWindow, 0, 0, windowWidth, windowHeight, rowBytes, imageBuffer);
     /* cheat and redraw everything */
 }
 
