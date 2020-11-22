@@ -359,8 +359,8 @@ static int AppShowImage(int argc, char **argv)
     bool requestedColor = true;
 
     int myWindow;
-    int windowWidth;
-    int windowHeight;
+    int windowWidth, windowHeight;
+    int pixmapScaleX, pixmapScaleY;
     uint8_t *imageBuffer = nullptr;
     size_t rowBytes;
 
@@ -434,6 +434,8 @@ static int AppShowImage(int argc, char **argv)
                         chosenFormat = info.pixmapFormat;
                         chosenPalette = info.paletteSize;
                         chosenIsColor = isColor;
+                        pixmapScaleX = info.scaleX;
+                        pixmapScaleY = info.scaleY;
                     }
                 }
                 break;
@@ -501,8 +503,8 @@ static int AppShowImage(int argc, char **argv)
                 case Event::WINDOW_RESIZE: {
                     const auto& resize = ev.windowResize;
                     delete[] imageBuffer;
-                    windowWidth = resize.width;
-                    windowHeight = resize.height;
+                    int dummyX, dummyY;
+                    WindowRectToPixmapRect(0, 0, resize.width, resize.height, pixmapScaleX, pixmapScaleY, &dummyX, &dummyY, &windowWidth, &windowHeight);
                     try {
                         imageBuffer = allocateImage(windowWidth, windowHeight, chosenFormat, &rowBytes);
                     } catch (std::bad_alloc& ba) {
@@ -520,7 +522,9 @@ static int AppShowImage(int argc, char **argv)
                 }
                 case Event::WINDOW_REDRAW: {
                     const auto& redraw = ev.windowRedraw;
-                    redrawImage(myWindow, redraw.left, redraw.top, redraw.width, redraw.height, rowBytes, windowWidth, windowHeight, imageBuffer);
+                    int pixmapLeft, pixmapTop, pixmapWidth, pixmapHeight;
+                    WindowRectToPixmapRect(redraw.left, redraw.top, redraw.width, redraw.height, pixmapScaleX, pixmapScaleY, &pixmapLeft, &pixmapTop, &pixmapWidth, &pixmapHeight);
+                    redrawImage(myWindow, pixmapLeft, pixmapTop, pixmapWidth, pixmapHeight, rowBytes, windowWidth, windowHeight, imageBuffer);
                     break;
                 }
                 default: {
@@ -531,229 +535,6 @@ static int AppShowImage(int argc, char **argv)
         }
         fflush(stdout);
     }
-
-#if 0
-    FILE *fp;
-    fp = fopen (filename, "rb");
-    if(fp == NULL) {
-        printf("ERROR: couldn't open \"%s\" for reading, errno %d\n", filename, errno);
-        return COMMAND_FAILED;
-    }
-
-    int ppmtype, max, width, height;
-
-    unsigned char (*palette)[3] = (unsigned char (*)[3])malloc(sizeof(palette[0]) * 256);
-    if(palette == NULL) {
-        printf("failed to allocate palette\n");
-        fclose(fp);
-        return COMMAND_FAILED;
-    }
-    int paletteSize = 0;
-
-    if(fscanf(fp, "P%d %d %d %d ", &ppmtype, &width, &height, &max) != 4) {
-        printf("couldn't read PPM header from \"%s\"\n", filename);
-        fclose(fp);
-        return COMMAND_FAILED;
-    }
-
-    if((ppmtype == 6) && (height == 1)) {
-        printf("discovered height 1 P6 ppm, will assume it is a palette\n");
-
-        if(width > 256) {
-            printf("unsupported palette size %d\n", width);
-            fclose(fp);
-            return COMMAND_FAILED;
-        }
-
-        if(max > 255) {
-            printf("unsupported palette value width %d\n", max);
-            fclose(fp);
-            return COMMAND_FAILED;
-        }
-
-        paletteSize = width;
-
-        if(fread(palette, 3, paletteSize, fp) != (size_t)paletteSize) {
-            printf("failed to read palette image\n");
-            free(palette);
-            fclose(fp);
-            return COMMAND_FAILED;
-        }
-        
-        // Okay, that was the palette, now read the real PPM header
-        if(fscanf(fp, "P%d %d %d %d ", &ppmtype, &width, &height, &max) != 4) {
-            printf("couldn't read second PPM header from \"%s\"\n", filename);
-            free(palette);
-            fclose(fp);
-            return COMMAND_FAILED;
-        }
-    }
-
-    if((ppmtype != 5) && (ppmtype != 6)) {
-        printf("unsupported image type %d for \"%s\"\n", ppmtype, filename);
-        free(palette);
-        fclose(fp);
-        return COMMAND_FAILED;
-    }
-
-    if(width > MAX_ROW_SIZE) {
-	printf("ERROR: width %d of image in \"%s\" is too large for static row of %u pixels\n",
-            width, filename, MAX_ROW_SIZE);
-        free(palette);
-        fclose(fp);
-        return COMMAND_FAILED;
-    }
-
-    printf("image is %u by %u\n", width, height);
-
-    static unsigned char (*rowRGB)[3];
-    rowRGB = (unsigned char (*)[3]) malloc(sizeof(rowRGB[0]) * MAX_ROW_SIZE);
-    if(rowRGB == NULL) {
-        printf("failed to allocate row for pixel data\n");
-        free(palette);
-        fclose(fp);
-        return COMMAND_FAILED;
-    }
-
-    signed short (*rowError)[MAX_ROW_SIZE][3]; // + 1 in either direction
-    int currentErrorRow = 0;
-    rowError = (signed short (*)[MAX_ROW_SIZE][3])malloc(sizeof(rowError[0]) * 2);
-    memset(rowError, 0, sizeof(rowError[0]) * 2);
-    if(rowError == NULL) {
-        printf("failed to allocate row for error data\n");
-        free(rowRGB);
-        free(palette);
-        fclose(fp);
-        return COMMAND_FAILED;
-    }
-
-    if(paletteSize <= info.paletteSize) {
-        SetPalette(whichPalette, paletteSize, palette);
-    } else {
-        printf("suggested palette in file exceeded video mode palette size and will be ignored.\n");
-
-        if(info.paletteSize > 0) {
-            MakePalette(whichPalette, info.paletteSize, palette);
-            paletteSize = info.paletteSize;
-        } else {
-            if(info.pixelFormat == VideoPixmapFormat::BITMAP) {
-                paletteSize = 2;
-                palette[0][0] = 0;
-                palette[0][1] = 0;
-                palette[0][2] = 0;
-                palette[1][0] = 255;
-                palette[1][1] = 255;
-                palette[1][2] = 255;
-            } else if(info.pixelFormat == VideoPixmapFormat::GRAY_2BIT) {
-                paletteSize = 4;
-                palette[0][0] = 0;
-                palette[0][1] = 0;
-                palette[0][2] = 0;
-                palette[1][0] = 85;
-                palette[1][1] = 85;
-                palette[1][2] = 85;
-                palette[2][0] = 170;
-                palette[2][1] = 170;
-                palette[2][2] = 170;
-                palette[3][0] = 255;
-                palette[3][1] = 255;
-                palette[3][2] = 255;
-            }
-        }
-    }
-
-    int prevY = -1;
-    for(int srcRow = 0; srcRow < height; srcRow++) {
-
-        if(ppmtype == 6) {
-            if(fread(rowRGB, 3, width, fp) != (size_t)width) {
-                printf("ERROR: couldn't read row %d from \"%s\"\n", srcRow, filename);
-                free(palette);
-                free(rowError);
-                free(rowRGB);
-                return COMMAND_FAILED;
-            }
-        } else if(ppmtype == 5) {
-            if(fread(rowRGB, 1, width, fp) != (size_t)width) {
-                printf("ERROR: couldn't read row %d from \"%s\"\n", srcRow, filename);
-                free(palette);
-                free(rowError);
-                free(rowRGB);
-                return COMMAND_FAILED;
-            }
-            // expand P5 row to P6 RGB
-            for(int i = 0; i < width; i++) {
-                int x = width - 1 - i;
-                unsigned char gray = ((unsigned char *)rowRGB)[x];
-                rowRGB[x][0] = gray;
-                rowRGB[x][1] = gray;
-                rowRGB[x][2] = gray;
-            }
-        }
-
-        int y = (srcRow * info.height + info.height - 1) / height;
-
-        if(y != prevY) {
-
-            if(y >= info.height) {
-                printf("hm, y was >= height, skipped\n");
-            }
-
-            VideoModeSetRowPalette(y, whichPalette);
-
-            short (*errorThisRowFixed8)[3] = rowError[currentErrorRow] + 1; // So we can access -1 without bounds check
-
-            int nextErrorRow = (currentErrorRow + 1) % 2;
-            memset(rowError[nextErrorRow], 0, sizeof(rowError[0]));
-            short (*errorNextRowFixed8)[3] = rowError[nextErrorRow] + 1;   // So we can access -1 without bounds check
-
-            for(int x = 0; x < info.width; x++) {
-                int srcCol = (x * width + width - 1) / info.width;
-
-                // get the color with error diffused from previous pixels
-                int correctedRGB[3];
-                for(int i = 0; i < 3; i++) {
-                     correctedRGB[i] = rowRGB[srcCol][i] + errorThisRowFixed8[x][i] / 256;
-                }
-
-                // Find the closest color in our palette
-                int c = FindClosestColor(palette, paletteSize, correctedRGB[0], correctedRGB[1], correctedRGB[2]);
-
-                SetPixelDirect(x, y, c, info.pixelFormat, params.base, params.rowSize);
-
-                // Calculate our error between what we wanted and what we got
-                // and distribute it a la Floyd-Steinberg
-                int errorFixed8[3];
-                for(int i = 0; i < 3; i++) {
-                    errorFixed8[i] = 255 * (correctedRGB[i] - palette[c][i]);
-                }
-                for(int i = 0; i < 3; i++) {
-                    errorThisRowFixed8[x + 1][i] += errorFixed8[i] * 7 / 16;
-                }
-                for(int i = 0; i < 3; i++) {
-                    errorNextRowFixed8[x - 1][i] += errorFixed8[i] * 3 / 16;
-                }
-                for(int i = 0; i < 3; i++) {
-                    errorNextRowFixed8[x    ][i] += errorFixed8[i] * 5 / 16;
-                }
-                for(int i = 0; i < 3; i++) {
-                    errorNextRowFixed8[x + 1][i] += errorFixed8[i] * 1 / 16;
-                }
-            }
-            prevY = y;
-            currentErrorRow = nextErrorRow;
-        }
-    }
-
-    whichPalette = (whichPalette + 1) % 2;
-
-    fclose(fp);
-    free(palette);
-    free(rowError);
-    free(rowRGB);
-#endif
-
-    printf("%s\n", (true and false) ? "no" : "yes");
 
     return COMMAND_SUCCESS;
 }
