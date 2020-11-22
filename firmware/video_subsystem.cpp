@@ -287,6 +287,20 @@ Status WindowPixmapDrawRect(int windowID, int x, int y, int w, int h, size_t row
     return SUCCESS;
 }
 
+void WindowRectToPixmapRect(int left, int top, int width, int height, int scaleX, int scaleY, int *pixLeft, int *pixTop, int *pixWidth, int *pixHeight)
+{
+    *pixLeft = left / scaleX;
+    *pixTop = top / scaleY;
+
+    int winRight = left + width;
+    int pixRight = winRight / scaleX;
+    int winBottom = top + height;
+    int pixBottom = winBottom / scaleX;
+
+    *pixWidth = pixRight - *pixLeft;
+    *pixHeight = pixBottom - *pixTop;
+}
+
 Status WindowPixmapSetRowPalette(int windowID, int row, PaletteIndex whichPalette)
 {
     auto found = std::find_if(gWindowList.begin(), gWindowList.end(), [&](const Window& w){ return w.id == windowID; });

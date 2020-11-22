@@ -187,6 +187,7 @@ Status WindowPixmapSetPalette(int window, PaletteIndex whichPalette, uint8_t (*p
 Status WindowPixmapSetRowPalette(int window, int row, PaletteIndex whichPalette);
 Status WindowPixmapDrawRect(int myWindow, int x, int y, int w, int h, size_t rowBytes, uint8_t *pixels);
 Status WindowPixmapGetPixelScale(int myWindow, int *scaleX, int *scaleY);
+void WindowRectToPixmapRect(int left, int top, int width, int height, int scaleX, int scaleY, int *pixLeft, int *pixTop, int *pixWidth, int *pixHeight);
 
 // Event stuff should be in a separate header
 
