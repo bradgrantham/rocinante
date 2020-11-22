@@ -3,7 +3,7 @@ import sys
 name = sys.argv[1]
 file = open(sys.argv[2], "rb")
 
-print "unsigned char %s_bytes[] = {" % name
+print "const unsigned char %s_bytes[] = {" % name
 
 length = 0
 
