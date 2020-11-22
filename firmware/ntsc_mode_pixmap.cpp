@@ -507,52 +507,50 @@ public:
         return true;
     }
 
-    virtual void fillRow(uint32_t rootOffset, uint32_t startOnScreen /* for color phase */, uint32_t startWithinWindow, uint32_t length, uint32_t rowOnScreen /* for flipping ColorBurst */, uint32_t rowWithinWindow, uint8_t *rowBuffer)
+    // caller guarantees that pixel span to be drawn is 1:1 with a span provided in reallocate
+    virtual void fillRow(uint32_t rootOffset, uint32_t startOnScreen /* for color phase */, uint32_t startWithinWindow, uint32_t lengthInWindowPixels, uint32_t rowOnScreen /* for flipping ColorBurst */, uint32_t rowWithinWindow, uint8_t *rowBuffer)
     {
-#if 0
+        dbgScope newScope(__FUNCTION__);
         auto& root = GetRoot(VRAM, rootOffset);
         auto [bitsPerPixel, pixelsPerByte, pixelBitmask] = CalculateBitSizeOfPixel(FMT);
+        auto [scaleX, scaleY] = CalculatePixmapPixelSizeOnScreen(SCALE);
 
-        const auto* rowRangeArray = GetRowRanges(VRAM, root);
+        uint32_t rowWithinPixmap = rowWithinWindow / scaleY;
+        uint32_t startWithinPixmap = startWithinWindow / scaleX;
 
-        // XXX really should unroll for uint32_t writes
+        const auto* rowArray = GetRows(VRAM, root);
 
-        for(int rowIndex = 0; rowIndex < root.rowRangeCount; rowIndex++) {
-            auto& range = rowRangeArray[rowIndex];
-            const auto* rowArray = GetRowInfos(VRAM, range);
-            if(rowWithinWindow >= range.start && rowWithinWindow < range.start + range.count) {
+        const auto& rowInfo = rowArray[rowWithinPixmap];
+        const auto* spans = GetSpans(VRAM, rowInfo);
 
-                const auto& rowInfo = rowArray[rowIndex];
-                const auto* spans = GetSpans(VRAM, rowInfo);
+        ntsc_wave_t *palette = root.palettes[rowInfo.whichPalette];
 
-                ntsc_wave_t *palette = root.palettes[rowInfo.whichPalette];
+        for(uint32_t spanIndex = 0; spanIndex < rowInfo.spanCount; spanIndex++) {
+            auto& span = spans[spanIndex];
 
-                for(int spanIndex = 0; spanIndex < rowInfo.spanCount; spanIndex++) {
-                    auto& span = spans[spanIndex];
-                    // XXX should guarantee that startWithinWindow is within a span, then could omit second comparison
-                    if(startWithinWindow >= span.start && startWithinWindow < span.start + span.length) {
+            if(startWithinPixmap >= span.start) {
 
-                        const auto* pixelData = GetPixelData(VRAM, span);
+                const auto* pixelData = GetPixelData(VRAM, span);
+                uint8_t* rowBufferP = rowBuffer;
 
-                        for(int spanPixel = 0; spanPixel < span.length; spanPixel++) {
+                for(uint32_t pixelWithinWindow = startWithinWindow; pixelWithinWindow < startWithinWindow + lengthInWindowPixels; pixelWithinWindow++, rowBufferP++) {
 
-                            int srcByte = spanPixel / pixelsPerByte;
-                            int srcShift = (spanPixel % pixelsPerByte) * bitsPerPixel;
-                            uint32_t srcPixel = (pixelData[srcByte] >> srcShift) & pixelBitmask;
+                    uint32_t pixmapSpanPixel = pixelWithinWindow / scaleX - span.start;
 
-                            int phase = startOnScreen % 4;
-                            uint32_t phaseMask = 0xff << (phase * 8);
-                            int phaseShift = phase * 8;
+                    int srcByte = pixmapSpanPixel  / pixelsPerByte;
+                    int srcShift = (pixmapSpanPixel % pixelsPerByte) * bitsPerPixel;
+                    uint32_t srcPixel = (pixelData[srcByte] >> srcShift) & pixelBitmask;
 
-                            rowBuffer[spanPixel] = (palette[srcPixel] & phaseMask) >> phaseShift;
-                        }
-                    }
+                    int phase = (startOnScreen + pixelWithinWindow) % 4;
+                    uint32_t phaseMask = 0xff << (phase * 8);
+                    int phaseShift = phase * 8;
+
+                    *rowBufferP = (palette[srcPixel] & phaseMask) >> phaseShift;
                 }
 
                 break;
             }
         }
-#endif
     }
 
     virtual void setPaletteContents(Window& window, PaletteIndex which, uint8_t (*palette)[3])

@@ -14,11 +14,9 @@ Go back and make sure
     convert this doc to Markdown
 
 to do 
-    convenience function for converting window rect to pixmap rect
-    allocate memory in showimage using pixmap scale
-    redraw rect in showimage using pixmap scale
-    implement window pixmap draw rect 
     implement window pixmap fillRow
+    hosted: 912 samples
+    hosted: get phase with row offset based on ROW_SAMPLES
 
 ----------------------------
 
