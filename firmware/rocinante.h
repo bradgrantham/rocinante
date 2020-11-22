@@ -32,6 +32,8 @@ typedef enum Status {
 int InputGetChar(void);
 int InputWaitChar(void);
 
+inline void ProcessYield(void) { }
+
 #ifdef __cplusplus
 };
 #endif /* __cplusplus */
