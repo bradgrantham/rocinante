@@ -2,7 +2,6 @@
 #define _NTSC_CONSTANTS_H_
 
 #include <math.h>
-#include <math.h>
 #include <dac_constants.h>
 
 #define NTSC_COLORBURST_FREQUENCY       3579545
