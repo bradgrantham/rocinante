@@ -188,11 +188,6 @@ Status WindowCreate(int modeIndex, const char *name, const int *parameters, int 
     Window& window = gWindowList[0];
     *windowID = window.id;
 
-    if(modeIndex != 0) {
-        printf("modeIndex = %d\n", modeIndex); fflush(stdout);
-        abort();
-    }
-
     bool windowConfigurationSucceeded = driver->attemptWindowConfiguration(gWindowList);
     if(!windowConfigurationSucceeded) {
         return WINDOW_CREATION_FAILED;
@@ -223,6 +218,68 @@ Status WindowCreate(int modeIndex, const char *name, const int *parameters, int 
         enqueueOrSetEventsLost(ev);
     }
     return SUCCESS;
+}
+
+Status HackWindowThingy()
+{
+    static int counter = 0;
+    if(((counter++) % 10000000) != 0) {
+        return SUCCESS;
+    }
+    static int deltaX = 1, deltaY = 1;
+
+    Window& window = gWindowList[0];
+
+    if(window.position[0] + deltaX < 0) { 
+        deltaX = 1;
+    } else if(window.position[0] + deltaX + window.size[0] > 704) {
+        deltaX = -1;
+    }
+    if(window.position[1] + deltaY < 0) { 
+        deltaY = 1;
+    } else if(window.position[1] + deltaY + window.size[1] > 460) {
+        deltaY = -1;
+    }
+
+    window.position[0] += deltaX;
+    window.position[1] += deltaY;
+
+    bool windowConfigurationSucceeded = driver->attemptWindowConfiguration(gWindowList);
+    if(!windowConfigurationSucceeded) {
+        printf("hack - failed window config\n");
+        return WINDOW_CREATION_FAILED;
+    }
+
+    {
+        Event ev { Event::WINDOW_STATUS };
+        ev.windowStatus.window = window.id;
+        ev.windowStatus.status = WindowStatusEvent::WINDOWED;
+        enqueueOrSetEventsLost(ev);
+    }
+    {
+        Event ev { Event::WINDOW_STATUS };
+        ev.windowStatus.window = window.id;
+        ev.windowStatus.status = WindowStatusEvent::FRONT;
+        enqueueOrSetEventsLost(ev);
+    }
+    {
+        Event ev { Event::WINDOW_RESIZE };
+        ev.windowResize.window = window.id;
+        ev.windowResize = { 0, window.size[0], window.size[1] };
+        enqueueOrSetEventsLost(ev);
+    }
+    {
+        Event ev { Event::WINDOW_REDRAW };
+        ev.windowRedraw.window = window.id;
+        ev.windowRedraw = { 0, 0, 0, window.size[0], window.size[1] };
+        enqueueOrSetEventsLost(ev);
+    }
+
+    return SUCCESS;
+}
+
+void ProcessYield(void)
+{
 }
 
 Status WindowClose(int windowID)

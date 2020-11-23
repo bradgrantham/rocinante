@@ -14,6 +14,11 @@ Go back and make sure
     convert this doc to Markdown
 
 to do 
+    make validation routines against dumbest possible implementation
+        writing to pixmap spans during drawrect
+        pixmap spans and pixmap data allocations
+        whether whichPalette and palette data was initialized at time of fillRow
+        window spans
     hosted: 912 samples
     hosted: get phase with row offset based on ROW_SAMPLES
 

@@ -32,7 +32,7 @@ typedef enum Status {
 int InputGetChar(void);
 int InputWaitChar(void);
 
-inline void ProcessYield(void) { }
+void ProcessYield(void);
 
 #ifdef __cplusplus
 };

@@ -9,14 +9,18 @@
 #include <videomodeinternal.h>
 #include <ntsc_constants.h>
 
+constexpr bool debug = true;
+#define VALIDATE
 
-enum PixelScale { SCALE_1X1, SCALE_2X2 };
+enum PixelScale { SCALE_1X1, SCALE_2X2, SCALE_1X2, SCALE_4X4 };
 
 std::tuple<int, int> CalculatePixmapPixelSizeOnScreen(PixelScale scale) 
 {
     switch(scale) {
         case SCALE_1X1: return {1, 1}; break;
         case SCALE_2X2: return {2, 2}; break;
+        case SCALE_1X2: return {1, 2}; break;
+        case SCALE_4X4: return {4, 4}; break;
     }
 }
 
@@ -121,41 +125,32 @@ public:
             case SCALE_2X2:
                 *w = 2; *h = 2;
                 break;
+            case SCALE_1X2:
+                *w = 1; *h = 2;
+                break;
+            case SCALE_4X4:
+                *w = 4; *h = 4;
+                break;
         }
     }
 
     virtual void getAspectRatio(int *aspectX, int *aspectY) const
     {
-        *aspectX = 520;
-        *aspectY = 225;
+        auto [scaleX, scaleY] = CalculatePixmapPixelSizeOnScreen(SCALE);
+        *aspectX = 520 / scaleX;
+        *aspectY = 225 / scaleY;
     }
 
     virtual void getPixelScale(int *scaleX, int *scaleY) const
     {
-        switch(SCALE) {
-            case SCALE_1X1:
-                *scaleX = 1;
-                *scaleY = 1;
-                break;
-            case SCALE_2X2:
-                *scaleX = 2;
-                *scaleY = 2;
-                break;
-        }
+        std::tie(*scaleX, *scaleY) = CalculatePixmapPixelSizeOnScreen(SCALE);
     }
 
     virtual void getNearestNotLarger(int w, int h, int *nearestNotLargerW, int *nearestNotLargerH)
     {
-        switch(SCALE) {
-            case SCALE_1X1:
-                *nearestNotLargerW = w;
-                *nearestNotLargerH = h;
-                break;
-            case SCALE_2X2:
-                *nearestNotLargerW = (w / 2) * 2;
-                *nearestNotLargerH = (h / 2) * 2;
-                break;
-        }
+        auto [scaleX, scaleY] = CalculatePixmapPixelSizeOnScreen(SCALE);
+        *nearestNotLargerW = (w / scaleX) * scaleX;
+        *nearestNotLargerH = (h / scaleY) * scaleY;
     }
 
     virtual bool isMonochrome() const
@@ -208,6 +203,17 @@ public:
     // A single span of pixels on one row
     struct PixmapSpan
     {
+#ifdef VALIDATE
+        PixmapSpan() :
+            bytesAllocated(1234567),
+            start(666),
+            length(31514),
+            pixelDataOffset(8675309)
+        {}
+#endif
+#ifdef VALIDATE
+        uint32_t bytesAllocated;
+#endif
         uint16_t start; // in pixmap pixels, not screen pixels
         uint16_t length; // in pixmap pixels, not screen pixels
         uint32_t pixelDataOffset;
@@ -321,7 +327,12 @@ public:
     {
         uint16_t pixmapStart = span.start / scaleX;
         uint16_t pixmapLength = (span.start + span.length + scaleX - 1) / scaleX - pixmapStart;
-        return {pixmapStart, pixmapLength, 0};
+
+        PixmapSpan newspan;
+        newspan.start = pixmapStart;
+        newspan.length = pixmapLength;
+
+        return newspan;
     }
 
     void windowSpansToPixmapSpans(const std::vector<ScanlineSpan>& windowSpans, int scaleX, std::vector<PixmapSpan>& pixmapSpans)
@@ -353,7 +364,15 @@ public:
             span = candidateSpans[spanIndex];
 
             size_t pixelDataSize = CalculatePixelStorageRequired(FMT, span.length);
+            assert(pixelDataSize > 0);
             span.pixelDataOffset = allocate(pixelDataSize);
+#ifdef VALIDATE
+            span.bytesAllocated = pixelDataSize;
+#endif
+            auto* pixelData = GetPixelData(buffer, span);
+            if(debug) {
+                memset(pixelData, 0, pixelDataSize);
+            }
             if(span.pixelDataOffset == ALLOCATION_FAILED) {
                 dbgprintf("failed to allocate pixmap pixelDataOffset for span %zd\n", spanIndex); // XXX debug
                 return false;
@@ -403,7 +422,10 @@ public:
                 uint16_t newStart = std::min(currentAccumulatedSpan->start, currentNewSpan->start);
                 uint16_t newLength = std::max(currentAccumulatedSpan->start + currentAccumulatedSpan->length, currentNewSpan->start + currentNewSpan->length) - newStart;
                 dbgprintf("new one is {%d, %d}\n", newStart, newLength);
-                *currentAccumulatedSpan = {newStart, newLength};
+                PixmapSpan newspan;
+                newspan.start = newStart;
+                newspan.length = newLength;
+                *currentAccumulatedSpan = newspan;
                 // And move on to the next currentNewSpan
                 currentNewSpan++;
             }
@@ -428,6 +450,9 @@ public:
         }
 
         auto& root = GetRoot(buffer, window.modeRootOffset);
+        if(debug) {
+            memset(&root, 0, sizeof(root));
+        }
         root.width = window.size[0];
         root.height = window.size[1];
 
@@ -459,7 +484,7 @@ public:
 
             // possible optimization is store same merged candidateSpans as long as only one range covers the pixmapRows
             // For now, do the naive thing of filling candidateSpans every time
-            candidateSpans = {};
+            candidateSpans.clear();
 
             // If range intersects this pixmap row, merge range's spans with candidateSpans, and if the range
             // ends within this pixmap row, increment and repeat
@@ -528,20 +553,24 @@ public:
         for(uint32_t spanIndex = 0; spanIndex < rowInfo.spanCount; spanIndex++) {
             auto& span = spans[spanIndex];
 
-            if(startWithinPixmap >= span.start) {
+            if((startWithinPixmap >= span.start) && (startWithinPixmap < span.start + span.length)) {
 
                 const auto* pixelData = GetPixelData(VRAM, span);
                 uint8_t* rowBufferP = rowBuffer;
+                int pixelOnScreen = startOnScreen;
 
-                for(uint32_t pixelWithinWindow = startWithinWindow; pixelWithinWindow < startWithinWindow + lengthInWindowPixels; pixelWithinWindow++, rowBufferP++) {
+                for(uint32_t pixelWithinWindow = startWithinWindow; pixelWithinWindow < startWithinWindow + lengthInWindowPixels; pixelWithinWindow++, rowBufferP++, pixelOnScreen++) {
 
                     uint32_t pixmapSpanPixel = pixelWithinWindow / scaleX - span.start;
 
                     int srcByte = pixmapSpanPixel  / pixelsPerByte;
                     int srcShift = (pixmapSpanPixel % pixelsPerByte) * bitsPerPixel;
+#ifdef VALIDATE
+                    assert(srcByte < span.bytesAllocated);
+#endif
                     uint32_t srcPixel = (pixelData[srcByte] >> srcShift) & pixelBitmask;
 
-                    int phase = (startOnScreen + pixelWithinWindow) % 4;
+                    int phase = pixelOnScreen % 4;
                     uint32_t phaseMask = 0xff << (phase * 8);
                     int phaseShift = phase * 8;
 
@@ -628,6 +657,9 @@ public:
                         int colWithinDest = colWithinWindow - span.start;
                         int destByte = colWithinDest / pixelsPerByte;
                         int destShift = (colWithinDest % pixelsPerByte) * bitsPerPixel;
+#ifdef VALIDATE
+                        assert(destByte < span.bytesAllocated);
+#endif
                         pixelData[destByte] = (pixelData[destByte] & (pixelBitmask << destShift)) | (srcPixel << destShift);
 
                     }
@@ -655,14 +687,18 @@ public:
     // this would still not export that.
 };
 
-static PixmapPalettizedMode<SCALE_2X2, PIXMAP_8_BITS> Pixmap8Bit("NTSC 8-bit palettized pixmap");
+static PixmapPalettizedMode<SCALE_1X1, PIXMAP_4_BITS> Pixmap4Bit1X1("NTSC 4-bit palettized pixmap, 1X1");
+static PixmapPalettizedMode<SCALE_1X1, PIXMAP_8_BITS> Pixmap8Bit1X1("NTSC 8-bit palettized pixmap, 1X1");
+static PixmapPalettizedMode<SCALE_2X2, PIXMAP_8_BITS> Pixmap8Bit2X2("NTSC 8-bit palettized pixmap, 2X2");
 // static PixmapPalettizedMode Pixmap8Bit(PIXMAP_8_BITS, "NTSC 8-bit palettized pixmap", SCALE_2X2);
 // static PixmapMonoMode Grayscale(PIXMAP_8_BITS, "NTSC 8-bit grayscale");
 
 static void RegisterPixmapModes() __attribute__((constructor));
 static void RegisterPixmapModes() 
 {
-    NTSCVideoRegisterDriver(&Pixmap8Bit);
+    NTSCVideoRegisterDriver(&Pixmap4Bit1X1);
+    NTSCVideoRegisterDriver(&Pixmap8Bit1X1);
+    NTSCVideoRegisterDriver(&Pixmap8Bit2X2);
     // NTSCVideoRegisterDriver(&Pixmap4Grays);
 }
 

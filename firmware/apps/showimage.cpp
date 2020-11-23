@@ -30,7 +30,7 @@ Loading for any image format means:
 static Status CheckStatusAndReturn(Status status, const char *command)
 {
     if(status != SUCCESS) {
-        printf("FATAL: %s failed with status %d\n", command, status);
+        printf("showimage: FATAL: %s failed with status %d\n", command, status);
     }
     return status;
 }
@@ -195,37 +195,37 @@ bool loadImageResized(const char *filename, int imageWidth, int imageHeight, flo
     FILE *fp;
     fp = fopen (filename, "rb");
     if(fp == NULL) {
-        printf("ERROR: couldn't open \"%s\" for reading, errno %d\n", filename, errno);
+        printf("showimage: ERROR: couldn't open \"%s\" for reading, errno %d\n", filename, errno);
         return false;
     }
 
     int ppmtype, max, width, height;
 
     if(fscanf(fp, "P%d %d %d %d ", &ppmtype, &width, &height, &max) != 4) {
-        printf("couldn't read PPM header from \"%s\"\n", filename);
+        printf("showimage: couldn't read PPM header from \"%s\"\n", filename);
         fclose(fp);
         return false;
     }
 
     if((ppmtype != 5) && (ppmtype != 6)) {
-        printf("unsupported image type %d for \"%s\"\n", ppmtype, filename);
+        printf("showimage: unsupported image type %d for \"%s\"\n", ppmtype, filename);
         fclose(fp);
         return false;
     }
 
     if(width > MAX_ROW_SIZE) {
-	printf("ERROR: width %d of image in \"%s\" is too large for static row of %u pixels\n",
+	printf("showimage: ERROR: width %d of image in \"%s\" is too large for static row of %u pixels\n",
             width, filename, MAX_ROW_SIZE);
         fclose(fp);
         return false;
     }
 
-    printf("image is %u by %u\n", width, height);
+    printf("showimage: image is %u by %u\n", width, height);
 
     uint8_t (*rowRGB)[3];
     rowRGB = (uint8_t (*)[3]) malloc(sizeof(rowRGB[0]) * MAX_ROW_SIZE);
     if(rowRGB == NULL) {
-        printf("failed to allocate row for pixel data\n");
+        printf("showimage: failed to allocate row for pixel data\n");
         fclose(fp);
         return false;
     }
@@ -235,7 +235,7 @@ bool loadImageResized(const char *filename, int imageWidth, int imageHeight, flo
     rowError = (float (*)[MAX_ROW_SIZE][3])malloc(sizeof(rowError[0]) * 2);
     memset(rowError, 0, sizeof(rowError[0]) * 2);
     if(rowError == NULL) {
-        printf("failed to allocate row for error data\n");
+        printf("showimage: failed to allocate row for error data\n");
         free(rowRGB);
         fclose(fp);
         return false;
@@ -253,7 +253,7 @@ bool loadImageResized(const char *filename, int imageWidth, int imageHeight, flo
     int prevY = -1;
     for(int srcRow = 0; srcRow < height; srcRow++) {
         if(!readRowAsRGB(fp, ppmtype, width, rowRGB)) {
-            printf("ERROR: couldn't read row %d from \"%s\"\n", srcRow, filename);
+            printf("showimage: ERROR: couldn't read row %d from \"%s\"\n", srcRow, filename);
             free(rowError);
             free(rowRGB);
             return false;
@@ -262,10 +262,6 @@ bool loadImageResized(const char *filename, int imageWidth, int imageHeight, flo
         int y = (srcRow * imageHeight + imageHeight - 1) / height;
 
         if(y != prevY) {
-
-            if(y >= imageHeight) {
-                printf("hm, y was >= height, skipped\n");
-            }
 
             float (*errorThisRow)[3] = rowError[currentErrorRow] + 1; // So we can access -1 without bounds check
 
@@ -326,7 +322,7 @@ bool loadImageResized(const char *filename, int imageWidth, int imageHeight, flo
 
 void redrawImage(int myWindow, int x, int y, int w, int h, size_t rowBytes, int windowWidth, int windowHeight, uint8_t* imageBuffer)
 {
-    printf("redraw to %d x %d at %d, %d\n", w, h, x, y);
+    printf("showimage: redraw to %d x %d at %d, %d\n", w, h, x, y);
     WindowPixmapDrawRect(myWindow, 0, 0, windowWidth, windowHeight, rowBytes, imageBuffer);
     /* cheat and redraw everything */
 }
@@ -334,7 +330,7 @@ void redrawImage(int myWindow, int x, int y, int w, int h, size_t rowBytes, int 
 void writeImage(const char *filename, float (*palette)[3], int paletteSize, bool chosenIsColor, PixmapFormat chosenFormat, int width, int height, const uint8_t *imageBuffer)
 {
     if(chosenFormat != PIXMAP_8_BITS) {
-        printf("writeImage: format %d not supported\n", chosenFormat);
+        printf("showimage: writeImage: format %d not supported\n", chosenFormat);
         return;
     }
     FILE *fp = fopen(filename, "wb");
@@ -352,10 +348,15 @@ void writeImage(const char *filename, float (*palette)[3], int paletteSize, bool
     fclose(fp);
 }
 
+// XXX HACK DEBUG
+extern "C" {
+    extern Status HackWindowThingy();
+};
+
 static int AppShowImage(int argc, char **argv)
 {
     const char *filename;
-    int requestedModeBits = 8;
+    int requestedModeBits = 0;
     bool requestedColor = true;
 
     int myWindow;
@@ -425,7 +426,7 @@ static int AppShowImage(int argc, char **argv)
                     case PIXMAP_4_BITS: bits = 4; break;
                     case PIXMAP_8_BITS: bits = 8; break;
                 }
-                if((requestedColor == isColor) && (requestedModeBits >= bits)) {
+                if((requestedColor == isColor) && (bits >= requestedModeBits)) {
                     // matches the requirements
                     if((chosenMode == -1) || (bits < chosenBits)) {
                         // better than the previous choice (for memory use)
@@ -447,7 +448,7 @@ static int AppShowImage(int argc, char **argv)
     }
 
     if(chosenMode == -1) {
-        printf("couldn't find %s mode matching %d bits per pixel \n", requestedColor ? "color" : "grayscale", requestedModeBits);
+        printf("showimage: couldn't find %s mode matching %d bits per pixel \n", requestedColor ? "color" : "grayscale", requestedModeBits);
         usage(appName);
         return COMMAND_FAILED;
     }
@@ -455,31 +456,28 @@ static int AppShowImage(int argc, char **argv)
     float (*palette)[3];
     palette = (float (*)[3])malloc(sizeof(palette[0]) * 256);
     if(palette == NULL) {
-        printf("failed to allocate palette\n");
+        printf("showimage: failed to allocate palette\n");
         return COMMAND_FAILED;
     }
     int paletteSize;
     if(chosenIsColor) {
         if(!calculatePalette(filename, chosenPalette, palette, &paletteSize)) {
-            printf("couldn't calculate palette\n");
+            printf("showimage: couldn't calculate palette\n");
             return COMMAND_FAILED;
         }
     }
 
     CHECK_FAIL(WindowCreate(chosenMode, "showimage", nullptr, &myWindow));
-    {
-        uint8_t (*palette8)[3] = (uint8_t (*)[3])malloc(sizeof(uint8_t[3]) * 256);
-        if(palette == NULL) {
-            printf("failed to allocate palette\n");
-            return COMMAND_FAILED;
-        }
-        for(int i = 0; i < paletteSize; i++) {
-            palette8[i][0] = palette[i][0] * 255.0f;
-            palette8[i][1] = palette[i][1] * 255.0f;
-            palette8[i][2] = palette[i][2] * 255.0f;
-        }
-        CHECK_FAIL(WindowPixmapSetPalette(myWindow, PALETTE0, palette8));
-        free(palette8);
+
+    uint8_t (*palette8)[3] = (uint8_t (*)[3])malloc(sizeof(uint8_t[3]) * 256);
+    if(palette == NULL) {
+        printf("showimage: failed to allocate palette\n");
+        return COMMAND_FAILED;
+    }
+    for(int i = 0; i < paletteSize; i++) {
+        palette8[i][0] = palette[i][0] * 255.0f;
+        palette8[i][1] = palette[i][1] * 255.0f;
+        palette8[i][2] = palette[i][2] * 255.0f;
     }
 
     bool quit = false;
@@ -508,22 +506,23 @@ static int AppShowImage(int argc, char **argv)
                     try {
                         imageBuffer = allocateImage(windowWidth, windowHeight, chosenFormat, &rowBytes);
                     } catch (std::bad_alloc& ba) {
-                        printf("Out of memory.\n"); fflush(stdout);
+                        printf("showimage: Out of memory.\n"); fflush(stdout);
                         return COMMAND_FAILED;
                     }
                     if(!loadImageResized(filename, windowWidth, windowHeight, palette, paletteSize, chosenIsColor, chosenFormat, imageBuffer)) {
-                        printf("Couldn't load image resized.\n"); fflush(stdout);
+                        printf("showimage: Couldn't load image resized.\n"); fflush(stdout);
                         return COMMAND_FAILED;
-                    }
-                    for(int i = 0; i < windowHeight; i++) {
-                        CHECK_FAIL(WindowPixmapSetRowPalette(myWindow, i, PALETTE0));
                     }
                     break;
                 }
                 case Event::WINDOW_REDRAW: {
                     const auto& redraw = ev.windowRedraw;
                     int pixmapLeft, pixmapTop, pixmapWidth, pixmapHeight;
+                    CHECK_FAIL(WindowPixmapSetPalette(myWindow, PALETTE0, palette8));
                     WindowRectToPixmapRect(redraw.left, redraw.top, redraw.width, redraw.height, pixmapScaleX, pixmapScaleY, &pixmapLeft, &pixmapTop, &pixmapWidth, &pixmapHeight);
+                    for(int i = pixmapTop; i < pixmapTop + pixmapHeight; i++) {
+                        CHECK_FAIL(WindowPixmapSetRowPalette(myWindow, i, PALETTE0));
+                    }
                     redrawImage(myWindow, pixmapLeft, pixmapTop, pixmapWidth, pixmapHeight, rowBytes, windowWidth, windowHeight, imageBuffer);
                     break;
                 }
@@ -533,6 +532,7 @@ static int AppShowImage(int argc, char **argv)
                 }
             }
         }
+        HackWindowThingy();
         fflush(stdout);
     }
 

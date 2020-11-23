@@ -480,6 +480,7 @@ void NTSCVideoSubsystem::setDebugRow(int row, const char *rowText)
 
 // XXX bringup
 constexpr size_t VRAMsize = 128 * 1024;
+std::mutex VRAMmutex;
 uint8_t VRAMbuffer[VRAMsize];
 uint8_t *VRAM = VRAMbuffer;
 int VRAMtop = 0;
@@ -769,7 +770,7 @@ bool NTSCVideoSubsystem::attemptWindowConfiguration(std::vector<Window>& windows
     }
 
     VRAMtop = 0;
-    uint8_t stagingVRAM[VRAMsize];
+    static uint8_t stagingVRAM[VRAMsize];
 
     uint32_t rootOffset = allocateVRAM(sizeof(NTSCRoot));
     assert(rootOffset == RootOffset);
@@ -855,15 +856,18 @@ bool NTSCVideoSubsystem::attemptWindowConfiguration(std::vector<Window>& windows
             windowsBackToFront[windowIndex].modeRootOffset = previousModeOffsets[windowIndex];
         }
     } else {
-        // XXX this REALLY needs to happen during VBLANK
+        // XXX this REALLY needs to happen during VBLANK i.e. when VRAM won't be accessed by video subsystem
+        std::scoped_lock<std::mutex> lk(VRAMmutex);
         std::copy(stagingVRAM, stagingVRAM + sizeof(stagingVRAM), VRAM);
     }
+    if(true) dumpWindowConfiguration(VRAM);
 
     return !failed;
 }
 
 void NTSCVideoSubsystem::fillRow(int row, uint8_t* rowBuffer)
 {
+    std::scoped_lock<std::mutex> lk(VRAMmutex);
     uint32_t *rowWords = (uint32_t*)rowBuffer;
     for(int x = 0; x < ScreenWidth / 4; x++) {
         rowWords[x] = backgroundColorWave; // Should try to only fill areas without windows
@@ -884,7 +888,7 @@ void NTSCVideoSubsystem::fillRow(int row, uint8_t* rowBuffer)
                 const auto& span = spans[s];
                 auto& window = windows[span.windowIndex];
                 NTSCModeDriver* modedriver = drivers[window.mode];
-                modedriver->fillRow(window.modeRootOffset, span.start, span.start - window.position[0], span.count, row, row - window.position[1], rowBuffer + 160 + span.start);
+                modedriver->fillRow(window.modeRootOffset, span.start, span.start - window.position[0], span.count, row, row - window.position[1], rowBuffer + span.start);
             }
         }
     }
