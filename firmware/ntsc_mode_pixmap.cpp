@@ -434,7 +434,7 @@ public:
         for(;currentNewSpan < newSpans.end(); currentNewSpan++) {
             dbgprintf("add span {%d, %d}\n",
                 currentNewSpan->start, currentNewSpan->length);
-            accumulatedSpans.insert(currentAccumulatedSpan, *currentNewSpan);
+            accumulatedSpans.insert(accumulatedSpans.end(), *currentNewSpan);
         }
     }
 
