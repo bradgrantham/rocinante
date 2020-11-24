@@ -9,8 +9,8 @@
 #include <videomodeinternal.h>
 #include <ntsc_constants.h>
 
-constexpr bool debug = true;
-#define VALIDATE
+constexpr bool debug = false;
+#undef VALIDATE
 
 enum PixelScale { SCALE_1X1, SCALE_2X2, SCALE_1X2, SCALE_4X4 };
 
@@ -61,17 +61,19 @@ int indent = 0;
 
 void dbgprintf(const char *fmt, ...)
 {
-    static FILE *logfile = nullptr;
-    if(!logfile) {
-        logfile = fopen("debug.out", "w");
-    }
+    if(debug) {
+        static FILE *logfile = nullptr;
+        if(!logfile) {
+            logfile = fopen("debug.out", "w");
+        }
 
-    fprintf(logfile, "%*s", indent, "");
-    va_list args;
-    va_start(args, fmt);
-    vfprintf(logfile, fmt, args);
-    va_end(args);
-    fflush(logfile);
+        fprintf(logfile, "%*s", indent, "");
+        va_list args;
+        va_start(args, fmt);
+        vfprintf(logfile, fmt, args);
+        va_end(args);
+        fflush(logfile);
+    }
 }
 
 #else
@@ -82,7 +84,7 @@ void dbgprintf(const char *fmt, ...)
 
 struct dbgScope
 {
-    dbgScope(const char *funcName) { dbgprintf("%s\n", funcName); indent += 4; }
+    dbgScope(const char *funcName) { if(debug) { dbgprintf("%s\n", funcName); indent += 4; } }
     ~dbgScope() { indent -= 4; }
 };
 
@@ -523,7 +525,7 @@ public:
 
         *enqueueExposedRedrawEvents = true;
 
-        if(true) {
+        if(debug) {
             // dump for debugging
             std::string fname = "pixmap_" + std::to_string(window.id) + ".out";
             dumpPixmapDescriptorTree(buffer, window.modeRootOffset, fname.c_str());
@@ -667,12 +669,12 @@ public:
             }
         }
 
-        if(true) {
+        if(debug) {
             // dump for debugging
             std::string fname = "pixmap2_" + std::to_string(window.id) + ".out";
             dumpPixmapDescriptorTree(VRAM, window.modeRootOffset, fname.c_str());
         }
-        if(true) {
+        if(debug) {
 
             // dump for debugging
             std::string fname = "pixmap_drawrect_" + std::to_string(window.id) + ".ppm";

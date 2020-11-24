@@ -492,9 +492,8 @@ size_t GetVRAMSize()
 
 uint32_t allocateVRAM(size_t size)
 {
-    printf("allocateVRAM(%zd) at %d\n", size, VRAMtop); fflush(stdout);
     if(VRAMtop + size >= GetVRAMSize()) {
-        printf(" --> failed\n"); fflush(stdout);
+        printf("allocateVRAM(%zd) failed\n", size); fflush(stdout);
         return VideoModeDriver::ALLOCATION_FAILED;
     }
     int where = VRAMtop;
@@ -849,7 +848,7 @@ bool NTSCVideoSubsystem::attemptWindowConfiguration(std::vector<Window>& windows
             printf("reallocateForWindow failed\n");
         }
     }
-    if(true) dumpWindowConfiguration(stagingVRAM);
+    if(false) dumpWindowConfiguration(stagingVRAM);
 
     if(failed) {
         for(int windowIndex = 0; windowIndex < previousModeOffsets.size(); windowIndex++) {
@@ -860,7 +859,7 @@ bool NTSCVideoSubsystem::attemptWindowConfiguration(std::vector<Window>& windows
         std::scoped_lock<std::mutex> lk(VRAMmutex);
         std::copy(stagingVRAM, stagingVRAM + sizeof(stagingVRAM), VRAM);
     }
-    if(true) dumpWindowConfiguration(VRAM);
+    if(false) dumpWindowConfiguration(VRAM);
 
     return !failed;
 }
