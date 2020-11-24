@@ -14,13 +14,29 @@ Go back and make sure
     convert this doc to Markdown
 
 to do 
-    make validation routines against dumbest possible implementation
-        writing to pixmap spans during drawrect
-        pixmap spans and pixmap data allocations
-        whether whichPalette and palette data was initialized at time of fillRow
-        window spans
-    hosted: 912 samples
+    what's causing that crash?
+    why is !debug much lower quality than debug? should be the same!
+    reduce black screen flashing
+        new entrypoints moveAllocation and releaseAllocation
+        copy over palette and whichPalette
+        copy as much pixel data as possible
+        probably need a new REDRAW which is non-rect metadata
+            make REDRAW into REDRAW_RECTANGLE
+            new REDRAW_WINDOW_DATA
+    interactive window test
+        implement rubberband
+        implement pointer draw
+        implement some key processing (at least Meta)
+            test what the keycodes are in USB - do they match GLFW?
+        Meta + click = drag
+            click in window: gMovingWindow = windowID
+            if(gMovingWindow != NO_WINDOW) { motion : attemptConfiguration, move rubberband on success; release : }
+        implement border
+        implement resize
+    fullscreen
+    hosted: 912 samples...?
     hosted: get phase with row offset based on ROW_SAMPLES
+    systemwide named variables & config program
 
 ----------------------------
 

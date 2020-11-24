@@ -1345,6 +1345,7 @@ std::map<int, ScancodeASCIIRecord> ScancodeToASCII = {
 
 static void key(GLFWwindow *window, int key, int scancode, int action, int mods)
 {
+    printf("key = %d, action = %d\n", scancode, action);
     static bool super_down = false;
     static bool control_down = false;
     static bool shift_down = false;
@@ -1352,6 +1353,7 @@ static void key(GLFWwindow *window, int key, int scancode, int action, int mods)
 
     if((action == GLFW_PRESS) || (action == GLFW_REPEAT)) {
         if(key == GLFW_KEY_RIGHT_SUPER || key == GLFW_KEY_LEFT_SUPER) {
+            printf("super down\n");
             super_down = true;
         } else if(key == GLFW_KEY_RIGHT_CONTROL || key == GLFW_KEY_LEFT_CONTROL) {
             control_down = true;
@@ -1439,6 +1441,31 @@ static void resize(GLFWwindow *window, int x, int y)
     glViewport(0, 0, fbw, fbh);
 }
 
+std::mutex systemEventMutex;
+std::deque<Event> systemEvents;
+
+void SystemEnqueueEvent(const Event& e)
+{
+    std::scoped_lock<std::mutex> lk(systemEventMutex);
+    systemEvents.push_back(e);
+}
+
+void ProcessSystemEvents()
+{
+    std::scoped_lock<std::mutex> lk(systemEventMutex);
+    while(systemEvents.size() > 0) {
+        auto& e = systemEvents.front();
+        WindowSystemEnqueueEvent(e);
+        systemEvents.pop_front();
+    }
+}
+
+/* Called from within a running process */
+void ProcessYield(void)
+{
+    ProcessSystemEvents();
+}
+
 static void button(GLFWwindow *window, int b, int action, int mods)
 {
     double x, y;
@@ -1468,14 +1495,14 @@ static void motion(GLFWwindow *window, double x, double y)
         gOldMouseY = y;
     }
 
+    Event ev { Event::MOUSE_MOVE };
+    ev.mouseMove.dx = x - gOldMouseX;
+    ev.mouseMove.dy = y - gOldMouseY;
+    SystemEnqueueEvent(ev);
+
     gOldMouseX = x;
     gOldMouseY = y;
 
-    if(gButtonPressed == 1) {
-        // TODO motion while dragging
-    } else {
-        // TODO motion while not dragging
-    }
     redraw(window);
 }
 

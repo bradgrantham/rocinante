@@ -184,6 +184,8 @@ void NTSCVideoRegisterDriver(NTSCModeDriver* driver);
 extern uint8_t *VRAM;
 size_t GetVRAMSize();
 
+void WindowSystemEnqueueEvent(const Event& ev);
+
 };
 
 template <typename T>

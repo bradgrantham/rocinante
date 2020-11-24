@@ -485,6 +485,11 @@ static int AppShowImage(int argc, char **argv)
         Event ev;
         while(EventPoll(&ev)) {
             switch(ev.eventType) {
+                case Event::MOUSE_MOVE: {
+                    const auto& move = ev.mouseMove;
+                    printf("mouse %d %d\n", move.dx, move.dy);
+                    break;
+                }
                 // We don't check the window ID because we only have the one
                 case Event::WINDOW_STATUS: {
                     const auto& status = ev.windowStatus;
@@ -532,6 +537,7 @@ static int AppShowImage(int argc, char **argv)
                 }
             }
         }
+        ProcessYield();
         HackWindowThingy();
         fflush(stdout);
     }

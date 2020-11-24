@@ -223,7 +223,7 @@ Status WindowCreate(int modeIndex, const char *name, const int *parameters, int 
 Status HackWindowThingy()
 {
     static int counter = 0;
-    if(((counter++) % 10000000) != 0) {
+    if(((counter++) % 100000) != 0) {
         return SUCCESS;
     }
     static int deltaX = 1, deltaY = 1;
@@ -276,10 +276,6 @@ Status HackWindowThingy()
     }
 
     return SUCCESS;
-}
-
-void ProcessYield(void)
-{
 }
 
 Status WindowClose(int windowID)
@@ -392,6 +388,12 @@ int EventPoll(Event* ev)
     }
     eventQueue.deqNoCheck(*ev);
     return 1;
+}
+
+void WindowSystemEnqueueEvent(const Event& ev)
+{
+    /* if ev = click and Meta is pressed, set window move state */
+    enqueueOrSetEventsLost(ev);
 }
 
 };
