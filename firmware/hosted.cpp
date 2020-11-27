@@ -756,6 +756,11 @@ void NTSCVideoSubsystem::dumpWindowConfiguration(uint8_t *vram)
 
 bool NTSCVideoSubsystem::attemptWindowConfiguration(std::vector<Window>& windowsBackToFront)
 {
+    for(const auto& window: windowsBackToFront) {
+        if((window.position[0] % 4 != 0) || ((window.position[0] + window.size[0]) % 4 != 0)) {
+            return false;
+        }
+    }
     std::vector<ScanlineRange> scanlineRanges;
     WindowsToRanges(ScreenWidth, ScreenHeight, windowsBackToFront, scanlineRanges);
 
@@ -851,14 +856,24 @@ bool NTSCVideoSubsystem::attemptWindowConfiguration(std::vector<Window>& windows
     if(false) dumpWindowConfiguration(stagingVRAM);
 
     if(failed) {
+
         for(int windowIndex = 0; windowIndex < previousModeOffsets.size(); windowIndex++) {
             windowsBackToFront[windowIndex].modeRootOffset = previousModeOffsets[windowIndex];
         }
+
     } else {
-        // XXX this REALLY needs to happen during VBLANK i.e. when VRAM won't be accessed by video subsystem
+
+        for(int windowIndex = 0; windowIndex < previousModeOffsets.size(); windowIndex++) {
+            auto& window = windowsBackToFront[windowIndex];
+            VideoModeDriver* modedriver = drivers[window.mode];
+            modedriver->moveWindowAllocation(window, VRAM, previousModeOffsets[windowIndex], stagingVRAM, windowsBackToFront[windowIndex].modeRootOffset);
+        }
         std::scoped_lock<std::mutex> lk(VRAMmutex);
+        // XXX this REALLY needs to happen during VBLANK i.e. when VRAM won't be accessed by video subsystem
         std::copy(stagingVRAM, stagingVRAM + sizeof(stagingVRAM), VRAM);
+
     }
+
     if(false) dumpWindowConfiguration(VRAM);
 
     return !failed;
@@ -1495,8 +1510,8 @@ static void motion(GLFWwindow *window, double x, double y)
     }
 
     Event ev { Event::MOUSE_MOVE };
-    ev.mouseMove.dx = x - gOldMouseX;
-    ev.mouseMove.dy = y - gOldMouseY;
+    ev.mouseMove.x = (int) x;
+    ev.mouseMove.y = (int) y;
     SystemEnqueueEvent(ev);
 
     gOldMouseX = x;

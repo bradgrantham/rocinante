@@ -76,12 +76,21 @@ struct VideoModeDriver
     if vram is nullptr and oldOffset is 0xFFFFFFFF, then window didn't exist before
     if driver sets enqueueRedrawEvents, then subsystem should enqueue REDRAW for at least all exposed regions
         a backing store window like advanced Pixmap or Text or Wolfenstein could set to false;
+    ranges might be empty (window still exists but is not visible)
     */
     static constexpr uint32_t ALLOCATION_FAILED = 0xFFFFFFFF;
     virtual bool reallocateForWindow(Window& window,
         const std::vector<ScanlineRange>& ranges,
         void* stagingVRAM, VideoSubsystemAllocateFunc allocate,
         bool *enqueueExposedRedrawEvents) = 0;
+
+    // called to move as much data from old window allocation to new allocation
+    // called even if window is not visible (to preserve palettes, etc)
+    virtual void moveWindowAllocation(Window& window, void* oldVRAM, uint32_t oldRoot, void *newVRAM, uint32_t newRoot) = 0;
+
+    // called if the window is deleted; no need to do anything if
+    // there are no real memory pointers, so provide empty body
+    virtual void freeWindowAllocation(Window& window, const void* oldVRAM, uint32_t oldRoot) { }
 };
 
 

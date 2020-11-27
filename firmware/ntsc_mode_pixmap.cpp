@@ -14,7 +14,7 @@ constexpr bool debug = false;
 
 enum PixelScale { SCALE_1X1, SCALE_2X2, SCALE_1X2, SCALE_4X4 };
 
-std::tuple<int, int> CalculatePixmapPixelSizeOnScreen(PixelScale scale) 
+static std::tuple<int, int> CalculatePixmapPixelSizeOnScreen(PixelScale scale) 
 {
     switch(scale) {
         case SCALE_1X1: return {1, 1}; break;
@@ -24,14 +24,14 @@ std::tuple<int, int> CalculatePixmapPixelSizeOnScreen(PixelScale scale)
     }
 }
 
-std::tuple<int, int> CalculatePixmapSizeFromWindow(int windowWidth, int windowHeight, int scaleX, int scaleY) 
+static std::tuple<int, int> CalculatePixmapSizeFromWindow(int windowWidth, int windowHeight, int scaleX, int scaleY) 
 {
     int pixmapWidth = (windowWidth + scaleX - 1) / scaleX;
     int pixmapHeight = (windowHeight + scaleY - 1) / scaleY;
     return {pixmapWidth, pixmapHeight};
 }
 
-size_t CalculatePixelStorageRequired(PixmapFormat fmt, int pixmapPixels)
+static size_t CalculatePixelStorageRequired(PixmapFormat fmt, int pixmapPixels)
 {
     switch(fmt) {
         case PIXMAP_1_BIT: return (pixmapPixels + 7) / 8; break;
@@ -42,13 +42,30 @@ size_t CalculatePixelStorageRequired(PixmapFormat fmt, int pixmapPixels)
 }
 
 // bitsPerPixel, pixelsPerByte, pixelBitmask
-std::tuple<int, int, int> CalculateBitSizeOfPixel(PixmapFormat fmt)
+static std::tuple<int, int, int> CalculateBitSizeOfPixel(PixmapFormat fmt)
 {
     switch(fmt) {
         case PIXMAP_1_BIT: return {1, 8, 0x1}; break;
         case PIXMAP_2_BITS: return {2, 4, 0x3}; break;
         case PIXMAP_4_BITS: return {4, 2, 0xF}; break;
         case PIXMAP_8_BITS: return {8, 1, 0xFF}; break;
+    }
+}
+
+static void CopyPixelRow(PixmapFormat fmt, uint8_t *srcPixels, int startWithinSrc, uint8_t* dstPixels, int startWithinDst, int count)
+{
+    auto [bitsPerPixel, pixelsPerByte, pixelBitmask] = CalculateBitSizeOfPixel(fmt);
+
+    for(int pixel = 0; pixel < count; pixel++) {
+        int colWithinSource = startWithinSrc + pixel;
+        int srcByte = colWithinSource / pixelsPerByte;
+        int srcShift = (colWithinSource % pixelsPerByte) * bitsPerPixel;
+        int srcPixel = (srcPixels[srcByte] >> srcShift) & pixelBitmask;
+
+        int colWithinDest = startWithinDst + pixel;
+        int destByte = colWithinDest / pixelsPerByte;
+        int destShift = (colWithinDest % pixelsPerByte) * bitsPerPixel;
+        dstPixels[destByte] = (dstPixels[destByte] & (pixelBitmask << destShift)) | (srcPixel << destShift);
     }
 }
 
@@ -372,9 +389,7 @@ public:
             span.bytesAllocated = pixelDataSize;
 #endif
             auto* pixelData = GetPixelData(buffer, span);
-            if(debug) {
-                memset(pixelData, 0, pixelDataSize);
-            }
+            memset(pixelData, 0, pixelDataSize); // XXX REMOVE WHEN MOVE IS IMPLEMENTED
             if(span.pixelDataOffset == ALLOCATION_FAILED) {
                 dbgprintf("failed to allocate pixmap pixelDataOffset for span %zd\n", spanIndex); // XXX debug
                 return false;
@@ -534,6 +549,31 @@ public:
         return true;
     }
 
+    // Called to move as much data from old window allocation to
+    // new allocation, just to improve flashing of window data
+    // Called even if window is not visible (to preserve palettes, etc)
+    // But expect visible window area to also precipitate a REDRAW_RECTANGLE
+    // It might be that drivers can turn out to always preserve
+    // metadata, in which case we can drop the REPAIR event.
+    virtual void moveWindowAllocation(Window& window, void* oldVRAM, uint32_t oldRootIndex, void *newVRAM, uint32_t newRootIndex)
+    {
+        dbgScope newScope(__FUNCTION__);
+
+        const auto& oldRoot = GetRoot(oldVRAM, oldRootIndex);
+        auto& newRoot = GetRoot(newVRAM, newRootIndex);
+
+        memcpy(newRoot.palettes, oldRoot.palettes, sizeof(newRoot.palettes));
+
+        for(int rowIndex = 0; rowIndex < std::min(newRoot.height, oldRoot.height); rowIndex++) {
+            auto& newRow = GetRows(newVRAM, newRoot)[rowIndex];
+            const auto& oldRow = GetRows(oldVRAM, oldRoot)[rowIndex];
+            newRow.whichPalette = oldRow.whichPalette;
+
+            
+        }
+            // for each new span copy data from old span
+    }
+
     // caller guarantees that pixel span to be drawn is 1:1 with a span provided in reallocate
     virtual void fillRow(uint32_t rootOffset, uint32_t startOnScreen /* for color phase */, uint32_t startWithinWindow, uint32_t lengthInWindowPixels, uint32_t rowOnScreen /* for flipping ColorBurst */, uint32_t rowWithinWindow, uint8_t *rowBuffer)
     {
@@ -627,8 +667,6 @@ public:
     virtual void drawPixelRect(Window& window,
         int left, int top, int width, int height, size_t rowBytes, uint8_t *source)
     {
-        auto [bitsPerPixel, pixelsPerByte, pixelBitmask] = CalculateBitSizeOfPixel(FMT);
-
         auto& root = GetRoot(VRAM, window.modeRootOffset);
         auto* rowArray = GetRows(VRAM, root);
 
@@ -649,22 +687,7 @@ public:
 
                     auto* pixelData = GetPixelData(VRAM, span);
 
-                    // XXX this should be a utility routine, like CopyRow or some such
-                    for(int colWithinWindow = start; colWithinWindow < stop; colWithinWindow++) {
-                        int colWithinSource = colWithinWindow - left;
-                        int srcByte = colWithinSource / pixelsPerByte;
-                        int srcShift = (colWithinSource % pixelsPerByte) * bitsPerPixel;
-                        int srcPixel = (srcRow[srcByte] >> srcShift) & pixelBitmask;
-
-                        int colWithinDest = colWithinWindow - span.start;
-                        int destByte = colWithinDest / pixelsPerByte;
-                        int destShift = (colWithinDest % pixelsPerByte) * bitsPerPixel;
-#ifdef VALIDATE
-                        assert(destByte < span.bytesAllocated);
-#endif
-                        pixelData[destByte] = (pixelData[destByte] & (pixelBitmask << destShift)) | (srcPixel << destShift);
-
-                    }
+                    CopyPixelRow(FMT, srcRow, start - left, pixelData, start - span.start, stop - start);
                 }
             }
         }

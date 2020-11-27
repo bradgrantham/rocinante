@@ -13,16 +13,16 @@ Go back and make sure
     are VideoGetModeCount() and VideoModeGetType() inconsistent? - consider, make consistent, record policy here
     convert this doc to Markdown
 
-to do 
-    what's causing that crash?
-    why is !debug much lower quality than debug? should be the same!
-    reduce black screen flashing
+to do
+    reduce black screen and garbage flashing
         new entrypoints moveAllocation and releaseAllocation
-        copy over palette and whichPalette
-        copy as much pixel data as possible
-        probably need a new REDRAW which is non-rect metadata
-            make REDRAW into REDRAW_RECTANGLE
-            new REDRAW_WINDOW_DATA
+            moveAllocation from nullptr = initialize data instead of move
+        moveAllocation
+            copy over palette and whichPalette
+            copy as much pixel data as possible
+        new REPAIR_METADATA - should window be required to preserve metadata?
+        should reallocate take a vector of Event to fill in?
+    WINDOW_STATUS should be a bitfield?
     interactive window test
         implement rubberband
         implement pointer draw
@@ -33,6 +33,8 @@ to do
             if(gMovingWindow != NO_WINDOW) { motion : attemptConfiguration, move rubberband on success; release : }
         implement border
         implement resize
+    fix NTSC color interpretation
+    fix NTSC window moves to multiples of 4 samples?
     fullscreen
     hosted: 912 samples...?
     hosted: get phase with row offset based on ROW_SAMPLES

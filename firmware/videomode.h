@@ -174,8 +174,8 @@ typedef enum WindowParameter
     // WINDOW_SHAPE = 5, /* followed by { width, height, #rows, {#spans, {start, length}[#spans] }[#rows] } ; values are relative to window position */
 } WindowParameter;
 
-// Always produces "RESIZE" and "REDRAW" events - get width and height that way
-// Subsequent moves and stack order changes *might* not REDRAW - the system could decide to keep a backing-store of the image.
+// Always produces "RESIZE" and "REDRAW_RECT" events - get width and height that way
+// Subsequent moves and stack order changes *might* not REDRAW_RECT - the system could decide to keep a backing-store of the image.
 Status WindowCreate(int mode, const char *name, const int *parameters, int *window);
 
 Status WindowSetTitle(int window, const char *name);
@@ -192,7 +192,7 @@ void WindowRectToPixmapRect(int left, int top, int width, int height, int scaleX
 // Event stuff should be in a separate header
 
 struct MouseMoveEvent {
-    int dx, dy;
+    int x, y;
 };
 
 struct MouseButtonPressEvent {
@@ -212,10 +212,14 @@ struct WindowResizeEvent {
     int width, height;
 };
 
-struct WindowRedrawEvent {
+struct WindowRedrawRectEvent {
     int window;
     int left, top;
     int width, height;
+};
+
+struct WindowRepairMetadataEvent {
+    int window;
 };
 
 struct WindowStatusEvent {
@@ -238,7 +242,8 @@ struct Event
         MOUSE_BUTTONRELEASE,
         KEYBOARD_RAW,
         WINDOW_RESIZE,
-        WINDOW_REDRAW,
+        WINDOW_REDRAW_RECT,
+        WINDOW_REPAIR_METADATA,
         WINDOW_STATUS,
     } eventType;
     union {
@@ -247,7 +252,8 @@ struct Event
         MouseButtonReleaseEvent mouseButtonRelease;
         KeyboardRawEvent keyboardRaw;
         WindowResizeEvent windowResize;
-        WindowRedrawEvent windowRedraw;
+        WindowRedrawRectEvent windowRedrawRect;
+        WindowRepairMetadataEvent windowRepairMetadata;
         WindowStatusEvent windowStatus;
         uint8_t reserved[64];
     };

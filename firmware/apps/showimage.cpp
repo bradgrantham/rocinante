@@ -487,7 +487,7 @@ static int AppShowImage(int argc, char **argv)
             switch(ev.eventType) {
                 case Event::MOUSE_MOVE: {
                     const auto& move = ev.mouseMove;
-                    printf("mouse %d %d\n", move.dx, move.dy);
+                    printf("mouse %d %d\n", move.x, move.y);
                     break;
                 }
                 // We don't check the window ID because we only have the one
@@ -506,13 +506,16 @@ static int AppShowImage(int argc, char **argv)
                 case Event::WINDOW_RESIZE: {
                     const auto& resize = ev.windowResize;
                     delete[] imageBuffer;
-                    int dummyX, dummyY;
-                    WindowRectToPixmapRect(0, 0, resize.width, resize.height, pixmapScaleX, pixmapScaleY, &dummyX, &dummyY, &windowWidth, &windowHeight);
+                    int windowX, windowY;
+                    WindowRectToPixmapRect(0, 0, resize.width, resize.height, pixmapScaleX, pixmapScaleY, &windowX, &windowY, &windowWidth, &windowHeight);
                     try {
                         imageBuffer = allocateImage(windowWidth, windowHeight, chosenFormat, &rowBytes);
                     } catch (std::bad_alloc& ba) {
                         printf("showimage: Out of memory.\n"); fflush(stdout);
                         return COMMAND_FAILED;
+                    }
+                    for(int i = windowY; i < windowY + windowHeight; i++) {
+                        CHECK_FAIL(WindowPixmapSetRowPalette(myWindow, i, PALETTE0));
                     }
                     if(!loadImageResized(filename, windowWidth, windowHeight, palette, paletteSize, chosenIsColor, chosenFormat, imageBuffer)) {
                         printf("showimage: Couldn't load image resized.\n"); fflush(stdout);
@@ -520,8 +523,12 @@ static int AppShowImage(int argc, char **argv)
                     }
                     break;
                 }
-                case Event::WINDOW_REDRAW: {
-                    const auto& redraw = ev.windowRedraw;
+                case Event::WINDOW_REPAIR_METADATA: {
+                    CHECK_FAIL(WindowPixmapSetPalette(myWindow, PALETTE0, palette8));
+                    break;
+                }
+                case Event::WINDOW_REDRAW_RECT: {
+                    const auto& redraw = ev.windowRedrawRect;
                     int pixmapLeft, pixmapTop, pixmapWidth, pixmapHeight;
                     CHECK_FAIL(WindowPixmapSetPalette(myWindow, PALETTE0, palette8));
                     WindowRectToPixmapRect(redraw.left, redraw.top, redraw.width, redraw.height, pixmapScaleX, pixmapScaleY, &pixmapLeft, &pixmapTop, &pixmapWidth, &pixmapHeight);

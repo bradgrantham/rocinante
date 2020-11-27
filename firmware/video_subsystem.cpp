@@ -207,14 +207,17 @@ Status WindowCreate(int modeIndex, const char *name, const int *parameters, int 
     }
     {
         Event ev { Event::WINDOW_RESIZE };
-        ev.windowResize.window = window.id;
-        ev.windowResize = { 0, window.size[0], window.size[1] };
+        ev.windowResize = { window.id, window.size[0], window.size[1] };
         enqueueOrSetEventsLost(ev);
     }
     {
-        Event ev { Event::WINDOW_REDRAW };
-        ev.windowRedraw.window = window.id;
-        ev.windowRedraw = { 0, 0, 0, window.size[0], window.size[1] };
+        Event ev { Event::WINDOW_REDRAW_RECT };
+        ev.windowRedrawRect = { window.id, 0, 0, window.size[0], window.size[1] };
+        enqueueOrSetEventsLost(ev);
+    }
+    {
+        Event ev { Event::WINDOW_REPAIR_METADATA };
+        ev.windowRepairMetadata = { window.id };
         enqueueOrSetEventsLost(ev);
     }
     return SUCCESS;
@@ -252,26 +255,27 @@ Status HackWindowThingy()
 
     {
         Event ev { Event::WINDOW_STATUS };
-        ev.windowStatus.window = window.id;
-        ev.windowStatus.status = WindowStatusEvent::WINDOWED;
+        ev.windowStatus = { window.id, WindowStatusEvent::WINDOWED };
         enqueueOrSetEventsLost(ev);
     }
     {
         Event ev { Event::WINDOW_STATUS };
-        ev.windowStatus.window = window.id;
-        ev.windowStatus.status = WindowStatusEvent::FRONT;
+        ev.windowStatus = { window.id, WindowStatusEvent::FRONT };
         enqueueOrSetEventsLost(ev);
     }
     {
         Event ev { Event::WINDOW_RESIZE };
-        ev.windowResize.window = window.id;
-        ev.windowResize = { 0, window.size[0], window.size[1] };
+        ev.windowResize = { window.id, window.size[0], window.size[1] };
         enqueueOrSetEventsLost(ev);
     }
     {
-        Event ev { Event::WINDOW_REDRAW };
-        ev.windowRedraw.window = window.id;
-        ev.windowRedraw = { 0, 0, 0, window.size[0], window.size[1] };
+        Event ev { Event::WINDOW_REDRAW_RECT };
+        ev.windowRedrawRect = { window.id, 0, 0, window.size[0], window.size[1] };
+        enqueueOrSetEventsLost(ev);
+    }
+    {
+        Event ev { Event::WINDOW_REPAIR_METADATA };
+        ev.windowRepairMetadata = { window.id };
         enqueueOrSetEventsLost(ev);
     }
 
