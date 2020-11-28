@@ -28,6 +28,7 @@ struct ScanlineRange
 struct Window
 {
     int id = -1;
+    int processId = -1;
     int mode = -1;
     int16_t position[2]; // Could be negative, would result in starting off screen top and/or left
     int16_t size[2]; // negative values are invalid

@@ -1,6 +1,7 @@
 #include <typeinfo>
 #include <memory>
 #include <vector>
+#include <array>
 #include <cstring>
 #include <cstdio>
 #include <algorithm>
@@ -26,6 +27,11 @@ public:
     {
         return nextHead == tail;
     }
+    void clear()
+    {
+        nextHead = 0;
+        tail = 0;
+    }
     void enqNoCheck(const T& v)
     {
         q[nextHead] = v; // std::move(v);
@@ -38,8 +44,16 @@ public:
     }
 };
 
-bool eventsLost = false;
-StaticQueue<Event, 32> eventQueue;
+struct ProcessEventQueue
+{
+    int processId = -1;
+    bool eventsLost = false;
+    StaticQueue<Event, 32> eventQueue;
+};
+
+constexpr int MaxProcesses = 32;
+
+std::array<ProcessEventQueue,MaxProcesses> gEventsByProcess;
 
 int gNextWindowID = 0;
 std::vector<Window> gWindowList;
@@ -157,12 +171,18 @@ void VideoModeSetBackgroundColor(float r, float g, float b)
     driver->setBackgroundColor(r, g, b);
 }
 
-static void enqueueOrSetEventsLost(const Event& ev)
+static void enqueueOrSetEventsLost(int processId, const Event& ev)
 {
-    if(eventQueue.isFull()) {
-        eventsLost = true;
+    auto found = std::find_if(gEventsByProcess.begin(), gEventsByProcess.end(), [&](const ProcessEventQueue& p){ return p.processId == processId; });
+    if(found == gEventsByProcess.end()) {
+        // System internal error
+        printf("didn't find process in enqueueOrSetEventsLost?!\n");
+        return;
+    }
+    if(found->eventQueue.isFull()) {
+        found->eventsLost = true;
     } else {
-        eventQueue.enqNoCheck(ev);
+        found->eventQueue.enqNoCheck(ev);
     }
 }
 
@@ -180,11 +200,19 @@ Status WindowCreate(int modeIndex, const char *name, const int *parameters, int 
     // 20 20 344 190 1 0 0
     // 100 100 100 75 0 1 0
     // 0 125 384 25 0 0 1
+    gEventsByProcess[0].processId = 0;
+    gEventsByProcess[0].eventsLost = false;
+    gEventsByProcess[0].eventQueue.clear();
+
+    gEventsByProcess[1].processId = 666;
+    gEventsByProcess[1].eventsLost = false;
+    gEventsByProcess[1].eventQueue.clear();
+
     gWindowList.clear();
     gNextWindowID = 0;
-    gWindowList.push_back({ gNextWindowID++, modeIndex, {20, 20}, {344, 190} });
-    gWindowList.push_back({ gNextWindowID++, modeIndex, {100, 100}, {100, 75} });
-    gWindowList.push_back({ gNextWindowID++, modeIndex, {0, 125}, {384, 25} });
+    gWindowList.push_back({ gNextWindowID++, 0, modeIndex, {20, 20}, {344, 190} });
+    gWindowList.push_back({ gNextWindowID++, 666, modeIndex, {100, 100}, {100, 75} });
+    gWindowList.push_back({ gNextWindowID++, 666, modeIndex, {0, 125}, {384, 25} });
     Window& window = gWindowList[0];
     *windowID = window.id;
 
@@ -196,22 +224,22 @@ Status WindowCreate(int modeIndex, const char *name, const int *parameters, int 
     {
         Event ev { Event::WINDOW_STATUS };
         ev.windowStatus = { window.id, WindowStatusEvent::WINDOWED | WindowStatusEvent::FRONT };
-        enqueueOrSetEventsLost(ev);
+        enqueueOrSetEventsLost(0, ev);
     }
     {
         Event ev { Event::WINDOW_RESIZE };
         ev.windowResize = { window.id, window.size[0], window.size[1] };
-        enqueueOrSetEventsLost(ev);
+        enqueueOrSetEventsLost(0, ev);
     }
     {
         Event ev { Event::WINDOW_REDRAW_RECT };
         ev.windowRedrawRect = { window.id, 0, 0, window.size[0], window.size[1] };
-        enqueueOrSetEventsLost(ev);
+        enqueueOrSetEventsLost(0, ev);
     }
     {
         Event ev { Event::WINDOW_REPAIR_METADATA };
         ev.windowRepairMetadata = { window.id };
-        enqueueOrSetEventsLost(ev);
+        enqueueOrSetEventsLost(0, ev);
     }
     return SUCCESS;
 }
@@ -249,17 +277,17 @@ Status HackWindowThingy()
     {
         Event ev { Event::WINDOW_RESIZE };
         ev.windowResize = { window.id, window.size[0], window.size[1] };
-        enqueueOrSetEventsLost(ev);
+        enqueueOrSetEventsLost(0, ev);
     }
     {
         Event ev { Event::WINDOW_REDRAW_RECT };
         ev.windowRedrawRect = { window.id, 0, 0, window.size[0], window.size[1] };
-        enqueueOrSetEventsLost(ev);
+        enqueueOrSetEventsLost(0, ev);
     }
     {
         Event ev { Event::WINDOW_REPAIR_METADATA };
         ev.windowRepairMetadata = { window.id };
-        enqueueOrSetEventsLost(ev);
+        enqueueOrSetEventsLost(0, ev);
     }
 
     return SUCCESS;
@@ -365,22 +393,35 @@ Status WindowPixmapSetRowPalette(int windowID, int row, PaletteIndex whichPalett
 
 int EventPoll(Event* ev)
 {
-    if(eventsLost) {
-        ev->eventType = Event::EVENTS_LOST;
-        eventsLost = false;
-        return 1;
-    }
-    if(eventQueue.isEmpty()) {
+    /* Determine processId */
+    int processId = 0; /* temporary hack */
+
+    auto found = std::find_if(gEventsByProcess.begin(), gEventsByProcess.end(), [&](const ProcessEventQueue& p){ return p.processId == processId; });
+    if(found == gEventsByProcess.end()) {
+        // System internal error
+        printf("didn't find process in EventPoll?!\n");
         return 0;
     }
-    eventQueue.deqNoCheck(*ev);
+
+    if(found->eventsLost) {
+        ev->eventType = Event::EVENTS_LOST;
+        found->eventsLost = false;
+        return 1;
+    }
+    if(found->eventQueue.isEmpty()) {
+        return 0;
+    }
+    found->eventQueue.deqNoCheck(*ev);
     return 1;
 }
 
 void WindowSystemEnqueueEvent(const Event& ev)
 {
     /* if ev = click and Meta is pressed, set window move state */
-    enqueueOrSetEventsLost(ev);
+
+    int processId = gWindowList.back().processId;
+    processId = 0; // XXX HACK for bringup
+    enqueueOrSetEventsLost(processId, ev);
 }
 
 };
