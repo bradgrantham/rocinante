@@ -455,6 +455,13 @@ public:
         }
     }
 
+    static bool pixmapSpansOverlap(const PixmapSpan& span1, const PixmapSpan& span2, PixmapSpan& overlapSpan)
+    {
+        overlapSpan.start = std::max(span1.start, span2.start);
+        overlapSpan.length = std::min(span1.start + span1.length, span2.start + span2.length) - overlapSpan.start;
+        return std::min(span1.start + span1.length, span2.start + span2.length) > overlapSpan.start;
+    }
+
     virtual bool reallocateForWindow(Window& window, const std::vector<ScanlineRange>& requestedRanges, void* buffer, VideoSubsystemAllocateFunc allocate, bool *enqueueExposedRedrawEvents) 
     {
         dbgScope newScope(__FUNCTION__);
@@ -569,9 +576,30 @@ public:
             const auto& oldRow = GetRows(oldVRAM, oldRoot)[rowIndex];
             newRow.whichPalette = oldRow.whichPalette;
 
-            
+            int oldSpanIndex = 0;
+
+            for(int newSpanIndex = 0; newSpanIndex < newRow.spanCount; newSpanIndex++) {
+                auto& newSpan = GetSpans(newVRAM, newRow)[newSpanIndex];
+                auto* newPixelData = GetPixelData(newVRAM, newSpan);
+                size_t pixelDataSize = CalculatePixelStorageRequired(FMT, newSpan.length);
+                memset(newPixelData, 0, pixelDataSize);
+                
+                // jump over all old spans that are entirely to the left of the new span
+                const auto* oldSpanPtr = GetSpans(oldVRAM, oldRow) + oldSpanIndex;
+                while((oldSpanIndex < oldRow.spanCount) && (oldSpanPtr->start + oldSpanPtr->length <= newSpan.start)) {
+                    oldSpanIndex++; oldSpanPtr++;
+                }
+
+                // copy data from all old spans that intersect the new span
+                PixmapSpan overlapSpan;
+                while((oldSpanIndex < oldRow.spanCount) && pixmapSpansOverlap(newSpan, *oldSpanPtr, overlapSpan)) {
+                    auto* newPixelData = GetPixelData(newVRAM, newSpan);
+                    auto* oldPixelData = GetPixelData(oldVRAM, *oldSpanPtr);
+                    CopyPixelRow(FMT, oldPixelData, overlapSpan.start - oldSpanPtr->start, newPixelData, overlapSpan.start - newSpan.start, overlapSpan.length);
+                    oldSpanIndex++; oldSpanPtr++;
+                }
+            }
         }
-            // for each new span copy data from old span
     }
 
     // caller guarantees that pixel span to be drawn is 1:1 with a span provided in reallocate
@@ -684,9 +712,7 @@ public:
                 int stop = std::min((int)span.start + (int)span.length, left + width);
 
                 if(start < stop) {
-
                     auto* pixelData = GetPixelData(VRAM, span);
-
                     CopyPixelRow(FMT, srcRow, start - left, pixelData, start - span.start, stop - start);
                 }
             }

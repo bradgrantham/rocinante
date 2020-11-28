@@ -249,7 +249,7 @@ Status HackWindowThingy()
 
     bool windowConfigurationSucceeded = driver->attemptWindowConfiguration(gWindowList);
     if(!windowConfigurationSucceeded) {
-        printf("hack - failed window config\n");
+        if(false) printf("hack - failed window config\n");
         return WINDOW_CREATION_FAILED;
     }
 
