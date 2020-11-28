@@ -357,6 +357,8 @@ static int AppShowImage(int argc, char **argv)
 {
     const char *filename;
     int requestedModeBits = 0;
+    int allowedScaleX = 2;
+    int allowedScaleY = 2;
     bool requestedColor = true;
 
     int myWindow;
@@ -388,6 +390,15 @@ static int AppShowImage(int argc, char **argv)
         } else if(strcmp(argv[0], "--gray") == 0) {
             requestedColor = false;
             argc--; argv++;
+        } else if(strcmp(argv[0], "--scale") == 0) {
+            if(argc < 3) {
+                printf("expected scale factors for --scale\n");
+                usage(appName);
+                return COMMAND_FAILED;
+            }
+            allowedScaleX = atoi(argv[1]);
+            allowedScaleY = atoi(argv[2]);
+            argc -= 3; argv += 3;
         } else {
             usage(appName);
             return COMMAND_FAILED;
@@ -426,9 +437,9 @@ static int AppShowImage(int argc, char **argv)
                     case PIXMAP_4_BITS: bits = 4; break;
                     case PIXMAP_8_BITS: bits = 8; break;
                 }
-                if((requestedColor == isColor) && (bits >= requestedModeBits)) {
+                if((requestedColor == isColor) && (bits >= requestedModeBits) && (allowedScaleX >= info.scaleX) && (allowedScaleY >= info.scaleY)) {
                     // matches the requirements
-                    if((chosenMode == -1) || (bits < chosenBits)) {
+                    if((chosenMode == -1) || (bits < chosenBits) || (info.scaleX > pixmapScaleX) || (info.scaleY > pixmapScaleY)) {
                         // better than the previous choice (for memory use)
                         chosenMode = i;
                         chosenBits = bits;
@@ -446,6 +457,7 @@ static int AppShowImage(int argc, char **argv)
                 break;
         }
     }
+    printf("chose pixmap with %d bits, %dx%d scale\n", chosenBits, pixmapScaleX, pixmapScaleY);
 
     if(chosenMode == -1) {
         printf("showimage: couldn't find %s mode matching %d bits per pixel \n", requestedColor ? "color" : "grayscale", requestedModeBits);
@@ -493,14 +505,11 @@ static int AppShowImage(int argc, char **argv)
                 // We don't check the window ID because we only have the one
                 case Event::WINDOW_STATUS: {
                     const auto& status = ev.windowStatus;
-                    switch(status.status) {
-                        case WindowStatusEvent::CLOSE:
-                            quit = true;
-                            break;
-                        default:
-                            // ignore other status changes
-                            break;
+                    if(status.flags & WindowStatusEvent::CLOSE) {
+                        quit = true;
+                        break;
                     }
+                    // ignore other status changes
                     break;
                 }
                 case Event::WINDOW_RESIZE: {

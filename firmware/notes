@@ -14,15 +14,9 @@ Go back and make sure
     convert this doc to Markdown
 
 to do
-    reduce black screen and garbage flashing
-        new entrypoints moveAllocation and releaseAllocation
-            moveAllocation from nullptr = initialize data instead of move
-        moveAllocation
-            copy over palette and whichPalette
-            copy as much pixel data as possible
-        new REPAIR_METADATA - should window be required to preserve metadata?
-        should reallocate take a vector of Event to fill in?
-    WINDOW_STATUS should be a bitfield?
+    fix bug in Pixmap moveAllocation? - somehow spans missed?
+    fix seg fault if showimage chooses 2x2 scale pixmap
+    should reallocate/moveAllocation take a vector of Event to fill in?
     interactive window test
         implement rubberband
         implement pointer draw

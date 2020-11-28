@@ -195,14 +195,7 @@ Status WindowCreate(int modeIndex, const char *name, const int *parameters, int 
 
     {
         Event ev { Event::WINDOW_STATUS };
-        ev.windowStatus.window = window.id;
-        ev.windowStatus.status = WindowStatusEvent::WINDOWED;
-        enqueueOrSetEventsLost(ev);
-    }
-    {
-        Event ev { Event::WINDOW_STATUS };
-        ev.windowStatus.window = window.id;
-        ev.windowStatus.status = WindowStatusEvent::FRONT;
+        ev.windowStatus = { window.id, WindowStatusEvent::WINDOWED | WindowStatusEvent::FRONT };
         enqueueOrSetEventsLost(ev);
     }
     {
@@ -253,16 +246,6 @@ Status HackWindowThingy()
         return WINDOW_CREATION_FAILED;
     }
 
-    {
-        Event ev { Event::WINDOW_STATUS };
-        ev.windowStatus = { window.id, WindowStatusEvent::WINDOWED };
-        enqueueOrSetEventsLost(ev);
-    }
-    {
-        Event ev { Event::WINDOW_STATUS };
-        ev.windowStatus = { window.id, WindowStatusEvent::FRONT };
-        enqueueOrSetEventsLost(ev);
-    }
     {
         Event ev { Event::WINDOW_RESIZE };
         ev.windowResize = { window.id, window.size[0], window.size[1] };

@@ -224,13 +224,14 @@ struct WindowRepairMetadataEvent {
 
 struct WindowStatusEvent {
     int window;
-    enum {
-        FRONT,
-        BEHIND,
-        CLOSE,
-        FULLSCREEN,
-        WINDOWED,
-    } status;
+    enum StatusFlag {
+        FRONT = 0x0001,
+        BEHIND = 0x0002,
+        CLOSE = 0x0004,
+        FULLSCREEN = 0x0008,
+        WINDOWED = 0x0010,
+    };
+    uint16_t flags;
 };
 
 struct Event
