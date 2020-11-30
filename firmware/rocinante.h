@@ -27,6 +27,8 @@ typedef enum Status {
     INVALID_WINDOW = -7,                // A window was not open or valid with the provided index
     INVALID_PARAMETER_VALUE = -8,       // A passed parameter was outside the valid range
     WINDOW_CREATION_FAILED = -9,        // Window could not be created because of memory allocation or possibly other reason
+    RESOURCE_EXHAUSTED = -10,           // There were no more objects of the requested type
+    SIZE_EXCEEDED = -11,                // Window could not be created because of memory allocation or possibly other reason
 } Status;
 
 int InputGetChar(void);

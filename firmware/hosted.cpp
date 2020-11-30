@@ -360,6 +360,20 @@ void fillRowDebugOverlay(int frameNumber, int lineNumber, unsigned char* nextRow
 
 struct NTSCVideoSubsystem : VideoSubsystemDriver
 {
+    static constexpr int MaxPointers = 16;
+    struct NTSCPointer
+    {
+        int width;
+        int height;
+        int pointX;
+        int pointY;
+        uint8_t pixmap[MaxPointerPixmapSize]; // SYSTEM_POINTER_* values
+    };
+    static NTSCPointer NTSCPointers[MaxPointers];
+    static int NTSCPointerCount;
+    static int currentPointer;
+    static int pointerX, pointerY;
+
 #pragma pack(push, 1)
     // The "root" or "top" allocation for all information subsystem driver needs to draw screen during scanout
     struct NTSCRoot
@@ -368,6 +382,14 @@ struct NTSCVideoSubsystem : VideoSubsystemDriver
         uint32_t windowTableOffset; // offset to array of NTSCWindow
         uint16_t scanlineRangeCount;
         uint32_t scanlineRangeTableOffset;
+        uint16_t pointerWidth;
+        uint16_t pointerHeight;
+        uint16_t pointX;
+        uint16_t pointY;
+        uint8_t pointerPixmap[MaxPointerPixmapSize];
+        uint16_t currentPointer;
+        uint16_t pointerX;
+        uint16_t pointerY;
     };
 
     struct NTSCWindow
@@ -431,9 +453,104 @@ struct NTSCVideoSubsystem : VideoSubsystemDriver
     virtual VideoModeDriver* getModeDriver(int n) const;
     virtual void waitFrame();
     virtual bool attemptWindowConfiguration(std::vector<Window>& windowsBackToFront);
-    static void fillRow(int y, uint8_t* row);
+    virtual Status createPointer(const uint8_t *pixmap, int width, int height, int pointX, int pointY, int *pointer);
+    virtual Status usePointer(int pointer);
+    virtual void setPointerLocation(int x, int y);
     static void dumpWindowConfiguration(uint8_t *vram);
+    static void fillRow(int y, uint8_t* row);
+    static void vblankProcessing();
+    static void copyPointerIntoVRAM(const NTSCPointer& pointerInfo);
 };
+
+int NTSCVideoSubsystem::NTSCPointerCount = 0;
+NTSCVideoSubsystem::NTSCPointer NTSCVideoSubsystem::NTSCPointers[MaxPointers];
+int NTSCVideoSubsystem::currentPointer = 0;
+int NTSCVideoSubsystem::pointerX = 0;
+int NTSCVideoSubsystem::pointerY = 0;
+
+void NTSCVideoSubsystem::setPointerLocation(int x, int y)
+{
+    pointerX = x;
+    pointerY = y;
+}
+
+Status NTSCVideoSubsystem::usePointer(int pointer)
+{
+    if((pointer < 0) || (pointer >= NTSCPointerCount)) {
+        return INVALID_PARAMETER_VALUE;
+    }
+
+    currentPointer = pointer;
+    return SUCCESS;
+}
+
+Status NTSCVideoSubsystem::createPointer(const uint8_t *pixmap, int width, int height, int pointX, int pointY, int *pointer)
+{
+    if(NTSCPointerCount == MaxPointers) {
+        return RESOURCE_EXHAUSTED;
+    }
+    *pointer = NTSCPointerCount;
+    NTSCPointer& pointerInfo = NTSCPointers[NTSCPointerCount++];
+    pointerInfo.width = width;
+    pointerInfo.height = height;
+    pointerInfo.pointX = pointX;
+    pointerInfo.pointY = pointY;
+    memcpy(pointerInfo.pixmap, pixmap, pointerInfo.width * pointerInfo.height);
+    return SUCCESS;
+}
+
+void SystemCreatePointers()
+{
+    int pointer;
+    const static uint8_t systemCursorBitmap[] = {
+        // 11x18
+        1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        1, 2, 1, 0, 0, 0, 0, 0, 0, 0, 0,
+        1, 2, 2, 1, 0, 0, 0, 0, 0, 0, 0,
+        1, 2, 2, 2, 1, 0, 0, 0, 0, 0, 0,
+        1, 2, 2, 2, 2, 1, 0, 0, 0, 0, 0,
+        1, 2, 2, 2, 2, 2, 1, 0, 0, 0, 0,
+        1, 2, 2, 2, 2, 2, 2, 1, 0, 0, 0,
+        1, 2, 2, 2, 2, 2, 2, 2, 1, 0, 0,
+        1, 2, 2, 2, 2, 2, 2, 2, 2, 1, 0,
+        1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1,
+        1, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1,
+        1, 2, 2, 2, 1, 2, 2, 1, 0, 0, 0,
+        1, 2, 2, 1, 0, 1, 2, 2, 1, 0, 0,
+        1, 2, 1, 0, 0, 1, 2, 2, 1, 0, 0,
+        1, 1, 0, 0, 0, 0, 1, 2, 2, 1, 0,
+        0, 0, 0, 0, 0, 0, 1, 2, 2, 1, 0,
+        0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0,
+        // 12 x 20
+        // 2, 2, 2, 2, 1, 1, 1, 1, 0, 0, 0, 0,
+        // 2, 2, 2, 2, 1, 1, 1, 1, 0, 0, 0, 0,
+        // 2, 2, 2, 2, 1, 1, 1, 1, 0, 0, 0, 0,
+        // 2, 2, 2, 2, 1, 1, 1, 1, 0, 0, 0, 0,
+        // 1, 1, 1, 1, 2, 2, 2, 2, 1, 1, 1, 1,
+        // 1, 1, 1, 1, 2, 2, 2, 2, 1, 1, 1, 1,
+        // 1, 1, 1, 1, 2, 2, 2, 2, 1, 1, 1, 1,
+        // 1, 1, 1, 1, 2, 2, 2, 2, 1, 1, 1, 1,
+        // 1, 1, 1, 1, 2, 2, 2, 2, 1, 1, 1, 1,
+        // 1, 1, 1, 1, 2, 2, 2, 2, 1, 1, 1, 1,
+        // 1, 1, 1, 1, 2, 2, 2, 2, 1, 1, 1, 1,
+        // 1, 1, 1, 1, 2, 2, 2, 2, 1, 1, 1, 1,
+        // 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1,
+        // 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1,
+        // 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1,
+        // 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1,
+        // 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0,
+        // 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0,
+        // 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0,
+        // 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0,
+    };
+    Status status = VideoCreatePointer(systemCursorBitmap, 11, 18, 0, 0, &pointer);
+    // Status status = VideoCreatePointer(systemCursorBitmap, 12, 20, 0, 0, &pointer);
+    assert(status == SUCCESS);
+    assert(pointer == 0);
+    status = VideoUsePointer(0);
+    assert(status == SUCCESS);
+}
 
 ntsc_wave_t NTSCVideoSubsystem::backgroundColorWave;
 
@@ -463,6 +580,7 @@ void NTSCVideoSubsystem::waitFrame()
 void NTSCVideoSubsystem::start()
 {
     NTSCCalculateParameters();
+    SystemCreatePointers();
 }
 
 void NTSCVideoSubsystem::stop()
@@ -754,6 +872,17 @@ void NTSCVideoSubsystem::dumpWindowConfiguration(uint8_t *vram)
     }
 }
 
+void NTSCVideoSubsystem::copyPointerIntoVRAM(const NTSCPointer& pointerInfo)
+{
+    auto& root = GetRoot(VRAM, RootOffset);
+    root.pointerWidth = pointerInfo.width;
+    root.pointerHeight = pointerInfo.height;
+    root.pointX = pointerInfo.pointX;
+    root.pointY = pointerInfo.pointY;
+    root.currentPointer = currentPointer;
+    memcpy(root.pointerPixmap, pointerInfo.pixmap, pointerInfo.width * pointerInfo.height);
+}
+
 bool NTSCVideoSubsystem::attemptWindowConfiguration(std::vector<Window>& windowsBackToFront)
 {
     for(const auto& window: windowsBackToFront) {
@@ -868,15 +997,33 @@ bool NTSCVideoSubsystem::attemptWindowConfiguration(std::vector<Window>& windows
             VideoModeDriver* modedriver = drivers[window.mode];
             modedriver->moveWindowAllocation(window, VRAM, previousModeOffsets[windowIndex], stagingVRAM, windowsBackToFront[windowIndex].modeRootOffset);
         }
+
+        NTSCPointer& pointerInfo = NTSCPointers[currentPointer];
+
         std::scoped_lock<std::mutex> lk(VRAMmutex);
+
         // XXX this REALLY needs to happen during VBLANK i.e. when VRAM won't be accessed by video subsystem
+        // Copy all allocated window structures
         std::copy(stagingVRAM, stagingVRAM + sizeof(stagingVRAM), VRAM);
 
+        // Copy Pointer data
+        copyPointerIntoVRAM(pointerInfo);
     }
 
     if(false) dumpWindowConfiguration(VRAM);
 
     return !failed;
+}
+
+void NTSCVideoSubsystem::vblankProcessing()
+{
+    auto& root = GetRoot(VRAM, RootOffset);
+    if(root.currentPointer != currentPointer) {
+        NTSCPointer& pointerInfo = NTSCPointers[currentPointer];
+        copyPointerIntoVRAM(pointerInfo);
+    }
+    root.pointerX = pointerX;
+    root.pointerY = pointerY;
 }
 
 void NTSCVideoSubsystem::fillRow(int row, uint8_t* rowBuffer)
@@ -906,6 +1053,29 @@ void NTSCVideoSubsystem::fillRow(int row, uint8_t* rowBuffer)
             }
         }
     }
+
+    // draw window decorations here?
+
+    // draw rubberband here
+
+    int withinPointerY = row - root.pointerY + root.pointY;
+    if((withinPointerY >= 0) && (withinPointerY < root.pointerHeight)) {
+        uint8_t *pointerPixmapRow = root.pointerPixmap + root.pointerWidth * withinPointerY;
+        // XXX opportunity for optimization
+        for(int colIndex = 0; colIndex < root.pointerWidth; colIndex++) {
+            int onScreen = root.pointerX + colIndex - root.pointX + 30;
+            if((onScreen >= 0) && (onScreen <= 704)) {
+                int colorIndex = pointerPixmapRow[colIndex];
+                if(colorIndex == 0) {
+                    // Transparent
+                } else if(colorIndex == 2) {
+                    rowBuffer[onScreen] = NTSCWhite;
+                } else if(colorIndex == 1) {
+                    rowBuffer[onScreen] = NTSCBlack;
+                }
+            }
+        }
+    }
 }
 
 static NTSCVideoSubsystem NTSCVideo;
@@ -917,6 +1087,11 @@ VideoSubsystemDriver* GetNTSCVideoSubsystem()
 
 constexpr float TAU = M_PI * 2.0f;
 
+float Rad(float degrees)
+{
+    return degrees / 360.0f * TAU;
+}
+
 void NTSCWaveToYIQ(float tcycles, float wave[4], float *y, float *i, float *q)
 {
     *y = (wave[0] + wave[1] + wave[2] + wave[3]) / 4;
@@ -924,19 +1099,21 @@ void NTSCWaveToYIQ(float tcycles, float wave[4], float *y, float *i, float *q)
     float waveHF[4];
     for(int j = 0; j < 4; j++) waveHF[j] = wave[j] - *y;
 
-    float w_t = tcycles * TAU + 33.0f / 180.0f * M_PI;
+    // XXX why wasn't this and adding the phase below correct?
+    // float w_t = tcycles * TAU;
+    float w_t = Rad(60.0f) - tcycles * TAU;
 
     *i =
-        waveHF[0] * sinf(w_t + TAU / 4.0f * 0.0f) + 
-        waveHF[1] * sinf(w_t + TAU / 4.0f * 1.0f) + 
-        waveHF[2] * sinf(w_t + TAU / 4.0f * 2.0f) + 
-        waveHF[3] * sinf(w_t + TAU / 4.0f * 3.0f);
+        waveHF[0] * sinf(w_t - TAU / 4.0f * 0.0f) + 
+        waveHF[1] * sinf(w_t - TAU / 4.0f * 1.0f) + 
+        waveHF[2] * sinf(w_t - TAU / 4.0f * 2.0f) + 
+        waveHF[3] * sinf(w_t - TAU / 4.0f * 3.0f);
 
     *q =
-        waveHF[0] * cosf(w_t + TAU / 4.0f * 0.0f) + 
-        waveHF[1] * cosf(w_t + TAU / 4.0f * 1.0f) + 
-        waveHF[2] * cosf(w_t + TAU / 4.0f * 2.0f) + 
-        waveHF[3] * cosf(w_t + TAU / 4.0f * 3.0f);
+        waveHF[0] * cosf(w_t - TAU / 4.0f * 0.0f) + 
+        waveHF[1] * cosf(w_t - TAU / 4.0f * 1.0f) + 
+        waveHF[2] * cosf(w_t - TAU / 4.0f * 2.0f) + 
+        waveHF[3] * cosf(w_t - TAU / 4.0f * 3.0f);
 }
 
 float DACToSignal(uint8_t dacByte)
@@ -957,6 +1134,15 @@ void NTSCConvertDACRowToRGB(uint8_t *dacRow, uint8_t (*screenRow)[3], int width,
             wave[3] = DACToSignal(dacRow[x + 3]);
             float y, i, q;
             NTSCWaveToYIQ((x % 4) / 4.0f, wave, &y, &i, &q);
+            if(false){
+                // XXX DEBUG HACK bringup - make everything grayscale
+                float wave2[4];
+                wave2[0] = (wave[0] + wave[1] + wave[2] + wave[3]) / 4.0;
+                wave2[1] = wave2[0];
+                wave2[2] = wave2[0];
+                wave2[3] = wave2[0];
+                NTSCWaveToYIQ((x % 4) / 4.0f, wave2, &y, &i, &q);
+            }
             float r, g, b;
             YIQToRGB(y, i, q, &r, &g, &b);
             screenRow[x][0] = std::clamp(r, 0.0f, 1.0f) * 255.999f;
@@ -983,6 +1169,7 @@ void VideoModeFillGLTexture()
         uint8_t *rowBuffer = NTSCScanlines[row];
 
         // Fill with background color ...?  Or should only do this for pixels not covered by range?
+        NTSCVideoSubsystem::vblankProcessing();
         NTSCVideoSubsystem::fillRow(row, rowBuffer);
 
         NTSCConvertDACRowToRGB(rowBuffer, ScreenImage[row], ScreenWidth, addColorburst);
@@ -1654,15 +1841,17 @@ int setcooked()
 
 int main(int argc, char **argv)
 {
-    if(0)for(int j = 0; j < 100; j++) {
-        float r = drand48();
-        float g = drand48();
-        float b = drand48();
-        printf("%f %f %f -> ", r, g, b);
-        float y, i, q;
-        RGBToYIQ(r,g, b, &y, &i, &q);
-        YIQToRGB(y, i, q, &r, &g, &b);
-        printf("%f %f %f\n", r, g, b);
+    if(false) {
+        for(int j = 0; j < 100; j++) {
+            float r = drand48();
+            float g = drand48();
+            float b = drand48();
+            printf("%f %f %f -> ", r, g, b);
+            float y, i, q;
+            RGBToYIQ(r,g, b, &y, &i, &q);
+            YIQToRGB(y, i, q, &r, &g, &b);
+            printf("%f %f %f\n", r, g, b);
+        }
     }
     initialize_ui();
 

@@ -165,6 +165,17 @@ Status VideoModeGetInfo(int modeIndex, void *infobase, size_t infoSize); // info
 void VideoModeWaitFrame();      // Wait until end of last visible line in a frame
 void VideoModeSetBackgroundColor(float r, float g, float b);
 
+enum
+{
+    SYSTEM_ARROW_POINTER = 0,
+    SYSTEM_POINTER_TRANSPARENT = 0,
+    SYSTEM_POINTER_WHITE = 1,
+    SYSTEM_POINTER_BLACK = 2,
+};
+enum { MaxPointerPixmapSize = 32 * 32 };
+Status VideoCreatePointer(const uint8_t *pixmap, int width, int height, int pointX, int pointY, int *pointer);
+Status VideoUsePointer(int pointer);
+
 typedef enum WindowParameter
 {
     END = 0,
@@ -177,9 +188,7 @@ typedef enum WindowParameter
 // Always produces "RESIZE" and "REDRAW_RECT" events - get width and height that way
 // Subsequent moves and stack order changes *might* not REDRAW_RECT - the system could decide to keep a backing-store of the image.
 Status WindowCreate(int mode, const char *name, const int *parameters, int *window);
-
 Status WindowSetTitle(int window, const char *name);
-
 Status WindowClose(int window);
 
 enum PaletteIndex { PALETTE0, PALETTE1 };

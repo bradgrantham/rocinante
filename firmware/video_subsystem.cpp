@@ -171,6 +171,19 @@ void VideoModeSetBackgroundColor(float r, float g, float b)
     driver->setBackgroundColor(r, g, b);
 }
 
+Status VideoCreatePointer(const uint8_t *pixmap, int width, int height, int pointX, int pointY, int *pointer)
+{
+    if(width * height > MaxPointerPixmapSize) {
+        return SIZE_EXCEEDED;
+    }
+    return driver->createPointer(pixmap, width, height, pointX, pointY, pointer);
+}
+
+Status VideoUsePointer(int pointer)
+{
+    return driver->usePointer(pointer);
+}
+
 static void enqueueOrSetEventsLost(int processId, const Event& ev)
 {
     auto found = std::find_if(gEventsByProcess.begin(), gEventsByProcess.end(), [&](const ProcessEventQueue& p){ return p.processId == processId; });
@@ -246,6 +259,7 @@ Status WindowCreate(int modeIndex, const char *name, const int *parameters, int 
 
 Status HackWindowThingy()
 {
+        return SUCCESS;
     static int counter = 0;
     if(((counter++) % 100000) != 0) {
         return SUCCESS;
@@ -418,6 +432,12 @@ int EventPoll(Event* ev)
 void WindowSystemEnqueueEvent(const Event& ev)
 {
     /* if ev = click and Meta is pressed, set window move state */
+
+    if(ev.eventType == Event::MOUSE_MOVE) {
+        if(driver) {
+            driver->setPointerLocation(ev.mouseMove.x, ev.mouseMove.y);
+        }
+    }
 
     int processId = gWindowList.back().processId;
     processId = 0; // XXX HACK for bringup

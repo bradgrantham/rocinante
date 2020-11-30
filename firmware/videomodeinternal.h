@@ -173,6 +173,9 @@ struct VideoSubsystemDriver
     virtual void waitFrame() = 0;
     virtual void stop() = 0;
     virtual bool attemptWindowConfiguration(std::vector<Window>& windowsBackToFront) = 0;
+    virtual Status createPointer(const uint8_t *pixmap, int width, int height, int pointX, int pointY, int *pointer) = 0;
+    virtual Status usePointer(int pointer) = 0;
+    virtual void setPointerLocation(int x, int y) = 0;
 };
 
 

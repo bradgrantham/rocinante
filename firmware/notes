@@ -12,19 +12,23 @@ Go back and make sure
     be consistent with window, windowIndex, windowID : windowID?  Make a typedef int "Window"?  But Window is already the struct for windowing
     are VideoGetModeCount() and VideoModeGetType() inconsistent? - consider, make consistent, record policy here
     convert this doc to Markdown
+    be consistent about global variable names - g${Name}?  ${Name}?  Rosa${Name}?  Rosa${Facility}${Name}?
 
 to do
-    fix bug in Pixmap moveAllocation? - somehow spans missed?
-    fix seg fault if showimage chooses 2x2 scale pixmap
-    should reallocate/moveAllocation take a vector of Event to fill in?
     interactive window test
-        implement rubberband
         implement pointer draw
+            pointer drawing in...?  concrete video subsystem
+                entrypoints passed through to concrete subsystem
+        implement rubberband
         implement some key processing (at least Meta)
             test what the keycodes are in USB - do they match GLFW?
         Meta + click = drag
             click in window: gMovingWindow = windowID
             if(gMovingWindow != NO_WINDOW) { motion : attemptConfiguration, move rubberband on success; release : }
+    fix bug in Pixmap moveAllocation? - somehow spans missed?
+    fix seg fault if showimage chooses 2x2 scale pixmap
+    should reallocate/moveAllocation take a vector of Event to fill in?
+    window resize
         implement border
         implement resize
     fix NTSC color interpretation
@@ -55,7 +59,9 @@ Stated explicitly:
 to plumb through fullscreen API, add a Woz fullscreen text mode and do playback of text memory writes from apple2e
 
 Modularizing video (best reference is source code for apps!)
-    PixmapModeDriver should be templated on format, palette, scale, whether it's mono (and maybe some other things)
+    minifying windows ...?
+        fillRow that outputs RGB8 and allowed to be non-optimized?  Then shrink with antialiasing and show... where?
+    Do I need a generalized race-the-beam drawing library for window decorations, text, min/max/close icons
     Window coverage, range, span sample diagram: https://docs.google.com/drawings/d/1fAEjk5LkpoVFAkQtjVpDIjrKxcilrsKm9ytVupJzXDs/edit
     App Abstraction 
         optionally VideoSetBackgroundColor(float r, float g, float b); - this is background when window is FRONT, otherwise black
@@ -92,31 +98,17 @@ Modularizing video (best reference is source code for apps!)
                 Maybe on reallocate?
                 This means the driver needs to know the window's complete dimensions
                 pass width and height into reallocate, driver can store them in root allocation or not
-    Need mode driver "free" function for when a window is closed, to go through old data structure and free any real memory pointers
-    main loop routes events to video - VideoSubsystem->routeEvent(EventBase *event)
     Need pixmap mode drivers to be able to express a pixel resolution (pixmap pixel to screen pixel)
         want a way to request highest-res mode if desired (old MAXRES mode)
-        if there was a pixel resolution (1x1, 1x2, 2x2, 4x4 etc) would that be sufficient?
-            Or should this be dependent on window size or maybe by coverage of video mode...
         But all size specifications at the moment are in screen pixels.
             App will want to specify a certain size pixmap sometimes.  But that's specific to Pixmap.
             Pixmap could have a convenience function taking requested size and returning the WindowCreate attributes to request that size on-screen...
     Video Subsystem keeps track of window location, size, Z order, whether it's fullscreen, and its mode
-    Application API exposed by video subsystem:
-        Mode specific functions. These can return INVALID_CALL_FOR_MODE.
-            Status WindowSetPaletteEntry(int window, int palette, int which, float r, float g, float b);
-            Status WindowSetPalette(int window, int palette, float *rgbEntries);
-            Status WindowSetRowPalette(int window, int row, int palette);
     re-allocation events: window stacking order changed, window moved, window resized, window fullscreened or windowed
-        for every window
-            make span list
-            call allocate to video mode for window
-            if failed, flash screen, maybe debug overlay, and exit re-allocation
-        CommitAllocations
-    int ProcessYield();
-    void MouseGetPosition(int *x, int *y);
-    void MouseGetButtonsPressed(int *b1, int *b2, int *b2); // 0 = not pressed, 1 = pressed
-    every window (only front window?) has a 2 or 4-pixel border
+    Explicit mouse query?
+        void MouseGetPosition(int *x, int *y);
+        void MouseGetButtonsPressed(int *b1, int *b2, int *b2); // 0 = not pressed, 1 = pressed
+    every window (only front window?) has a 2 or 4-pixel border?
     need a video mode which is a solid color for background
     Some video game modes (TMS9918A, Woz, TIA) require full-screen.
         Debug overlay says "Game mode" if ALT-space pressed or some such?
@@ -132,9 +124,6 @@ Modularizing video (best reference is source code for apps!)
     Click on FRONT window is passed to app owning FRONT
     non-FRONT window doesn't get mouse moves?
     Click on border resizes (just outline is shown until button release)
-Getting to color - Duplicate other signal timing & voltages as closely as possible, including # of colorbursts
-    VCR, barring that, Apple //e, NES?, DVD?
-    Make nice diagrams of a single frame's signal
     Does CB need to rotate phase 180 degrees each line?
 Need generic DMA/DAC facility (or do I is DAC/DMA used for anything but NTSC or VGA?)
 Could probably pull off 304x192 r5g6b5 framebuffer within 128K, or 384x256 r3g3b2 within 128K (would dither)
@@ -259,8 +248,7 @@ Raycaster game!
         if multiple apps can run simultaneously, then pipes would work
     compile all apps with TinyCC or other small compiler
         (can g++ run within 16MB?)
-        run as THUMB in emulator or QEMU in hosted, or
-        run as x86 apps in emulator and have x86-specific thread context
+        run as THUMB in emulation in hosted
     System APIs that Apps can call
         OS/stdlib calls
             read/write
@@ -291,7 +279,7 @@ Channel F emulator, 9pin header adapters (bake into controller for Bart)
     need 16 pins for two controllers!
 BASIC
     just implement 80x24 text mode for now
-    video N # set video mode N
+    window N # set video mode N
     lut c, r, g, b # calculate lut entry c for int r, g, b
     plot x, y, c    # plot pixel x, y with lut c
     line x0, y0, x1, y1, c # plot line
