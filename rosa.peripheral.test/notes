@@ -1,0 +1,41 @@
+is HAL_TIM_IC_MspInit being called?
+    it calls __HAL_LINKDMA(htim_ic,hdma[TIM_DMA_ID_UPDATE],hdma_tim1_up);
+
+Woz HGR mode
+    USER2 resets
+    Maybe multiple memoryWriteRecord sequences, USER3 cycles through them?
+
+    uint8_t WozHGR1Buffer[8192];
+    192 uint32_t for address of row
+    row fill
+        rowSrc = WozHGR1Buffer + rowOffset[row]; // row - ...?
+        memset(rowBuffer + screenLeft, NTSCBlack, 560);
+        for(int byteIndex = 0; byteIndex < 40; byteIndex++) {
+            uint8_t byte = rowSrc[byteIndex];
+            int colorShift = (byte & 0x80) ? 1 : 0;
+            rowDst = rowBuffer + screenLeft + byteIndex * 14 + colorShift;
+            for(int bitIndex = 0; bitIndex < 7; bitIndex++) {
+                if(byte & (1 << bitIndex)) {
+                    rowDst[bitIndex * 2 + 0] = NTSCWhite; // or DAC max?
+                    rowDst[bitIndex * 2 + 1] = NTSCWhite; // or DAC max?
+                }
+            }
+        }
+
+    struct MemoryWriteRecord
+    {
+        uint64_t nanosecond;
+        uint16_t address;
+        uint16_t value; /* low 8 bits */
+    };
+
+    uint64_t previousNanosecond;
+    MemoryWriteRecord *currentWrite;
+    MemoryWriteRecord *memoryWrites;
+    size_t memoryWriteCount;
+    while((currentWrite - memoryWrites) < memoryWriteCount) {
+        while(((currentWrite - memoryWrites) < memoryWriteCount) && (currentNanosecond() < currentWrite->nanosecond)) {
+            WozHGR1Buffer[currentWrite->address - 0x2000] = currentWrite->value;
+            currentWrite++;
+        }
+    }
