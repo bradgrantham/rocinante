@@ -28,7 +28,7 @@ struct CPU6502
     CLK &clk;
     BUS &bus;
 
-    static int cycles[256];
+    const static int cycles[256];
 
     unsigned char a, x, y, s, p;
     static const unsigned char N = 0x80;
@@ -1502,7 +1502,7 @@ struct CPU6502
 };
 
 template<class CLK, class BUS>
-int CPU6502<CLK, BUS>::cycles[256] =
+const int CPU6502<CLK, BUS>::cycles[256] =
 {
     /* 0x0- */ 7, 6, -1, -1, -1, 3, 5, -1, 3, 2, 2, -1, -1, 4, 6, -1,
     /* 0x1- */ 2, 5, 5, -1, -1, 4, 6, -1, 2, 4, 2, -1, -1, 4, 7, -1,

@@ -36,14 +36,14 @@ using namespace std;
 
 #define LK_HACK 1
 
-const unsigned int DEBUG_ERROR = 0x01;
-const unsigned int DEBUG_WARN = 0x02;
-const unsigned int DEBUG_DECODE = 0x04;
-const unsigned int DEBUG_STATE = 0x08;
-const unsigned int DEBUG_RW = 0x10;
-const unsigned int DEBUG_BUS = 0x20;
-const unsigned int DEBUG_FLOPPY = 0x40;
-const unsigned int DEBUG_SWITCH = 0x80;
+constexpr unsigned int DEBUG_ERROR = 0x01;
+constexpr unsigned int DEBUG_WARN = 0x02;
+constexpr unsigned int DEBUG_DECODE = 0x04;
+constexpr unsigned int DEBUG_STATE = 0x08;
+constexpr unsigned int DEBUG_RW = 0x10;
+constexpr unsigned int DEBUG_BUS = 0x20;
+constexpr unsigned int DEBUG_FLOPPY = 0x40;
+constexpr unsigned int DEBUG_SWITCH = 0x80;
 volatile unsigned int debug = DEBUG_ERROR | DEBUG_WARN ; // | DEBUG_DECODE | DEBUG_STATE | DEBUG_RW;
 
 bool delete_is_left_arrow = true;
@@ -842,7 +842,7 @@ struct MAINboard : board_base
     // flush anything needing flushing
     void sync()
     {
-        fill_flush_audio();
+        if(false) fill_flush_audio(); // XXX rosa bringup test, want
     }
 
     void enqueue_key(unsigned char k)
@@ -1336,6 +1336,8 @@ struct bus_frontend
 
 bus_frontend bus;
 
+#ifdef SUPPORT_FAKE_6502
+
 extern "C" {
 
 uint8_t read6502(uint16_t address) 
@@ -1349,6 +1351,8 @@ void write6502(uint16_t address, uint8_t value)
 }
 
 };
+
+#endif /* SUPPORT_FAKE_6502 */
 
 void usage(const char *progname)
 {
@@ -1377,39 +1381,6 @@ void cleanup(void)
 
 #ifdef SUPPORT_FAKE_6502
 bool use_fake6502 = false;
-#endif
-
-struct saved_inst {
-    int pc;
-    unsigned char bytes[4];
-};
-
-#if 0
-void disassemble_previous_instructions(deque<saved_inst>& previous_instructions)
-{
-    for(auto it : previous_instructions) {
-        int bytes;
-        string dis;
-        tie(bytes, dis) = disassemble_6502(it.pc, it.bytes);
-        printf("%s\n", dis.c_str());
-    }
-}
-
-const int max_previous_instructions = 100;
-
-void read_instruction_and_save(bus_frontend &bus, int pc, deque<saved_inst>& previous_instructions)
-{
-    saved_inst inst;
-
-    inst.pc = pc;
-    inst.bytes[0] = bus.read(pc + 0);
-    inst.bytes[1] = bus.read(pc + 1);
-    inst.bytes[2] = bus.read(pc + 2);
-    inst.bytes[3] = bus.read(pc + 3);
-    if(previous_instructions.size() > max_previous_instructions)
-        previous_instructions.pop_front();
-    previous_instructions.push_back(inst);
-}
 #endif
 
 string read_bus_and_disassemble(bus_frontend &bus, int pc)
@@ -1631,7 +1602,7 @@ struct averaged_sequence
     averaged_sequence() :
         where(-1)
     {
-        for(int i = 0; i < LENGTH; i++)
+        for(unsigned int i = 0; i < LENGTH; i++)
             list[i] = 0;
         sum = 0;
     }
@@ -1639,7 +1610,7 @@ struct averaged_sequence
     void add(TYPE value)
     {
         if(where == -1) {
-            for(int i = 0; i < LENGTH; i++)
+            for(unsigned int i = 0; i < LENGTH; i++)
                 list[i] = value;
             sum = value * LENGTH;
             where = 0;
@@ -3871,8 +3842,6 @@ int apple2_main(int argc, const char **argv)
         reset6502();
 #endif
 
-    // deque<saved_inst> previous_instructions;
-
     APPLE2Einterface::start(run_fast, diskII_rom_name != NULL, floppy1_name != NULL, floppy2_name != NULL);
 
     chrono::time_point<chrono::system_clock> then = std::chrono::system_clock::now();
@@ -3894,9 +3863,10 @@ int apple2_main(int argc, const char **argv)
                 if(run_rate_limited) {
                     clocks_per_slice = machine_clock_rate / 1000 * rate_limit_millis; 
                 } else if(run_fast) {
-                    clocks_per_slice = machine_clock_rate / 5; 
+                    clocks_per_slice = machine_clock_rate / 50; // 5; 
                 } else {
-                    clocks_per_slice = millis_per_slice * machine_clock_rate / 1000 * 1.05 ;
+                    clocks_per_slice = millis_per_slice * machine_clock_rate / 1000 * 3;
+                    // clocks_per_slice = millis_per_slice * machine_clock_rate / 1000 * 1.05 ;
                 }
             }
             clk_t prev_clock = clk;
