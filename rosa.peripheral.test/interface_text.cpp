@@ -8,6 +8,7 @@
 #include <chrono>
 #include <iostream>
 #include <map>
+#include <unordered_map>
 #include <unistd.h>
 
 #include "interface.h"
@@ -100,6 +101,60 @@ void poll_keyboard()
     } else {
         printf("Got error reading from keyboard: %d\n\r", errno);
         exit(1);
+    }
+}
+
+extern "C" { 
+void enqueue_ascii(int key);
+}
+
+const std::unordered_map<int, int> must_shift = {
+    {'!', '1'},
+    {'@', '2'},
+    {'#', '3'},
+    {'$', '4'},
+    {'%', '5'},
+    {'^', '6'},
+    {'&', '7'},
+    {'*', '8'},
+    {'(', '9'},
+    {')', '0'},
+    {'_', '-'},
+    {'+', '='},
+    {'{', '['},
+    {'}', ']'},
+    {'|', '\\'},
+    {':', ';'},
+    {'"', '\''},
+    {'<', ','},
+    {'>', '.'},
+    {'?', '/'},
+    {'~', '`'},
+};
+
+void enqueue_ascii(int key)
+{
+    if((key == '\n') || (key == '\r')) {
+        event_queue.push_back({KEYDOWN, ENTER});
+        event_queue.push_back({KEYUP, ENTER});
+    } else if((key >= 'a') && (key <= 'z')) {
+        event_queue.push_back({KEYDOWN, LEFT_SHIFT});
+        event_queue.push_back({KEYDOWN, key - 'a' + 'A'});
+        event_queue.push_back({KEYUP, key - 'a' + 'A'});
+        event_queue.push_back({KEYUP, LEFT_SHIFT});
+    } else if((key >= 'A') && (key <= 'Z')) {
+        event_queue.push_back({KEYDOWN, LEFT_SHIFT});
+        event_queue.push_back({KEYDOWN, key});
+        event_queue.push_back({KEYUP, key});
+        event_queue.push_back({KEYUP, LEFT_SHIFT});
+    } else if(must_shift.count(key) > 0) {
+        event_queue.push_back({KEYDOWN, LEFT_SHIFT});
+        event_queue.push_back({KEYDOWN, must_shift.at(key)});
+        event_queue.push_back({KEYUP, must_shift.at(key)});
+        event_queue.push_back({KEYUP, LEFT_SHIFT});
+    } else if((key >= ' ') && (key <= '`')) {
+        event_queue.push_back({KEYDOWN, key});
+        event_queue.push_back({KEYUP, key});
     }
 }
 

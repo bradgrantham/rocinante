@@ -58,8 +58,6 @@ UART_HandleTypeDef huart2;
 SDRAM_HandleTypeDef hsdram1;
 
 /* USER CODE BEGIN PV */
-extern const unsigned char testNTSCImage_bytes[];
-extern unsigned int testNTSCImage_length;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -143,6 +141,8 @@ void msgprintf(const char *fmt, ...)
 
 int fromUSB = -1;
 
+extern void enqueue_ascii(int key);
+
 void USBH_HID_EventCallback(USBH_HandleTypeDef *phost)
 {
     fromUSB = 'F';
@@ -151,6 +151,7 @@ void USBH_HID_EventCallback(USBH_HandleTypeDef *phost)
         char key = USBH_HID_GetASCIICode(kbd);
         if(key != 0) {
             fromUSB = key;
+            enqueue_ascii(key);
         }
     }
 }
@@ -481,7 +482,8 @@ inline ntsc_wave_t NTSCRGBToWave(float r, float g, float b)
 // These are in CCM to reduce contention with SRAM1 during DMA 
 unsigned char SECTION_CCMRAM NTSCEqSyncPulseLine[ROW_SAMPLES];
 unsigned char SECTION_CCMRAM NTSCVSyncLine[ROW_SAMPLES];
-unsigned char SECTION_CCMRAM NTSCBlankLine[ROW_SAMPLES];
+unsigned char SECTION_CCMRAM NTSCBlankLineBW[ROW_SAMPLES];
+unsigned char SECTION_CCMRAM NTSCBlankLineColor[ROW_SAMPLES];
 
 unsigned char SECTION_CCMRAM NTSCSyncTip;
 unsigned char SECTION_CCMRAM NTSCSyncPorch;
@@ -593,7 +595,13 @@ void NTSCGenerateLineBuffers()
 
     NTSCFillEqPulseLine(NTSCEqSyncPulseLine);
     NTSCFillVSyncLine(NTSCVSyncLine);
-    NTSCFillBlankLine(NTSCBlankLine, 1);
+    NTSCFillBlankLine(NTSCBlankLineBW, 0);
+    NTSCFillBlankLine(NTSCBlankLineColor, 1);
+}
+
+int DefaultNeedsColorburst()
+{
+    return 1;
 }
 
 void DefaultFillRowBuffer(int frameIndex, int rowNumber, size_t maxSamples, uint8_t* rowBuffer)
@@ -604,7 +612,9 @@ void DefaultFillRowBuffer(int frameIndex, int rowNumber, size_t maxSamples, uint
 }
 
 typedef void (*NTSCModeFillRowBufferFunc)(int frameIndex, int rowNumber, size_t maxSamples, uint8_t* rowBuffer);
+typedef int (*NTSCModeNeedsColorburstFunc)();
 NTSCModeFillRowBufferFunc NTSCModeFillRowBuffer = DefaultFillRowBuffer;
+NTSCModeNeedsColorburstFunc NTSCModeNeedsColorburst = DefaultNeedsColorburst;
 
 void NTSCFillRowBuffer(int frameNumber, int lineNumber, unsigned char *rowBuffer)
 {
@@ -631,7 +641,8 @@ void NTSCFillRowBuffer(int frameNumber, int lineNumber, unsigned char *rowBuffer
          */
 
         // XXX should just change DMA source address, then this needs to be in SRAM2
-        memcpy(rowBuffer, NTSCBlankLine, sizeof(NTSCBlankLine));
+        // memcpy(rowBuffer, NTSCBlankLine, sizeof(NTSCBlankLine));
+        memcpy(rowBuffer, NTSCModeNeedsColorburst() ? NTSCBlankLineColor : NTSCBlankLineBW, ROW_SAMPLES);
 
     } else if(lineNumber >= 263 && lineNumber <= 271) {
         // Interlacing handling weird lines
@@ -668,14 +679,12 @@ void NTSCFillRowBuffer(int frameNumber, int lineNumber, unsigned char *rowBuffer
          */
 
         // XXX should just change DMA source address, then this needs to be in SRAM2
-        memcpy(rowBuffer, NTSCBlankLine, sizeof(NTSCBlankLine));
+        // memcpy(rowBuffer, NTSCBlankLine, sizeof(NTSCBlankLine));
+        memcpy(rowBuffer, NTSCModeNeedsColorburst() ? NTSCBlankLineColor : NTSCBlankLineBW, ROW_SAMPLES);
 
     } else {
 
-        // Don't need to do these because did both buffers at some point during vertical blank?
-        // memcpy(rowBuffer, NTSCBlankLine, NTSCHSyncClocks + NTSCBackPorchClocks);
-        // memcpy(rowBuffer + ROW_SAMPLES - NTSCFrontPorchClocks, NTSCBlankLine + ROW_SAMPLES - NTSCFrontPorchClocks, NTSCFrontPorchClocks);
-        memcpy(rowBuffer, NTSCBlankLine, ROW_SAMPLES);
+        memcpy(rowBuffer, NTSCModeNeedsColorburst() ? NTSCBlankLineColor : NTSCBlankLineBW, ROW_SAMPLES);
 
         int rowWithinFrame = (lineNumber % 263) * 2 + lineNumber / 263 - 22;
         NTSCModeFillRowBuffer(frameNumber, rowWithinFrame, 704, rowBuffer + 164);
@@ -717,7 +726,7 @@ void DMA2_Stream1_IRQHandler(void)
     NTSCFillRowBuffer(frameNumber, rowNumber, rowDest);
 
     // A little pulse so we know where we are on the line when we finished
-    if(1 /* markHandlerInSamples */) {
+    if(0 /* markHandlerInSamples */) {
         for(int i = 0; i < 14; i++) { GPIOI->ODR = (GPIOI->ODR & 0xFFFFFF00) | 0xFFFFFFE8; }
     }
 
@@ -740,9 +749,8 @@ void startNTSCScanout()
     NTSCGenerateLineBuffers();
 
     HAL_StatusTypeDef status;
-    // memcpy(testNTSCImage_RAM, testNTSCImage_bytes, sizeof(testNTSCImage_bytes));
-    memcpy(rowDoubleBuffer + 0, testNTSCImage_bytes + 0, ROW_SAMPLES);
-    memcpy(rowDoubleBuffer + ROW_SAMPLES, testNTSCImage_bytes + ROW_SAMPLES, ROW_SAMPLES);
+    memcpy(rowDoubleBuffer + 0, NTSCEqSyncPulseLine, ROW_SAMPLES);
+    memcpy(rowDoubleBuffer + ROW_SAMPLES, NTSCEqSyncPulseLine, ROW_SAMPLES);
     rowNumber = 1; // the previous row that was filled in
 
     // Set DMA request on capture-compare channel 1
@@ -1113,6 +1121,11 @@ void WozModeFillRowBuffer40Text(int frameIndex, int rowNumber, size_t maxSamples
     }
 }
 
+int WozModeNeedsColorburst()
+{
+    return (WozModeDisplayMode != TEXT);
+}
+
 void WozModeFillRowBuffer(int frameIndex, int rowNumber, size_t maxSamples, uint8_t* rowBuffer)
 {
     int rowIndex = (rowNumber - WOZ_MODE_TOP) / 2;
@@ -1138,8 +1151,6 @@ void WozModeFillRowBuffer(int frameIndex, int rowNumber, size_t maxSamples, uint
 
 void ImageFillRowBuffer(int frameIndex, int rowNumber, size_t maxSamples, uint8_t* rowBuffer)
 {
-    //memcpy(rowBuffer, testNTSCImage_bytes + 164 + rowNumber * ROW_SAMPLES, maxSamples);
-
     for(int col = 0; col < maxSamples; col++) {
         int checker = (col / 35 + rowNumber / 20) % 2;
         rowBuffer[col] = checker ? NTSCWhite : NTSCBlack;
@@ -1148,8 +1159,6 @@ void ImageFillRowBuffer(int frameIndex, int rowNumber, size_t maxSamples, uint8_
 
 void ImageFillRowBuffer2(int frameIndex, int rowNumber, size_t maxSamples, uint8_t* rowBuffer)
 {
-    //memcpy(rowBuffer, testNTSCImage_bytes + 164 + rowNumber * ROW_SAMPLES, maxSamples);
-
     // times 2 because we are given interlaced height rows, 0 to 238
     if((rowNumber > WOZ_MODE_TOP) && (rowNumber < WOZ_MODE_TOP + WOZ_MODE_HEIGHT * 2)) {
         for(int col = 0; col < WOZ_MODE_WIDTH; col++) {
@@ -1159,14 +1168,7 @@ void ImageFillRowBuffer2(int frameIndex, int rowNumber, size_t maxSamples, uint8
     }
 }
 
-int RowModeIndex = 1;
-NTSCModeFillRowBufferFunc RowModeFunctions[] = {
-    DefaultFillRowBuffer,
-    WozModeFillRowBuffer,
-};
-size_t RowModeFunctionCount = sizeof(RowModeFunctions) / sizeof(RowModeFunctions[0]);
-
-int apple2_main(int argc, char **argv);
+int apple2_main(int argc, const char **argv);
 
 int main_iterate(void)
 {
@@ -1249,25 +1251,6 @@ int main(void)
     }
     HAL_Delay(100);
 
-    if(0){
-        static uint8_t bytes[27];
-        rgb_to_WS2812_NZR(0xFF, 0xFF, 0xFF, bytes);
-        char *p = message;
-        for(int i = 0; i < 27 * 8; i++) {
-            if(i % 3 == 0)
-                *p++ = ' ';
-            if(i % 9 == 0)
-                *p++ = ' ';
-            *p++ = get_bit(LSB, i, bytes) ? '1' : '0';
-        }
-        *p++ = '\n';
-        *p++ = '\0';
-        if(HAL_UART_Transmit_IT(&huart2, (uint8_t *)message, strlen(message)) != HAL_OK) {
-            panic();
-        }
-        HAL_Delay(100);
-    }
-
     while(0) {
         for(int i = 0; i < 1000000; i++) {
             delayNanos(1000);
@@ -1299,6 +1282,33 @@ int main(void)
     };
     printf("here we go\n");
     NTSCModeFillRowBuffer = WozModeFillRowBuffer;
+    NTSCModeNeedsColorburst = WozModeNeedsColorburst;
+    const char* programString = R"(
+10  HGR : POKE  - 16302,0
+11 MX = 280
+12 MY = 192
+20  FOR X = 0 TO MX - 1
+30 CX = X / MX * 3 - 2
+40  FOR Y = 0 TO MY / 2 - 1
+50 CY = Y / MY * 3 - 1.5
+60 C = 0
+70 XX = 0:YY = 0
+80  IF XX * XX + YY * YY > 4 OR C > 15 THEN 200
+90 OX = XX
+100 XX = XX * XX - YY * YY + CX
+110 YY = 2 * OX * YY + CY
+120 C = C + 1
+130  GOTO 80
+200  IF C > 7 THEN C = C - 8: GOTO 200
+205  HCOLOR= C
+210  HPLOT X,Y
+215  HPLOT X,MY - 1 - Y
+220  NEXT Y
+230  NEXT X
+RUN
+)";
+    for(size_t s = 0; s < strlen(programString); s++)
+        enqueue_ascii(programString[s]);
     apple2_main(2, args); /* doesn't return */
 
   while (1) {
@@ -1336,8 +1346,6 @@ int main(void)
         // }
         // HAL_Delay(100);
         lightLED = 1;
-        NTSCModeFillRowBuffer = RowModeFunctions[(++RowModeIndex) % RowModeFunctionCount];
-        HAL_Delay(500);
     }
     // ----- DEBUG LED test
     // HAL_GPIO_WritePin(DEBUG_LED_GPIO_Port, DEBUG_LED_Pin, lightLED ? GPIO_PIN_SET : GPIO_PIN_RESET);
