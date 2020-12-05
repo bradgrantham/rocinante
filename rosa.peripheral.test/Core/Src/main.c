@@ -288,8 +288,7 @@ void write3LEDString(uint8_t colors[3][3])
     int result = HAL_SPI_Transmit_IT(&hspi4, (unsigned char *)buffer, p - buffer); // , 2);
     if(result != HAL_OK){
         static char message[512];
-        sprintf(message, "SPI_Transmit error %d, error code %08lX, status %08lX\n", result, hspi4.ErrorCode, SPI4->SR);
-        HAL_UART_Transmit_IT(&huart2, (uint8_t *)message, strlen(message));
+        printf("SPI_Transmit error %d, error code %08lX, status %08lX\n", result, hspi4.ErrorCode, SPI4->SR);
         panic();
     }
     HAL_GPIO_WritePin(RGBLED_SPI_GPIO_Port, RGBLED_SPI_Pin, GPIO_PIN_RESET);
@@ -726,8 +725,8 @@ void DMA2_Stream1_IRQHandler(void)
     NTSCFillRowBuffer(frameNumber, rowNumber, rowDest);
 
     // A little pulse so we know where we are on the line when we finished
-    if(0 /* markHandlerInSamples */) {
-        for(int i = 0; i < 14; i++) { GPIOI->ODR = (GPIOI->ODR & 0xFFFFFF00) | 0xFFFFFFE8; }
+    if(1 /* markHandlerInSamples */) {
+        for(int i = 0; i < 5; i++) { GPIOI->ODR = (GPIOI->ODR & 0xFFFFFF00) | 0xFFFFFFE8; }
     }
 
     if(DMA2->LISR) {
@@ -738,9 +737,7 @@ void DMA2_Stream1_IRQHandler(void)
 
 void HAL_TIM_ErrorCallback(TIM_HandleTypeDef *htim)
 {
-    sprintf(sprintfBuffer, "error code %08lX, state %08X, line %d\n", hdma_tim1_ch2.ErrorCode, hdma_tim1_ch2.State, why);
-    HAL_UART_Transmit_IT(&huart2, (uint8_t *)sprintfBuffer, strlen(sprintfBuffer));
-    // panic();
+    printf("error code %08lX, state %08X, line %d\n", hdma_tim1_ch2.ErrorCode, hdma_tim1_ch2.State, why);
 }
 
 void startNTSCScanout()
@@ -774,8 +771,7 @@ void startNTSCScanout()
     msgprintf("DMA2_Stream1->FCR = %08lX\n", DMA2_Stream1->FCR);
 
     if(status != HAL_OK){
-        sprintf(sprintfBuffer, "DMA error %08d, error code %08lX, line %d\n", status, hdma_tim1_ch2.ErrorCode, why);
-        HAL_UART_Transmit_IT(&huart2, (uint8_t *)sprintfBuffer, strlen(sprintfBuffer));
+        printf("DMA error %08d, error code %08lX, line %d\n", status, hdma_tim1_ch2.ErrorCode, why);
         panic();
     }
 }
@@ -854,21 +850,28 @@ const int WozModeHGRRowOffsets[192] =
      0x03D0,  0x07D0,  0x0BD0,  0x0FD0,  0x13D0,  0x17D0,  0x1BD0,  0x1FD0,
 };
 
-void WozModeFillRowBufferHGR(int frameIndex, int rowNumber, size_t maxSamples, uint8_t* rowBuffer)
+__attribute__((hot,flatten)) void WozModeFillRowBufferHGR(int frameIndex, int rowNumber, size_t maxSamples, uint8_t* rowBuffer)
 {
     int rowIndex = (rowNumber - WOZ_MODE_TOP) / 2;
     if((rowIndex >= 0) && (rowIndex < 192)) {
         const uint8_t *rowSrc = WozModeHGRBuffers[WozModePage] + WozModeHGRRowOffsets[rowIndex]; // row - ...?
-        memset(rowBuffer + WOZ_MODE_LEFT, NTSCBlack, WOZ_MODE_WIDTH);
+
         for(int byteIndex = 0; byteIndex < 40; byteIndex++) {
-            uint8_t byte = rowSrc[byteIndex];
-            int colorShift = (byte & 0x80) ? 1 : 0;
+
+            uint8_t byte = *rowSrc++;
+
+            int colorShift = byte >> 7;
             uint8_t *rowDst = rowBuffer + WOZ_MODE_LEFT + byteIndex * 14 + colorShift;
+
             for(int bitIndex = 0; bitIndex < 7; bitIndex++) {
-                if(byte & (1 << bitIndex)) {
-                    rowDst[bitIndex * 2 + 0] = NTSCWhite; // or DAC max?
-                    rowDst[bitIndex * 2 + 1] = NTSCWhite; // or DAC max?
+                if(byte & 0x1) {
+                    *rowDst++ = NTSCWhite;
+                    *rowDst++ = NTSCWhite;
+                } else {
+                    *rowDst++ = NTSCBlack;
+                    *rowDst++ = NTSCBlack;
                 }
+                byte = byte >> 1;
             }
         }
     }
@@ -1221,9 +1224,6 @@ int main(void)
   MX_TIM1_Init();
   /* USER CODE BEGIN 2 */
 
-    HAL_UART_Transmit_IT(&huart2, (uint8_t *)sprintfBuffer, strlen(sprintfBuffer));
-    HAL_Delay(100);
-
   if(0){
       GPIO_InitTypeDef GPIO_InitStruct = {0};
       GPIO_InitStruct.Pin = USER1_Pin;
@@ -1238,18 +1238,8 @@ int main(void)
 
   HAL_GPIO_WritePin(RGBLED_SPI_GPIO_Port, RGBLED_SPI_Pin, GPIO_PIN_RESET);
 
-    static char message[512];
-    sprintf(message, "Hello World\n");
-    if(HAL_UART_Transmit_IT(&huart2, (uint8_t *)message, strlen(message)) != HAL_OK) {
-        panic();
-    }
-    HAL_Delay(100);
-
-    sprintf(message, "System clock is %lu\n", HAL_RCC_GetSysClockFreq());
-    if(HAL_UART_Transmit_IT(&huart2, (uint8_t *)message, strlen(message)) != HAL_OK) {
-        panic();
-    }
-    HAL_Delay(100);
+    printf("Hello World\n");
+    printf("System clock is %lu\n", HAL_RCC_GetSysClockFreq());
 
     while(0) {
         for(int i = 0; i < 1000000; i++) {
@@ -1278,6 +1268,7 @@ int main(void)
 
     const char *args[] = {
         "apple2e",
+        "-fast",
         "apple2e.rom",
     };
     printf("here we go\n");
@@ -1309,7 +1300,7 @@ RUN
 )";
     for(size_t s = 0; s < strlen(programString); s++)
         enqueue_ascii(programString[s]);
-    apple2_main(2, args); /* doesn't return */
+    apple2_main(sizeof(args) / sizeof(args[0]), args); /* doesn't return */
 
   while (1) {
 
@@ -1323,28 +1314,16 @@ RUN
     // ----- USER button test
 #if 0
     if(HAL_GPIO_ReadPin(USER1_GPIO_Port, USER1_Pin)) {
-        // sprintf("user 1\n");
-        // if(HAL_UART_Transmit_IT(&huart2, (uint8_t *)message, strlen(message)) != HAL_OK) {
-            // panic();
-        // }
-        // HAL_Delay(100);
+        // printf("user 1\n");
         lightLED = 1;
     }
 #endif
     if(HAL_GPIO_ReadPin(USER2_GPIO_Port, USER2_Pin)) {
-        // sprintf("user 2\n");
-        // if(HAL_UART_Transmit_IT(&huart2, (uint8_t *)message, strlen(message)) != HAL_OK) {
-            // panic();
-        // }
-        // HAL_Delay(100);
+        // printf("user 2\n");
         lightLED = 1;
     }
     if(HAL_GPIO_ReadPin(USER3_GPIO_Port, USER3_Pin)) {
-        // sprintf("user 2\n");
-        // if(HAL_UART_Transmit_IT(&huart2, (uint8_t *)message, strlen(message)) != HAL_OK) {
-            // panic();
-        // }
-        // HAL_Delay(100);
+        // printf("user 3\n");
         lightLED = 1;
     }
     // ----- DEBUG LED test
