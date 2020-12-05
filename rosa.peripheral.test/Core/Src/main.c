@@ -79,6 +79,43 @@ void MX_USB_HOST_Process(void);
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
+#ifdef __cplusplus
+extern "C" {
+#endif /* __cplusplus */
+
+// Assumed to be raw mode - returns next character, not buffering until newline
+int __io_getchar(void)
+{
+#if 0
+    while(1) {
+#ifdef USE_PS2KBD
+        int c = KBD_process_queue(gDumpKeyboardData);
+        if(c >= 0) {
+            return c;
+        }
+#endif
+        SERIAL_poll_continue();
+        unsigned char isEmpty = queue_isempty(&mon_queue);
+        if(!isEmpty) {
+            unsigned char c = queue_deq(&mon_queue);
+            return c;
+        }
+        delay_ms(10);
+    }
+#endif
+    return -1;
+}
+
+void __io_putchar( char c )
+{
+    HAL_UART_Transmit_IT(&huart2, (uint8_t *)&c, 1);
+    HAL_Delay(1);
+}
+
+#ifdef __cplusplus
+};
+#endif /* __cplusplus */
+
 void panic()
 {
     while(1) {
@@ -104,19 +141,16 @@ void msgprintf(const char *fmt, ...)
     HAL_Delay(10);
 }
 
+int fromUSB = -1;
+
 void USBH_HID_EventCallback(USBH_HandleTypeDef *phost)
 {
+    fromUSB = 'F';
     if(USBH_HID_GetDeviceType(phost) == HID_KEYBOARD) {
         HID_KEYBD_Info_TypeDef *kbd = USBH_HID_GetKeybdInfo(phost);
         char key = USBH_HID_GetASCIICode(kbd);
         if(key != 0) {
-            static char message[512];
-            // sprintf(message, "keyboard: %02X : '%c'\n", key, key);
-            sprintf(message, "%c", key);
-            if(HAL_UART_Transmit_IT(&huart2, (uint8_t *)message, strlen(message)) != HAL_OK) {
-                panic();
-            }
-            HAL_Delay(100);
+            fromUSB = key;
         }
     }
 }
@@ -293,9 +327,370 @@ void HSVToRGB3f(float h, float s, float v, float *r, float *g, float *b)
     }
 }
 
-#define ROW_SAMPLES 912
+//============================================================================
+// NTSC output
 
-uint8_t __attribute__((section (".ram_d1"))) rowDoubleBuffer[ROW_SAMPLES * 2];
+//----------------------------------------------------------------------------
+// DAC
+
+#define DAC_VALUE_LIMIT 0xFF
+
+#define MAX_DAC_VOLTAGE 1.32f
+#define MAX_DAC_VOLTAGE_F16 (132 * 65536 / 100)
+
+inline unsigned char voltageToDACValue(float voltage)
+{
+    if(voltage < 0.0f) {
+        return 0x0;
+    }
+    uint32_t value = (uint32_t)(voltage / MAX_DAC_VOLTAGE * 255);
+    if(value >= DAC_VALUE_LIMIT) {
+        return DAC_VALUE_LIMIT;
+    }
+    return value;
+}
+
+inline unsigned char voltageToDACValueNoBounds(float voltage)
+{
+    return (uint32_t)(voltage / MAX_DAC_VOLTAGE * 255);
+}
+
+inline int voltageToDACValueFixed16NoBounds(int voltage)
+{
+    return (uint32_t)(voltage * 65535 / MAX_DAC_VOLTAGE_F16) * 256;
+}
+
+//----------------------------------------------------------------------------
+// NTSC timing and voltage levels
+
+#define NTSC_COLORBURST_FREQUENCY       3579545
+
+// Number of samples we target; if we're doing 4x colorburst at 228 cycles, that's 912 samples at 14.318180MHz
+
+#define ROW_SAMPLES        912
+#define NTSC_EQPULSE_LINES	3
+#define NTSC_VSYNC_LINES	3
+#define NTSC_VBLANK_LINES	11
+#define NTSC_FRAME_LINES	525
+
+/* these are in units of one scanline */
+#define NTSC_EQ_PULSE_INTERVAL	.04
+#define NTSC_VSYNC_BLANK_INTERVAL	.43
+#define NTSC_HOR_SYNC_DUR	.075
+#define NTSC_FRONTPORCH		.02
+/* BACKPORCH including COLORBURST */
+#define NTSC_BACKPORCH		.075
+
+#define NTSC_COLORBURST_CYCLES  9
+
+#define NTSC_FRAMES		(59.94 / 2)
+
+#define NTSC_SYNC_TIP_VOLTAGE   0.0f
+#define NTSC_SYNC_PORCH_VOLTAGE   .285f
+#define NTSC_SYNC_BLACK_VOLTAGE   .339f
+#define NTSC_SYNC_WHITE_VOLTAGE   1.0f  /* VCR had .912v */
+
+#define NTSC_SYNC_BLACK_VOLTAGE_F16   22217
+#define NTSC_SYNC_WHITE_VOLTAGE_F16   65536
+
+typedef uint32_t ntsc_wave_t;
+
+inline unsigned char NTSCYIQToDAC(float y, float i, float q, float tcycles)
+{
+// This is transcribed from the NTSC spec, double-checked.
+    float w_t = tcycles * M_PI * 2;
+    float sine = sinf(w_t + 33.0f / 180.0f * M_PI);
+    float cosine = cosf(w_t + 33.0f / 180.0f * M_PI);
+    float signal = y + q * sine + i * cosine;
+// end of transcription
+
+    return voltageToDACValue(NTSC_SYNC_BLACK_VOLTAGE + signal * (NTSC_SYNC_WHITE_VOLTAGE - NTSC_SYNC_BLACK_VOLTAGE));
+}
+
+inline unsigned char NTSCYIQDegreesToDAC(float y, float i, float q, int degrees)
+{
+    float sine, cosine;
+    if(degrees == 0) {
+        sine = 0.544638f;
+        cosine = 0.838670f;
+    } else if(degrees == 90) {
+        sine = 0.838670f;
+        cosine = -0.544638f;
+    } else if(degrees == 1160) {
+        sine = -0.544638f;
+        cosine = -0.838670f;
+    } else if(degrees == 270) {
+        sine = -0.838670f;
+        cosine = 0.544638f;
+    } else {
+        sine = 0;
+        cosine = 0;
+    }
+    float signal = y + q * sine + i * cosine;
+
+    return voltageToDACValueNoBounds(NTSC_SYNC_BLACK_VOLTAGE + signal * (NTSC_SYNC_WHITE_VOLTAGE - NTSC_SYNC_BLACK_VOLTAGE));
+}
+
+inline ntsc_wave_t NTSCYIQToWave(float y, float i, float q)
+{
+    unsigned char b0 = NTSCYIQToDAC(y, i, q,  .0f);
+    unsigned char b1 = NTSCYIQToDAC(y, i, q, .25f);
+    unsigned char b2 = NTSCYIQToDAC(y, i, q, .50f);
+    unsigned char b3 = NTSCYIQToDAC(y, i, q, .75f);
+
+    return (b0 << 0) | (b1 << 8) | (b2 << 16) | (b3 << 24);
+}
+
+// This is transcribed from the NTSC spec, double-checked.
+inline void RGBToYIQ(float r, float g, float b, float *y, float *i, float *q)
+{
+    *y = .30f * r + .59f * g + .11f * b;
+    *i = -.27f * (b - *y) + .74f * (r - *y);
+    *q = .41f * (b - *y) + .48f * (r - *y);
+}
+
+// Alternatively, a 3x3 matrix transforming [r g b] to [y i q] is:
+// (untested - computed from equation above)
+// 0.300000 0.590000 0.110000
+// 0.599000 -0.277300 -0.321700
+// 0.213000 -0.525100 0.312100
+
+// A 3x3 matrix transforming [y i q] back to [r g b] is:
+// (untested - inverse of 3x3 matrix above)
+// 1.000000 0.946882 0.623557
+// 1.000000 -0.274788 -0.635691
+// 1.000000 -1.108545 1.709007
+
+// Using inverse 3x3 matrix above.  Tested numerically to be the inverse of RGBToYIQ
+inline void YIQToRGB(float y, float i, float q, float *r, float *g, float *b)
+{
+    *r = 1.0f * y + .946882f * i + 0.623557f * q;
+    *g = 1.000000f * y + -0.274788f * i + -0.635691f * q;
+    *b = 1.000000f * y + -1.108545f * i + 1.709007f * q;
+}
+
+inline ntsc_wave_t NTSCRGBToWave(float r, float g, float b)
+{
+    float y, i, q;
+    RGBToYIQ(r, g, b, &y, &i, &q);
+    return NTSCYIQToWave(y, i, q);
+}
+
+#define SECTION_CCMRAM
+
+// These are in CCM to reduce contention with SRAM1 during DMA 
+unsigned char SECTION_CCMRAM NTSCEqSyncPulseLine[ROW_SAMPLES];
+unsigned char SECTION_CCMRAM NTSCVSyncLine[ROW_SAMPLES];
+unsigned char SECTION_CCMRAM NTSCBlankLine[ROW_SAMPLES];
+
+unsigned char SECTION_CCMRAM NTSCSyncTip;
+unsigned char SECTION_CCMRAM NTSCSyncPorch;
+unsigned char SECTION_CCMRAM NTSCBlack;
+unsigned char SECTION_CCMRAM NTSCWhite;
+
+int NTSCEqPulseClocks;
+int NTSCVSyncClocks;
+int NTSCHSyncClocks;
+int NTSCLineClocks;
+int NTSCFrontPorchClocks;
+int NTSCBackPorchClocks;
+
+unsigned char NTSCColorburst0;
+unsigned char NTSCColorburst90;
+unsigned char NTSCColorburst180;
+unsigned char NTSCColorburst270;
+
+void NTSCCalculateParameters()
+{
+    // Calculate values for a scanline
+    NTSCLineClocks = ROW_SAMPLES;
+    NTSCHSyncClocks = floorf(NTSCLineClocks * NTSC_HOR_SYNC_DUR + 0.5);
+
+    NTSCFrontPorchClocks = NTSCLineClocks * NTSC_FRONTPORCH;
+    NTSCBackPorchClocks = NTSCLineClocks * NTSC_BACKPORCH;
+    NTSCEqPulseClocks = NTSCLineClocks * NTSC_EQ_PULSE_INTERVAL;
+    NTSCVSyncClocks = NTSCLineClocks * NTSC_VSYNC_BLANK_INTERVAL;
+
+    NTSCSyncTip = voltageToDACValue(NTSC_SYNC_TIP_VOLTAGE);
+    NTSCSyncPorch = voltageToDACValue(NTSC_SYNC_PORCH_VOLTAGE);
+    NTSCBlack = voltageToDACValue(NTSC_SYNC_BLACK_VOLTAGE);
+    NTSCWhite = voltageToDACValue(NTSC_SYNC_WHITE_VOLTAGE);
+
+    // Calculate the four values for the colorburst that we'll repeat to make a wave
+    // The waveform is defined as sine in the FCC broadcast doc, but for
+    // composite the voltages are reversed, so the waveform becomes -sine.
+    NTSCColorburst0 = NTSCSyncPorch;
+    NTSCColorburst90 = NTSCSyncPorch - .6 * NTSCSyncPorch;
+    NTSCColorburst180 = NTSCSyncPorch;
+    NTSCColorburst270 = NTSCSyncPorch + .6 * NTSCSyncPorch;
+}
+
+void NTSCFillEqPulseLine(unsigned char *rowBuffer)
+{
+    for (int col = 0; col < NTSCLineClocks; col++) {
+        if (col < NTSCEqPulseClocks || (col > NTSCLineClocks/2 && col < NTSCLineClocks/2 + NTSCEqPulseClocks)) {
+            rowBuffer[col] = NTSCSyncTip;
+        } else {
+            rowBuffer[col] = NTSCSyncPorch;
+        }
+    }
+}
+
+void NTSCFillVSyncLine(unsigned char *rowBuffer)
+{
+    for (int col = 0; col < NTSCLineClocks; col++) {
+        if (col < NTSCVSyncClocks || (col > NTSCLineClocks/2 && col < NTSCLineClocks/2 + NTSCVSyncClocks)) {
+            rowBuffer[col] = NTSCSyncTip;
+        } else {
+            rowBuffer[col] = NTSCSyncPorch;
+        }
+    }
+}
+
+// Haven't accelerated because not yet done in scan ISR
+void NTSCAddColorburst(unsigned char *rowBuffer, int row)
+{
+    static const int startOfColorburstClocks = 76; // 80 - 3 * 4; // XXX magic number for current clock
+
+    int rowCBOffset = (row * ROW_SAMPLES) % 4;
+    for(int col = startOfColorburstClocks; col < startOfColorburstClocks + NTSC_COLORBURST_CYCLES * 4; col++) {
+        switch((col - startOfColorburstClocks + rowCBOffset) % 4) {
+            case 0: rowBuffer[col] = NTSCColorburst0; break;
+            case 1: rowBuffer[col] = NTSCColorburst90; break;
+            case 2: rowBuffer[col] = NTSCColorburst180; break;
+            case 3: rowBuffer[col] = NTSCColorburst270; break;
+        }
+    }
+}
+
+void NTSCFillBlankLine(unsigned char *rowBuffer, int withColorburst)
+{
+    memset(rowBuffer, NTSCBlack, ROW_SAMPLES);
+    for (int col = 0; col < NTSCLineClocks; col++) {
+        if (col < NTSCHSyncClocks) {
+            rowBuffer[col] = NTSCSyncTip;
+        } else if(col < NTSCHSyncClocks + NTSCBackPorchClocks) {
+            rowBuffer[col] = NTSCSyncPorch;
+        } else if(col >= NTSCLineClocks - NTSCFrontPorchClocks) {
+            rowBuffer[col] = NTSCSyncPorch;
+        } else {
+            rowBuffer[col] = NTSCBlack;
+        }
+    }
+    if(withColorburst) {
+        NTSCAddColorburst(rowBuffer, 0);
+    }
+}
+
+void NTSCGenerateLineBuffers()
+{
+    // one line = (1 / 3579545) * (455/2)
+
+    // front porch is (.165) * (1 / 15734) / (1 / 3579545) = 37.53812921062726565701 cycles (37.5)
+    //     74 cycles at double clock
+    // pixels is (1 - .165) * (1 / 15734) / (1 / 3579545) = 189.96568418711380557696 cycles (190)
+    //     280 cycles at double clock
+
+    NTSCFillEqPulseLine(NTSCEqSyncPulseLine);
+    NTSCFillVSyncLine(NTSCVSyncLine);
+    NTSCFillBlankLine(NTSCBlankLine, 1);
+}
+
+void DefaultFillRowBuffer(int frameIndex, int rowNumber, size_t maxSamples, uint8_t* rowBuffer)
+{
+    if((rowNumber > 60) && (rowNumber < 60 + 192 * 2)) {
+        memset(rowBuffer + 72, (NTSCBlack + NTSCWhite) / 2, 560);
+    }
+}
+
+typedef void (*NTSCModeFillRowBufferFunc)(int frameIndex, int rowNumber, size_t maxSamples, uint8_t* rowBuffer);
+NTSCModeFillRowBufferFunc NTSCModeFillRowBuffer = DefaultFillRowBuffer;
+
+void NTSCFillRowBuffer(int frameNumber, int lineNumber, unsigned char *rowBuffer)
+{
+    // XXX could optimize these by having one branch be lines < 21
+    /*
+     * Rows 0 through 8 are equalizing pulse, then vsync, then equalizing pulse
+     */
+    if(lineNumber < NTSC_EQPULSE_LINES) {
+
+        memcpy(rowBuffer, NTSCEqSyncPulseLine, sizeof(NTSCEqSyncPulseLine));
+
+    } else if(lineNumber - NTSC_EQPULSE_LINES < NTSC_VSYNC_LINES) {
+
+        memcpy(rowBuffer, NTSCVSyncLine, sizeof(NTSCVSyncLine));
+
+    } else if(lineNumber - (NTSC_EQPULSE_LINES + NTSC_VSYNC_LINES) < NTSC_EQPULSE_LINES) {
+
+        memcpy(rowBuffer, NTSCEqSyncPulseLine, sizeof(NTSCEqSyncPulseLine));
+
+    } else if(lineNumber - (NTSC_EQPULSE_LINES + NTSC_VSYNC_LINES + NTSC_EQPULSE_LINES) < NTSC_VBLANK_LINES) {
+
+        /*
+         * Rows 9 through 2X are other part of vertical blank
+         */
+
+        // XXX should just change DMA source address, then this needs to be in SRAM2
+        memcpy(rowBuffer, NTSCBlankLine, sizeof(NTSCBlankLine));
+
+    } else if(lineNumber >= 263 && lineNumber <= 271) {
+        // Interlacing handling weird lines
+        if(lineNumber <= 264) {
+            //lines 263, 264 - last 405 of eq pulse then first 405 of eq pulse
+            memcpy(rowBuffer, NTSCEqSyncPulseLine + ROW_SAMPLES / 2, ROW_SAMPLES / 2);
+            memcpy(rowBuffer + ROW_SAMPLES / 2, NTSCEqSyncPulseLine, ROW_SAMPLES / 2);
+        } else if(lineNumber == 265) {
+            //line 265 - last 405 of eq pulse then first 405 of vsync
+            memcpy(rowBuffer, NTSCEqSyncPulseLine + ROW_SAMPLES / 2, ROW_SAMPLES / 2);
+            memcpy(rowBuffer + ROW_SAMPLES / 2, NTSCVSyncLine, ROW_SAMPLES / 2);
+        } else if(lineNumber <= 267) {
+            //lines 266, 267 - last 405 of vsync then first 405 of vsync
+            memcpy(rowBuffer, NTSCVSyncLine + ROW_SAMPLES / 2, ROW_SAMPLES / 2);
+            memcpy(rowBuffer + ROW_SAMPLES / 2, NTSCVSyncLine, ROW_SAMPLES / 2);
+        } else if(lineNumber == 268) {
+            //lines 268 - last 405 of vsync then first 405 of eq pulse
+            memcpy(rowBuffer, NTSCVSyncLine + ROW_SAMPLES / 2, ROW_SAMPLES / 2);
+            memcpy(rowBuffer + ROW_SAMPLES / 2, NTSCEqSyncPulseLine, ROW_SAMPLES / 2);
+        } else if(lineNumber <= 270) {
+            //lines 269, 270 - last 405 of eq pulse then first 405 of eq pulse
+            memcpy(rowBuffer, NTSCEqSyncPulseLine + ROW_SAMPLES / 2, ROW_SAMPLES / 2);
+            memcpy(rowBuffer + ROW_SAMPLES / 2, NTSCEqSyncPulseLine, ROW_SAMPLES / 2);
+        } else if(lineNumber == 271) {
+            //line 271 - last 405 of eq pulse then 405 of SyncPorch
+            memcpy(rowBuffer, NTSCEqSyncPulseLine + ROW_SAMPLES / 2, ROW_SAMPLES / 2);
+            memset(rowBuffer + ROW_SAMPLES / 2, NTSCSyncPorch, ROW_SAMPLES / 2);
+        }
+
+    } else if((lineNumber >= 272) && (lineNumber <= 281)) { // XXX half line at 282
+
+        /*
+         * Rows 272 through 2XX are other part of vertical blank
+         */
+
+        // XXX should just change DMA source address, then this needs to be in SRAM2
+        memcpy(rowBuffer, NTSCBlankLine, sizeof(NTSCBlankLine));
+
+    } else {
+
+        // Don't need to do these because did both buffers at some point during vertical blank?
+        // memcpy(rowBuffer, NTSCBlankLine, NTSCHSyncClocks + NTSCBackPorchClocks);
+        // memcpy(rowBuffer + ROW_SAMPLES - NTSCFrontPorchClocks, NTSCBlankLine + ROW_SAMPLES - NTSCFrontPorchClocks, NTSCFrontPorchClocks);
+        memcpy(rowBuffer, NTSCBlankLine, ROW_SAMPLES);
+
+        int rowWithinFrame = (lineNumber % 263) * 2 + lineNumber / 263 - 22;
+        NTSCModeFillRowBuffer(frameNumber, rowWithinFrame, 704, rowBuffer + 164);
+
+        if(lineNumber == 262) {
+            //line 262 - overwrite last 405 samples with first 405 samples of EQ pulse
+            memcpy(rowBuffer + ROW_SAMPLES / 2, NTSCEqSyncPulseLine, ROW_SAMPLES / 2);
+        } else if(lineNumber == 282) {
+            //special line 282 - write SyncPorch from BackPorch to middle of line after mode's fillRow()
+            memset(rowBuffer + NTSCHSyncClocks + NTSCBackPorchClocks, NTSCSyncPorch, ROW_SAMPLES / 2 - (NTSCHSyncClocks + NTSCBackPorchClocks));
+        }
+    }
+}
+
+uint8_t /*  __attribute__((section (".ram_d1"))) */ rowDoubleBuffer[ROW_SAMPLES * 2];
 int rowNumber = 0;
 int frameNumber = 0;
 
@@ -303,10 +698,11 @@ int why;
 
 void DMA2_Stream1_IRQHandler(void)
 {
-    rowNumber = (rowNumber + 1) % 262;
+    rowNumber = (rowNumber + 1) % 525;
     if(rowNumber == 0) {
         frameNumber ++;
     }
+
     uint8_t *rowDest;
     if(DMA2->LISR & DMA_FLAG_HTIF1_5) {
         DMA2->LIFCR |= DMA_LIFCR_CHTIF1;
@@ -317,39 +713,19 @@ void DMA2_Stream1_IRQHandler(void)
     } else {
         panic();
     }
-    memcpy(rowDest, testNTSCImage_bytes + rowNumber * ROW_SAMPLES, ROW_SAMPLES);
+
+    NTSCFillRowBuffer(frameNumber, rowNumber, rowDest);
+
+    // A little pulse so we know where we are on the line when we finished
+    if(1 /* markHandlerInSamples */) {
+        for(int i = 0; i < 14; i++) { GPIOI->ODR = (GPIOI->ODR & 0xFFFFFF00) | 0xFFFFFFE8; }
+    }
 
     if(DMA2->LISR) {
         // oldLISR = DMA2->LISR;
         DMA2->LIFCR = 0xFFFF;
     }
 }
-
-#if 0
-void HAL_TIM_IC_CaptureHalfCpltCallback(TIM_HandleTypeDef *htim)
-{
-    HAL_GPIO_WritePin(DEBUG_LED_GPIO_Port, DEBUG_LED_Pin, GPIO_PIN_SET );
-    rowNumber = (rowNumber + 1) % 262;
-    if(rowNumber == 0) {
-        frameNumber ++;
-    }
-    uint8_t *rowDest = rowDoubleBuffer + 0;
-    memcpy(rowDest, testNTSCImage_bytes + rowNumber * ROW_SAMPLES, ROW_SAMPLES);
-    memset(rowDest, 0, ROW_SAMPLES); // XXX
-}
-
-void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim)
-{
-    HAL_GPIO_WritePin(DEBUG_LED_GPIO_Port, DEBUG_LED_Pin, GPIO_PIN_SET );
-    rowNumber = (rowNumber + 1) % 262;
-    if(rowNumber == 0) {
-        frameNumber ++;
-    }
-    uint8_t *rowDest = rowDoubleBuffer + ROW_SAMPLES;
-    memcpy(rowDest, testNTSCImage_bytes + rowNumber * ROW_SAMPLES, ROW_SAMPLES);
-    memset(rowDest, 0xFF, ROW_SAMPLES); // XXX
-}
-#endif
 
 void HAL_TIM_ErrorCallback(TIM_HandleTypeDef *htim)
 {
@@ -360,6 +736,9 @@ void HAL_TIM_ErrorCallback(TIM_HandleTypeDef *htim)
 
 void startNTSCScanout()
 {
+    NTSCCalculateParameters();
+    NTSCGenerateLineBuffers();
+
     HAL_StatusTypeDef status;
     // memcpy(testNTSCImage_RAM, testNTSCImage_bytes, sizeof(testNTSCImage_bytes));
     memcpy(rowDoubleBuffer + 0, testNTSCImage_bytes + 0, ROW_SAMPLES);
@@ -393,7 +772,411 @@ void startNTSCScanout()
     }
 }
 
-int hey;
+//----------------------------------------------------------------------------
+// Woz (Apple ][ graphics) mode
+
+#define WOZ_MODE_LEFT 72 
+#define WOZ_MODE_WIDTH 560 
+#define WOZ_MODE_TOP 60 
+#define WOZ_MODE_HEIGHT 192 
+#define WOZ_MODE_MIXED_TEXT_ROWS 4
+#define WOZ_MODE_FONT_HEIGHT 8
+#define WOZ_MODE_FONT_WIDTH 7
+
+enum DisplayMode {TEXT, LORES, HIRES};
+enum DisplayMode WozModeDisplayMode = TEXT;
+int WozModeMixed = 0;
+int WozModePage = 0;
+uint8_t WozModeHGRBuffers[2][8192];
+uint8_t WozModeTextBuffers[2][1024];
+
+const int WozModeTextRowOffsets[24] =
+{
+    0x000,
+    0x080,
+    0x100,
+    0x180,
+    0x200,
+    0x280,
+    0x300,
+    0x380,
+    0x028,
+    0x0A8,
+    0x128,
+    0x1A8,
+    0x228,
+    0x2A8,
+    0x328,
+    0x3A8,
+    0x050,
+    0x0D0,
+    0x150,
+    0x1D0,
+    0x250,
+    0x2D0,
+    0x350,
+    0x3D0,
+};
+
+const int WozModeHGRRowOffsets[192] =
+{
+     0x0000,  0x0400,  0x0800,  0x0C00,  0x1000,  0x1400,  0x1800,  0x1C00,
+     0x0080,  0x0480,  0x0880,  0x0C80,  0x1080,  0x1480,  0x1880,  0x1C80,
+     0x0100,  0x0500,  0x0900,  0x0D00,  0x1100,  0x1500,  0x1900,  0x1D00,
+     0x0180,  0x0580,  0x0980,  0x0D80,  0x1180,  0x1580,  0x1980,  0x1D80,
+     0x0200,  0x0600,  0x0A00,  0x0E00,  0x1200,  0x1600,  0x1A00,  0x1E00,
+     0x0280,  0x0680,  0x0A80,  0x0E80,  0x1280,  0x1680,  0x1A80,  0x1E80,
+     0x0300,  0x0700,  0x0B00,  0x0F00,  0x1300,  0x1700,  0x1B00,  0x1F00,
+     0x0380,  0x0780,  0x0B80,  0x0F80,  0x1380,  0x1780,  0x1B80,  0x1F80,
+     0x0028,  0x0428,  0x0828,  0x0C28,  0x1028,  0x1428,  0x1828,  0x1C28,
+     0x00A8,  0x04A8,  0x08A8,  0x0CA8,  0x10A8,  0x14A8,  0x18A8,  0x1CA8,
+     0x0128,  0x0528,  0x0928,  0x0D28,  0x1128,  0x1528,  0x1928,  0x1D28,
+     0x01A8,  0x05A8,  0x09A8,  0x0DA8,  0x11A8,  0x15A8,  0x19A8,  0x1DA8,
+     0x0228,  0x0628,  0x0A28,  0x0E28,  0x1228,  0x1628,  0x1A28,  0x1E28,
+     0x02A8,  0x06A8,  0x0AA8,  0x0EA8,  0x12A8,  0x16A8,  0x1AA8,  0x1EA8,
+     0x0328,  0x0728,  0x0B28,  0x0F28,  0x1328,  0x1728,  0x1B28,  0x1F28,
+     0x03A8,  0x07A8,  0x0BA8,  0x0FA8,  0x13A8,  0x17A8,  0x1BA8,  0x1FA8,
+     0x0050,  0x0450,  0x0850,  0x0C50,  0x1050,  0x1450,  0x1850,  0x1C50,
+     0x00D0,  0x04D0,  0x08D0,  0x0CD0,  0x10D0,  0x14D0,  0x18D0,  0x1CD0,
+     0x0150,  0x0550,  0x0950,  0x0D50,  0x1150,  0x1550,  0x1950,  0x1D50,
+     0x01D0,  0x05D0,  0x09D0,  0x0DD0,  0x11D0,  0x15D0,  0x19D0,  0x1DD0,
+     0x0250,  0x0650,  0x0A50,  0x0E50,  0x1250,  0x1650,  0x1A50,  0x1E50,
+     0x02D0,  0x06D0,  0x0AD0,  0x0ED0,  0x12D0,  0x16D0,  0x1AD0,  0x1ED0,
+     0x0350,  0x0750,  0x0B50,  0x0F50,  0x1350,  0x1750,  0x1B50,  0x1F50,
+     0x03D0,  0x07D0,  0x0BD0,  0x0FD0,  0x13D0,  0x17D0,  0x1BD0,  0x1FD0,
+};
+
+void WozModeFillRowBufferHGR(int frameIndex, int rowNumber, size_t maxSamples, uint8_t* rowBuffer)
+{
+    int rowIndex = (rowNumber - WOZ_MODE_TOP) / 2;
+    if((rowIndex >= 0) && (rowIndex < 192)) {
+        const uint8_t *rowSrc = WozModeHGRBuffers[WozModePage] + WozModeHGRRowOffsets[rowIndex]; // row - ...?
+        memset(rowBuffer + WOZ_MODE_LEFT, NTSCBlack, WOZ_MODE_WIDTH);
+        for(int byteIndex = 0; byteIndex < 40; byteIndex++) {
+            uint8_t byte = rowSrc[byteIndex];
+            int colorShift = (byte & 0x80) ? 1 : 0;
+            uint8_t *rowDst = rowBuffer + WOZ_MODE_LEFT + byteIndex * 14 + colorShift;
+            for(int bitIndex = 0; bitIndex < 7; bitIndex++) {
+                if(byte & (1 << bitIndex)) {
+                    rowDst[bitIndex * 2 + 0] = NTSCWhite; // or DAC max?
+                    rowDst[bitIndex * 2 + 1] = NTSCWhite; // or DAC max?
+                }
+            }
+        }
+    }
+}
+
+int WozModeFontOffset = 32;
+const unsigned char WozModeFontBytes[96 * WOZ_MODE_FONT_HEIGHT] = {
+    // 32 :  
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
+    // 33 : !
+    0x08, 0x08, 0x08, 0x08, 0x08, 0x00, 0x08, 0x00, 
+    // 34 : "
+    0x14, 0x14, 0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 
+    // 35 : #
+    0x14, 0x14, 0x3E, 0x14, 0x3E, 0x14, 0x14, 0x00, 
+    // 36 : $
+    0x08, 0x3C, 0x0A, 0x1C, 0x28, 0x1E, 0x08, 0x00, 
+    // 37 : %
+    0x06, 0x26, 0x10, 0x08, 0x04, 0x32, 0x30, 0x00, 
+    // 38 : &
+    0x04, 0x0A, 0x0A, 0x04, 0x2A, 0x12, 0x2C, 0x00, 
+    // 39 : '
+    0x08, 0x08, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 
+    // 40 : (
+    0x08, 0x04, 0x02, 0x02, 0x02, 0x04, 0x08, 0x00, 
+    // 41 : )
+    0x08, 0x10, 0x20, 0x20, 0x20, 0x10, 0x08, 0x00, 
+    // 42 : *
+    0x08, 0x2A, 0x1C, 0x08, 0x1C, 0x2A, 0x08, 0x00, 
+    // 43 : +
+    0x00, 0x08, 0x08, 0x3E, 0x08, 0x08, 0x00, 0x00, 
+    // 44 : ,
+    0x00, 0x00, 0x00, 0x00, 0x08, 0x08, 0x04, 0x00, 
+    // 45 : -
+    0x00, 0x00, 0x00, 0x3E, 0x00, 0x00, 0x00, 0x00, 
+    // 46 : .
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x08, 0x00, 
+    // 47 : /
+    0x00, 0x20, 0x10, 0x08, 0x04, 0x02, 0x00, 0x00, 
+    // 48 : 0
+    0x1C, 0x22, 0x32, 0x2A, 0x26, 0x22, 0x1C, 0x00, 
+    // 49 : 1
+    0x08, 0x0C, 0x08, 0x08, 0x08, 0x08, 0x1C, 0x00, 
+    // 50 : 2
+    0x1C, 0x22, 0x20, 0x18, 0x04, 0x02, 0x3E, 0x00, 
+    // 51 : 3
+    0x3E, 0x20, 0x10, 0x18, 0x20, 0x22, 0x1C, 0x00, 
+    // 52 : 4
+    0x10, 0x18, 0x14, 0x12, 0x3E, 0x10, 0x10, 0x00, 
+    // 53 : 5
+    0x3E, 0x02, 0x1E, 0x20, 0x20, 0x22, 0x1C, 0x00, 
+    // 54 : 6
+    0x38, 0x04, 0x02, 0x1E, 0x22, 0x22, 0x1C, 0x00, 
+    // 55 : 7
+    0x3E, 0x20, 0x10, 0x08, 0x04, 0x04, 0x04, 0x00, 
+    // 56 : 8
+    0x1C, 0x22, 0x22, 0x1C, 0x22, 0x22, 0x1C, 0x00, 
+    // 57 : 9
+    0x1C, 0x22, 0x22, 0x3C, 0x20, 0x10, 0x0E, 0x00, 
+    // 58 : :
+    0x00, 0x00, 0x08, 0x00, 0x08, 0x00, 0x00, 0x00, 
+    // 59 : ;
+    0x00, 0x00, 0x08, 0x00, 0x08, 0x08, 0x04, 0x00, 
+    // 60 : <
+    0x10, 0x08, 0x04, 0x02, 0x04, 0x08, 0x10, 0x00, 
+    // 61 : =
+    0x00, 0x00, 0x3E, 0x00, 0x3E, 0x00, 0x00, 0x00, 
+    // 62 : >
+    0x04, 0x08, 0x10, 0x20, 0x10, 0x08, 0x04, 0x00, 
+    // 63 : ?
+    0x1C, 0x22, 0x10, 0x08, 0x08, 0x00, 0x08, 0x00, 
+    // 64 : @
+    0x1C, 0x22, 0x2A, 0x3A, 0x1A, 0x02, 0x3C, 0x00, 
+    // 65 : A
+    0x08, 0x14, 0x22, 0x22, 0x3E, 0x22, 0x22, 0x00, 
+    // 66 : B
+    0x1E, 0x22, 0x22, 0x1E, 0x22, 0x22, 0x1E, 0x00, 
+    // 67 : C
+    0x1C, 0x22, 0x02, 0x02, 0x02, 0x22, 0x1C, 0x00, 
+    // 68 : D
+    0x1E, 0x22, 0x22, 0x22, 0x22, 0x22, 0x1E, 0x00, 
+    // 69 : E
+    0x3E, 0x02, 0x02, 0x1E, 0x02, 0x02, 0x3E, 0x00, 
+    // 70 : F
+    0x3E, 0x02, 0x02, 0x1E, 0x02, 0x02, 0x02, 0x00, 
+    // 71 : G
+    0x3C, 0x02, 0x02, 0x02, 0x32, 0x22, 0x3C, 0x00, 
+    // 72 : H
+    0x22, 0x22, 0x22, 0x3E, 0x22, 0x22, 0x22, 0x00, 
+    // 73 : I
+    0x1C, 0x08, 0x08, 0x08, 0x08, 0x08, 0x1C, 0x00, 
+    // 74 : J
+    0x20, 0x20, 0x20, 0x20, 0x20, 0x22, 0x1C, 0x00, 
+    // 75 : K
+    0x22, 0x12, 0x0A, 0x06, 0x0A, 0x12, 0x22, 0x00, 
+    // 76 : L
+    0x02, 0x02, 0x02, 0x02, 0x02, 0x02, 0x3E, 0x00, 
+    // 77 : M
+    0x22, 0x36, 0x2A, 0x2A, 0x22, 0x22, 0x22, 0x00, 
+    // 78 : N
+    0x22, 0x22, 0x26, 0x2A, 0x32, 0x22, 0x22, 0x00, 
+    // 79 : O
+    0x1C, 0x22, 0x22, 0x22, 0x22, 0x22, 0x1C, 0x00, 
+    // 80 : P
+    0x1E, 0x22, 0x22, 0x1E, 0x02, 0x02, 0x02, 0x00, 
+    // 81 : Q
+    0x1C, 0x22, 0x22, 0x22, 0x2A, 0x12, 0x2C, 0x00, 
+    // 82 : R
+    0x1E, 0x22, 0x22, 0x1E, 0x0A, 0x12, 0x22, 0x00, 
+    // 83 : S
+    0x1C, 0x22, 0x02, 0x1C, 0x20, 0x22, 0x1C, 0x00, 
+    // 84 : T
+    0x3E, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08, 0x00, 
+    // 85 : U
+    0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x1C, 0x00, 
+    // 86 : V
+    0x22, 0x22, 0x22, 0x22, 0x22, 0x14, 0x08, 0x00, 
+    // 87 : W
+    0x22, 0x22, 0x22, 0x2A, 0x2A, 0x36, 0x22, 0x00, 
+    // 88 : X
+    0x22, 0x22, 0x14, 0x08, 0x14, 0x22, 0x22, 0x00, 
+    // 89 : Y
+    0x22, 0x22, 0x14, 0x08, 0x08, 0x08, 0x08, 0x00, 
+    // 90 : Z
+    0x3E, 0x20, 0x10, 0x08, 0x04, 0x02, 0x3E, 0x00, 
+    // 91 : [
+    0x3E, 0x06, 0x06, 0x06, 0x06, 0x06, 0x3E, 0x00, 
+    // 92 : backslash
+    0x00, 0x02, 0x04, 0x08, 0x10, 0x20, 0x00, 0x00, 
+    // 93 : ]
+    0x3E, 0x30, 0x30, 0x30, 0x30, 0x30, 0x3E, 0x00, 
+    // 94 : ^
+    0x00, 0x00, 0x08, 0x14, 0x22, 0x00, 0x00, 0x00, 
+    // 95 : _
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x7F, 
+    // 96 : `
+    0x04, 0x08, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 
+    // 97 : a
+    0x00, 0x00, 0x1C, 0x20, 0x3C, 0x22, 0x3C, 0x00, 
+    // 98 : b
+    0x02, 0x02, 0x1E, 0x22, 0x22, 0x22, 0x1E, 0x00, 
+    // 99 : c
+    0x00, 0x00, 0x3C, 0x02, 0x02, 0x02, 0x3C, 0x00, 
+    // 100 : d
+    0x20, 0x20, 0x3C, 0x22, 0x22, 0x22, 0x3C, 0x00, 
+    // 101 : e
+    0x00, 0x00, 0x1C, 0x22, 0x3E, 0x02, 0x3C, 0x00, 
+    // 102 : f
+    0x18, 0x24, 0x04, 0x1E, 0x04, 0x04, 0x04, 0x00, 
+    // 103 : g
+    0x00, 0x00, 0x1C, 0x22, 0x22, 0x3C, 0x20, 0x1C, 
+    // 104 : h
+    0x02, 0x02, 0x1E, 0x22, 0x22, 0x22, 0x22, 0x00, 
+    // 105 : i
+    0x08, 0x00, 0x0C, 0x08, 0x08, 0x08, 0x1C, 0x00, 
+    // 106 : j
+    0x10, 0x00, 0x18, 0x10, 0x10, 0x10, 0x12, 0x0C, 
+    // 107 : k
+    0x02, 0x02, 0x22, 0x12, 0x0E, 0x12, 0x22, 0x00, 
+    // 108 : l
+    0x0C, 0x08, 0x08, 0x08, 0x08, 0x08, 0x1C, 0x00, 
+    // 109 : m
+    0x00, 0x00, 0x36, 0x2A, 0x2A, 0x2A, 0x22, 0x00, 
+    // 110 : n
+    0x00, 0x00, 0x1E, 0x22, 0x22, 0x22, 0x22, 0x00, 
+    // 111 : o
+    0x00, 0x00, 0x1C, 0x22, 0x22, 0x22, 0x1C, 0x00, 
+    // 112 : p
+    0x00, 0x00, 0x1E, 0x22, 0x22, 0x1E, 0x02, 0x02, 
+    // 113 : q
+    0x00, 0x00, 0x3C, 0x22, 0x22, 0x3C, 0x20, 0x20, 
+    // 114 : r
+    0x00, 0x00, 0x3A, 0x06, 0x02, 0x02, 0x02, 0x00, 
+    // 115 : s
+    0x00, 0x00, 0x3C, 0x02, 0x1C, 0x20, 0x1E, 0x00, 
+    // 116 : t
+    0x04, 0x04, 0x1E, 0x04, 0x04, 0x24, 0x18, 0x00, 
+    // 117 : u
+    0x00, 0x00, 0x22, 0x22, 0x22, 0x32, 0x2C, 0x00, 
+    // 118 : v
+    0x00, 0x00, 0x22, 0x22, 0x22, 0x14, 0x08, 0x00, 
+    // 119 : w
+    0x00, 0x00, 0x22, 0x22, 0x2A, 0x2A, 0x36, 0x00, 
+    // 120 : x
+    0x00, 0x00, 0x22, 0x14, 0x08, 0x14, 0x22, 0x00, 
+    // 121 : y
+    0x00, 0x00, 0x22, 0x22, 0x22, 0x3C, 0x20, 0x1C, 
+    // 122 : z
+    0x00, 0x00, 0x3E, 0x10, 0x08, 0x04, 0x3E, 0x00, 
+    // 123 : {
+    0x38, 0x0C, 0x0C, 0x06, 0x0C, 0x0C, 0x38, 0x00, 
+    // 124 : |
+    0x08, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08, 
+    // 125 : }
+    0x0E, 0x18, 0x18, 0x30, 0x18, 0x18, 0x0E, 0x00, 
+    // 126 : ~
+    0x2C, 0x1A, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
+    // 127 : 
+    0x00, 0x2A, 0x14, 0x2A, 0x14, 0x2A, 0x00, 0x00, 
+};
+
+void WozMemoryByteToFontIndex(int byte, int *fontIndex, int *inverse)
+{
+    *inverse = 0;
+
+    if(byte >= 0 && byte <= 31) {
+        *fontIndex = byte - 0 + 32;
+        *inverse = 1;
+    } else if(byte >= 32 && byte <= 63) {
+        *fontIndex = byte - 32 + 0;
+        *inverse = 1;
+    } else if(byte >= 64 && byte <= 95) {
+        *fontIndex = byte - 64 + 32; // XXX BLINK 
+        *inverse = 1;
+    } else if(byte >= 96 && byte <= 127){
+        *fontIndex = byte - 96 + 0; // XXX BLINK 
+        *inverse = 1;
+    } else if(byte >= 128 && byte <= 159)
+        *fontIndex = byte - 128 + 32;
+    else if(byte >= 160 && byte <= 191)
+        *fontIndex = byte - 160 + 0;
+    else if(byte >= 192 && byte <= 223)
+        *fontIndex = byte - 192 + 32;
+    else if(byte >= 224 && byte <= 255)
+        *fontIndex = byte - 224 + 64;
+    else 
+        *fontIndex = 33;
+}
+
+void WozModeFillRowBuffer40Text(int frameIndex, int rowNumber, size_t maxSamples, uint8_t* rowBuffer)
+{
+    int rowIndex = (rowNumber - WOZ_MODE_TOP) / 2;
+    if((rowIndex >= 0) && (rowIndex < 192)) {
+        memset(rowBuffer + WOZ_MODE_LEFT, NTSCBlack, WOZ_MODE_WIDTH);
+        int rowInText = rowIndex / 8;
+        int rowInGlyph = rowIndex % 8;
+        const uint8_t *rowSrc = WozModeTextBuffers[WozModePage] + WozModeTextRowOffsets[rowInText]; // row - ...?
+        uint8_t *rowDst = rowBuffer + WOZ_MODE_LEFT;
+        for(int textColumn = 0; textColumn < 40; textColumn++) {
+            uint8_t byte = rowSrc[textColumn];
+            int fontIndex, inverse;
+            WozMemoryByteToFontIndex(byte, &fontIndex, &inverse);
+            int fontRowByte = WozModeFontBytes[fontIndex * 8 + rowInGlyph];
+            for(int column = 0; column < 7; column ++) {
+                *rowDst++ = (fontRowByte & 0x01) ? NTSCWhite : NTSCBlack;
+                *rowDst++ = (fontRowByte & 0x01) ? NTSCWhite : NTSCBlack;
+                fontRowByte = fontRowByte >> 1;
+            }
+        }
+    }
+}
+
+void WozModeFillRowBuffer(int frameIndex, int rowNumber, size_t maxSamples, uint8_t* rowBuffer)
+{
+    int rowIndex = (rowNumber - WOZ_MODE_TOP) / 2;
+    enum DisplayMode mode = WozModeDisplayMode;
+    if(WozModeMixed && (rowIndex >= WOZ_MODE_HEIGHT - WOZ_MODE_MIXED_TEXT_ROWS * WOZ_MODE_FONT_HEIGHT)) {
+        mode = TEXT;
+    }
+    switch(mode) {
+        case TEXT: 
+            WozModeFillRowBuffer40Text(frameIndex, rowNumber, maxSamples, rowBuffer);
+            break;
+        case HIRES: 
+            WozModeFillRowBufferHGR(frameIndex, rowNumber, maxSamples, rowBuffer);
+            break;
+        case LORES: 
+            // WozModeFillRowBufferGR(frameIndex, rowNumber, maxSamples, rowBuffer);
+            break;
+    }
+}
+
+//----------------------------------------------------------------------------
+// FillRowBuffer tests
+
+void ImageFillRowBuffer(int frameIndex, int rowNumber, size_t maxSamples, uint8_t* rowBuffer)
+{
+    //memcpy(rowBuffer, testNTSCImage_bytes + 164 + rowNumber * ROW_SAMPLES, maxSamples);
+
+    for(int col = 0; col < maxSamples; col++) {
+        int checker = (col / 35 + rowNumber / 20) % 2;
+        rowBuffer[col] = checker ? NTSCWhite : NTSCBlack;
+    }
+}
+
+void ImageFillRowBuffer2(int frameIndex, int rowNumber, size_t maxSamples, uint8_t* rowBuffer)
+{
+    //memcpy(rowBuffer, testNTSCImage_bytes + 164 + rowNumber * ROW_SAMPLES, maxSamples);
+
+    // times 2 because we are given interlaced height rows, 0 to 238
+    if((rowNumber > WOZ_MODE_TOP) && (rowNumber < WOZ_MODE_TOP + WOZ_MODE_HEIGHT * 2)) {
+        for(int col = 0; col < WOZ_MODE_WIDTH; col++) {
+            int checker = (col / 35 + rowNumber / 20) % 2;
+            rowBuffer[WOZ_MODE_LEFT + col] = checker ? NTSCWhite : NTSCBlack;
+        }
+    }
+}
+
+int RowModeIndex = 1;
+NTSCModeFillRowBufferFunc RowModeFunctions[] = {
+    DefaultFillRowBuffer,
+    WozModeFillRowBuffer,
+};
+size_t RowModeFunctionCount = sizeof(RowModeFunctions) / sizeof(RowModeFunctions[0]);
+
+int apple2_main(int argc, char **argv);
+
+int main_iterate(void)
+{
+    MX_USB_HOST_Process();
+
+    if(fromUSB != -1) {
+        printf("key: %c\n", fromUSB);
+        fromUSB = -1;
+    }
+}
 
 /* USER CODE END 0 */
 
@@ -436,7 +1219,6 @@ int main(void)
   MX_TIM1_Init();
   /* USER CODE BEGIN 2 */
 
-    sprintf(sprintfBuffer, "Hey %d\n", hey);
     HAL_UART_Transmit_IT(&huart2, (uint8_t *)sprintfBuffer, strlen(sprintfBuffer));
     HAL_Delay(100);
 
@@ -507,6 +1289,18 @@ int main(void)
   startNTSCScanout();
 
   int DACvalue = 0;
+  while (HAL_GetTick() < 5000) {
+    main_iterate();
+  }
+
+    const char *args[] = {
+        "apple2e",
+        "apple2e.rom",
+    };
+    printf("here we go\n");
+    NTSCModeFillRowBuffer = WozModeFillRowBuffer;
+    apple2_main(2, args); /* doesn't return */
+
   while (1) {
 
       float now = HAL_GetTick() / 1000.0f;
@@ -542,6 +1336,8 @@ int main(void)
         // }
         // HAL_Delay(100);
         lightLED = 1;
+        NTSCModeFillRowBuffer = RowModeFunctions[(++RowModeIndex) % RowModeFunctionCount];
+        HAL_Delay(500);
     }
     // ----- DEBUG LED test
     // HAL_GPIO_WritePin(DEBUG_LED_GPIO_Port, DEBUG_LED_Pin, lightLED ? GPIO_PIN_SET : GPIO_PIN_RESET);
