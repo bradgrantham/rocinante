@@ -725,7 +725,7 @@ void DMA2_Stream1_IRQHandler(void)
     NTSCFillRowBuffer(frameNumber, rowNumber, rowDest);
 
     // A little pulse so we know where we are on the line when we finished
-    if(1 /* markHandlerInSamples */) {
+    if(0 /* markHandlerInSamples */) {
         for(int i = 0; i < 5; i++) { GPIOI->ODR = (GPIOI->ODR & 0xFFFFFF00) | 0xFFFFFFE8; }
     }
 
@@ -1204,6 +1204,8 @@ int main(void)
   HAL_Init();
 
   /* USER CODE BEGIN Init */
+    SCB->CACR |= SCB_CACR_FORCEWT_Msk;
+    SCB_EnableDCache();
 
   /* USER CODE END Init */
 
