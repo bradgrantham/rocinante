@@ -164,6 +164,7 @@ void iterate(const ModeHistory& history, unsigned long long current_byte, float 
     if(history.size() > 0) {
         const auto& lastModePoint = history.back();
         const auto& [when, lastMode] = lastModePoint;
+        (void)when;
         WozModeDisplayMode = lastMode.mode;
         WozModeMixed = lastMode.mixed;
         WozModePage = lastMode.page;
@@ -192,8 +193,6 @@ void set_switches(DisplayMode mode_, bool mixed, int page, bool vid80_, bool alt
     }
 }
 
-extern const int text_row_base_offsets[24];
-
 typedef pair<int, bool> address_auxpage;
 map<address_auxpage, unsigned char> writes;
 int collisions = 0;
@@ -204,12 +203,20 @@ void write2(int addr, bool aux, unsigned char data)
     if((addr >= text_page1_base) && (addr < text_page2_base + text_page_size)) {
         int page = (addr >= text_page2_base) ? 1 : 0;
         int within_page = addr - text_page1_base - page * text_page_size;
+        // size_t within_page = (addr - text_page1_base) % text_page_size;
+        if((within_page < 0) || (within_page >= sizeof(WozModeTextBuffers[0]))) {
+            printf("%d outside HGR buffer\n", within_page);
+        }
         WozModeTextBuffers[page][within_page] = data;
 
     } else if(((addr >= hires_page1_base) && (addr < hires_page1_base + hires_page_size)) || ((addr >= hires_page2_base) && (addr < hires_page2_base + hires_page_size))) {
 
         int page = (addr < hires_page2_base) ? 0 : 1;
         int within_page = addr - hires_page1_base - page * hires_page_size;
+        // size_t within_page = (addr - hires_page1_base) % hires_page_size;
+        if((within_page < 0) || (within_page >= sizeof(WozModeHGRBuffers[0]))) {
+            printf("%d outside HGR buffer\n", within_page);
+        }
         WozModeHGRBuffers[page][within_page] = data;
     }
 }
@@ -245,35 +252,6 @@ bool write(int addr, bool aux, unsigned char data)
     }
     return false;
 }
-
-
-const int text_row_base_offsets[24] =
-{
-    0x000,
-    0x080,
-    0x100,
-    0x180,
-    0x200,
-    0x280,
-    0x300,
-    0x380,
-    0x028,
-    0x0A8,
-    0x128,
-    0x1A8,
-    0x228,
-    0x2A8,
-    0x328,
-    0x3A8,
-    0x050,
-    0x0D0,
-    0x150,
-    0x1D0,
-    0x250,
-    0x2D0,
-    0x350,
-    0x3D0,
-};
 
 
 void show_floppy_activity(int number, bool activity)

@@ -82,7 +82,7 @@ Middlewares/ST/STM32_USB_Host_Library/Class/HID/Src/usbh_hid_parser.c
 CXX_SOURCES = \
 	apple2e.cpp \
 	dis6502.cpp \
-	interface_text.cpp \
+	interface_rosa.cpp \
         $(NULL)
 
 
