@@ -287,7 +287,6 @@ void write3LEDString(uint8_t colors[3][3])
 
     int result = HAL_SPI_Transmit_IT(&hspi4, (unsigned char *)buffer, p - buffer); // , 2);
     if(result != HAL_OK){
-        static char message[512];
         printf("SPI_Transmit error %d, error code %08lX, status %08lX\n", result, hspi4.ErrorCode, SPI4->SR);
         panic();
     }
@@ -1181,6 +1180,7 @@ int main_iterate(void)
         printf("key: %c\n", fromUSB);
         fromUSB = -1;
     }
+    return 0;
 }
 
 /* USER CODE END 0 */
