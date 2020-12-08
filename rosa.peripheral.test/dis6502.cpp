@@ -11,7 +11,7 @@ tuple<int, string> disassemble_6502(int address, const unsigned char* buffer)
     int bytelength;
     char *p = cstr;
 
-    int currentbyte;
+    int currentbyte = 0;
     int previousbyte;
     int paramcount;
     int addrmode;
