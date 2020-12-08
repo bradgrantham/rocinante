@@ -80,6 +80,8 @@ Middlewares/ST/STM32_USB_Host_Library/Class/HID/Src/usbh_hid_mouse.c \
 Middlewares/ST/STM32_USB_Host_Library/Class/HID/Src/usbh_hid_parser.c
 
 CXX_SOURCES = \
+	events.cpp \
+	keyboard.cpp \
 	apple2e.cpp \
 	dis6502.cpp \
 	interface_rosa.cpp \
@@ -143,6 +145,7 @@ AS_INCLUDES =
 
 # C includes
 C_INCLUDES =  \
+-I. \
 -ICore/Inc \
 -IDrivers/STM32H7xx_HAL_Driver/Inc \
 -IDrivers/STM32H7xx_HAL_Driver/Inc/Legacy \
