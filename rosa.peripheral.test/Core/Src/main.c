@@ -30,6 +30,9 @@
 #include <stdio.h>
 #include <stdarg.h>
 
+#include "keyboard.h" // XXX Should not include, should be target API
+#include "events.h" // XXX Should Not Include, should be target API
+
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -141,18 +144,41 @@ void msgprintf(const char *fmt, ...)
 
 int fromUSB = -1;
 
-extern void enqueue_ascii(int key);
-
 void USBH_HID_EventCallback(USBH_HandleTypeDef *phost)
 {
-    fromUSB = 'F';
     if(USBH_HID_GetDeviceType(phost) == HID_KEYBOARD) {
         HID_KEYBD_Info_TypeDef *kbd = USBH_HID_GetKeybdInfo(phost);
-        char key = USBH_HID_GetASCIICode(kbd);
-        if(key != 0) {
-            fromUSB = key;
-            enqueue_ascii(key);
+        if(0) printf("%02X %c%c%c%c%c%c%c%c [%d, %d, %d, %d, %d, %d]\n",
+            kbd->state,
+            kbd->lctrl ? '+' : '_',
+            kbd->lshift ? '+' : '_',
+            kbd->lalt ? '+' : '_',
+            kbd->lgui ? '+' : '_',
+            kbd->rctrl ? '+' : '_',
+            kbd->rshift ? '+' : '_',
+            kbd->ralt ? '+' : '_',
+            kbd->rgui ? '+' : '_',
+            kbd->keys[0], kbd->keys[1], kbd->keys[2], kbd->keys[3], kbd->keys[4], kbd->keys[5]);
+        // char key = USBH_HID_GetASCIICode(kbd);
+        // if(key != 0) {
+            // fromUSB = key;
+        // }
+        int modifiers[8];
+        modifiers[0] = kbd->lctrl;
+        modifiers[1] = kbd->lshift;
+        modifiers[2] = kbd->lalt;
+        modifiers[3] = kbd->lgui;
+        modifiers[4] = kbd->rctrl;
+        modifiers[5] = kbd->rshift;
+        modifiers[6] = kbd->ralt;
+        modifiers[7] = kbd->rgui;
+        ConvertUSBModifiersToKeyEvent(modifiers);
+
+        int keys[6];
+        for(int i = 0; i < 6; i++) {
+            keys[i] = kbd->keys[i];
         }
+        ConvertUSBKeysToKeyEvent(keys);
     }
 }
 
@@ -611,8 +637,17 @@ void DefaultFillRowBuffer(int frameIndex, int rowNumber, size_t maxSamples, uint
 
 typedef void (*NTSCModeFillRowBufferFunc)(int frameIndex, int rowNumber, size_t maxSamples, uint8_t* rowBuffer);
 typedef int (*NTSCModeNeedsColorburstFunc)();
+int NTSCModeFuncsValid = 0;
 NTSCModeFillRowBufferFunc NTSCModeFillRowBuffer = DefaultFillRowBuffer;
 NTSCModeNeedsColorburstFunc NTSCModeNeedsColorburst = DefaultNeedsColorburst;
+
+void NTSCSwitchModeFuncs(NTSCModeFillRowBufferFunc fillBufferFunc, NTSCModeNeedsColorburstFunc needsColorBurstFunc)
+{
+    NTSCModeFuncsValid = 0;
+    NTSCModeNeedsColorburst = needsColorBurstFunc;
+    NTSCModeFillRowBuffer = fillBufferFunc;
+    NTSCModeFuncsValid = 1;
+}
 
 void NTSCFillRowBuffer(int frameNumber, int lineNumber, unsigned char *rowBuffer)
 {
@@ -638,9 +673,12 @@ void NTSCFillRowBuffer(int frameNumber, int lineNumber, unsigned char *rowBuffer
          * Rows 9 through 2X are other part of vertical blank
          */
 
-        // XXX should just change DMA source address, then this needs to be in SRAM2
-        // memcpy(rowBuffer, NTSCBlankLine, sizeof(NTSCBlankLine));
-        memcpy(rowBuffer, NTSCModeNeedsColorburst() ? NTSCBlankLineColor : NTSCBlankLineBW, ROW_SAMPLES);
+        if(NTSCModeFuncsValid) {
+            memcpy(rowBuffer, NTSCModeNeedsColorburst() ? NTSCBlankLineColor : NTSCBlankLineBW, ROW_SAMPLES);
+        } else {
+            memcpy(rowBuffer, NTSCBlankLineBW, ROW_SAMPLES);
+        }
+
 
     } else if(lineNumber >= 263 && lineNumber <= 271) {
         // Interlacing handling weird lines
@@ -676,16 +714,24 @@ void NTSCFillRowBuffer(int frameNumber, int lineNumber, unsigned char *rowBuffer
          * Rows 272 through 2XX are other part of vertical blank
          */
 
-        // XXX should just change DMA source address, then this needs to be in SRAM2
-        // memcpy(rowBuffer, NTSCBlankLine, sizeof(NTSCBlankLine));
-        memcpy(rowBuffer, NTSCModeNeedsColorburst() ? NTSCBlankLineColor : NTSCBlankLineBW, ROW_SAMPLES);
+        if(NTSCModeFuncsValid) {
+            memcpy(rowBuffer, NTSCModeNeedsColorburst() ? NTSCBlankLineColor : NTSCBlankLineBW, ROW_SAMPLES);
+        } else {
+            memcpy(rowBuffer, NTSCBlankLineBW, ROW_SAMPLES);
+        }
 
     } else {
 
-        memcpy(rowBuffer, NTSCModeNeedsColorburst() ? NTSCBlankLineColor : NTSCBlankLineBW, ROW_SAMPLES);
+        if(NTSCModeFuncsValid) {
+            memcpy(rowBuffer, NTSCModeNeedsColorburst() ? NTSCBlankLineColor : NTSCBlankLineBW, ROW_SAMPLES);
+        } else {
+            memcpy(rowBuffer, NTSCBlankLineBW, ROW_SAMPLES);
+        }
 
         int rowWithinFrame = (lineNumber % 263) * 2 + lineNumber / 263 - 22;
-        NTSCModeFillRowBuffer(frameNumber, rowWithinFrame, 704, rowBuffer + 164);
+        if(NTSCModeFuncsValid) {
+            NTSCModeFillRowBuffer(frameNumber, rowWithinFrame, 704, rowBuffer + 164);
+        }
 
         if(lineNumber == 262) {
             //line 262 - overwrite last 405 samples with first 405 samples of EQ pulse
@@ -849,6 +895,8 @@ const int WozModeHGRRowOffsets[192] =
      0x03D0,  0x07D0,  0x0BD0,  0x0FD0,  0x13D0,  0x17D0,  0x1BD0,  0x1FD0,
 };
 
+// 00112233445566
+// x0011223344556x00112233445
 __attribute__((hot,flatten)) void WozModeFillRowBufferHGR(int frameIndex, int rowNumber, size_t maxSamples, uint8_t* rowBuffer)
 {
     int rowIndex = (rowNumber - WOZ_MODE_TOP) / 2;
@@ -859,7 +907,7 @@ __attribute__((hot,flatten)) void WozModeFillRowBufferHGR(int frameIndex, int ro
 
             uint8_t byte = *rowSrc++;
 
-            int colorShift = byte >> 7;
+            uint8_t colorShift = byte >> 7;
             uint8_t *rowDst = rowBuffer + WOZ_MODE_LEFT + byteIndex * 14 + colorShift;
 
             for(int bitIndex = 0; bitIndex < 7; bitIndex++) {
@@ -867,8 +915,8 @@ __attribute__((hot,flatten)) void WozModeFillRowBufferHGR(int frameIndex, int ro
                     *rowDst++ = NTSCWhite;
                     *rowDst++ = NTSCWhite;
                 } else {
-                    *rowDst++ = NTSCBlack;
-                    *rowDst++ = NTSCBlack;
+                    // *rowDst++ = NTSCBlack;
+                    // *rowDst++ = NTSCBlack;
                 }
                 byte = byte >> 1;
             }
@@ -1174,6 +1222,11 @@ int apple2_main(int argc, const char **argv);
 
 int main_iterate(void)
 {
+    static int q = 0;
+    if(++q > 100000) {
+        q = 0;
+        printf(".");
+    }
     MX_USB_HOST_Process();
 
     if(fromUSB != -1) {
@@ -1182,6 +1235,141 @@ int main_iterate(void)
     }
     return 0;
 }
+
+void HGRModeTest()
+{
+    printf("HGR Mode Test\n");
+
+    memset(WozModeHGRBuffers[0], 0, sizeof(WozModeHGRBuffers[0]));
+    memset(WozModeHGRBuffers[1], 0, sizeof(WozModeHGRBuffers[1]));
+    WozModeDisplayMode = HIRES;
+    NTSCSwitchModeFuncs(WozModeFillRowBuffer, WozModeNeedsColorburst);
+
+    static int x = 0;
+    static int y = 0;
+
+    struct Event ev;
+    int done = 0;
+    int palette = 0x00;
+
+    int repeatKey = 0;
+    int repeatState = 0;
+    int repeatTick = 0;
+
+    while(!done) {
+        int haveEvent = EventPoll(&ev);
+        
+        if(!haveEvent) {
+            int now = HAL_GetTick();
+            switch(repeatState) {
+                case 1:
+                    if(now - repeatTick > 500) {
+                        repeatState = 2;
+                        repeatTick = now;
+                        ev.eventType = KEYBOARD_RAW;
+                        ev.u.keyboardRaw.isPress = 1;
+                        ev.u.keyboardRaw.key = repeatKey;
+                        haveEvent = 1;
+                    }
+                    break;
+                case 2:
+                    if(now - repeatTick > 20) {
+                        repeatTick = now;
+                        ev.eventType = KEYBOARD_RAW;
+                        ev.u.keyboardRaw.isPress = 1;
+                        ev.u.keyboardRaw.key = repeatKey;
+                        haveEvent = 1;
+                    }
+                    break;
+            }
+        }
+
+        if(haveEvent) {
+            int draw = 0;
+            int clear = 0;
+            switch(ev.eventType) {
+                case KEYBOARD_RAW: {
+                    const struct KeyboardRawEvent raw = ev.u.keyboardRaw;
+                    if(raw.isPress) {
+
+                        if((repeatKey != raw.key) || (repeatState == 0)) {
+                            repeatKey = raw.key;
+                            repeatState = 1;
+                            repeatTick = HAL_GetTick();
+                        }
+
+                        if(raw.key == KEYCAP_UP) {
+                            y -= 1;
+                            draw = 1;
+                        } else if(raw.key == KEYCAP_DOWN) {
+                            y += 1;
+                            draw = 1;
+                        } else if(raw.key == KEYCAP_LEFT) {
+                            x -= 1;
+                            draw = 1;
+                        } else if(raw.key == KEYCAP_RIGHT) {
+                            x += 1;
+                            draw = 1;
+                        } else if(raw.key == KEYCAP_1_EXCLAMATION) {
+                            palette = 0x00;
+                            draw = 1;
+                        } else if(raw.key == KEYCAP_2_AT) {
+                            palette = 0x80;
+                            draw = 1;
+                        } else if(raw.key == KEYCAP_END) {
+                            clear = 1;
+                        }
+                    } else {
+                        repeatState = 0;
+                    }
+                    break;
+                }
+                default:
+                    // pass;
+                    break;
+            }
+            if(draw) {
+                WozModeHGRBuffers[0][WozModeHGRRowOffsets[y] + x / 7] |= (1 << (x % 7)) | palette;
+            } 
+            if(clear) {
+                memset(WozModeHGRBuffers[0], 0, sizeof(WozModeHGRBuffers[0]));
+                memset(WozModeHGRBuffers[1], 0, sizeof(WozModeHGRBuffers[1]));
+            }
+        }
+
+        main_iterate();
+    }
+}
+
+void TextModeTest()
+{
+    printf("Text Mode Text\n");
+
+    memset(WozModeTextBuffers[0], 248, 1024);
+    memset(WozModeTextBuffers[1], 248, 1024);
+    NTSCSwitchModeFuncs(WozModeFillRowBuffer, WozModeNeedsColorburst);
+    // fill with ONE TWO THREE FOUR over and over again
+
+    const char *str = "ONE TWO FREE FOUR ";
+    int stringIndex = 0;
+
+    char *buffer = malloc(sizeof(WozModeTextBuffers[0]) * 2);
+    for(size_t s = 0; s < sizeof(WozModeTextBuffers[0]) * 2; s++) {
+        buffer[s] = str[stringIndex];
+        stringIndex = (stringIndex + 1) % strlen(str);
+    }
+
+    int bufferIndex = 0;
+    while(1) {
+        memcpy(WozModeTextBuffers[0], buffer + bufferIndex, sizeof(WozModeTextBuffers[0]));
+        bufferIndex = (bufferIndex + 1) % sizeof(WozModeTextBuffers[0]);
+        char *foobar = malloc(bufferIndex * 667 % 513);
+        free(foobar);
+        main_iterate();
+    }
+}
+
+extern void enqueue_ascii(int s);
 
 /* USER CODE END 0 */
 
@@ -1225,20 +1413,20 @@ int main(void)
   MX_USB_HOST_Init();
   MX_TIM1_Init();
   /* USER CODE BEGIN 2 */
-
-  if(0){
-      GPIO_InitTypeDef GPIO_InitStruct = {0};
-      GPIO_InitStruct.Pin = USER1_Pin;
-      GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-      GPIO_InitStruct.Pull = GPIO_PULLDOWN;
-      HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
-  }
+  
+    if(0){
+        GPIO_InitTypeDef GPIO_InitStruct = {0};
+        GPIO_InitStruct.Pin = USER1_Pin;
+        GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+        GPIO_InitStruct.Pull = GPIO_PULLDOWN;
+        HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
+    }
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
 
-  HAL_GPIO_WritePin(RGBLED_SPI_GPIO_Port, RGBLED_SPI_Pin, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(RGBLED_SPI_GPIO_Port, RGBLED_SPI_Pin, GPIO_PIN_RESET);
 
     printf("Hello World\n");
     printf("System clock is %lu\n", HAL_RCC_GetSysClockFreq());
@@ -1254,28 +1442,25 @@ int main(void)
         HAL_GPIO_WritePin(DEBUG_LED_GPIO_Port, DEBUG_LED_Pin, GPIO_PIN_RESET );
     }
 
-  uint8_t colors[3][3];
+    uint8_t colors[3][3];
 
-  colors[0][0] = 0x10; colors[0][1] = 0; colors[0][2] = 0;
-  colors[1][0] = 0; colors[1][1] = 0x10; colors[1][2] = 0;
-  colors[2][0] = 0; colors[2][1] = 0; colors[2][2] = 0x10;
-  write3LEDString(colors);
+    colors[0][0] = 0x10; colors[0][1] = 0; colors[0][2] = 0;
+    colors[1][0] = 0; colors[1][1] = 0x10; colors[1][2] = 0;
+    colors[2][0] = 0; colors[2][1] = 0; colors[2][2] = 0x10;
+    write3LEDString(colors);
 
-  startNTSCScanout();
+    startNTSCScanout();
 
-  int DACvalue = 0;
-  while (HAL_GetTick() < 5000) {
-    main_iterate();
-  }
+    if(0) TextModeTest();
+
+    if(1) HGRModeTest();
 
     const char *args[] = {
         "apple2e",
         "-fast",
         "apple2e.rom",
     };
-    printf("here we go\n");
-    NTSCModeFillRowBuffer = WozModeFillRowBuffer;
-    NTSCModeNeedsColorburst = WozModeNeedsColorburst;
+    NTSCSwitchModeFuncs(WozModeFillRowBuffer, WozModeNeedsColorburst);
     const char* programString = R"(
 10  HGR : POKE  - 16302,0
 11 MX = 280
@@ -1298,64 +1483,64 @@ int main(void)
 215  HPLOT X,MY - 1 - Y
 220  NEXT Y
 230  NEXT X
+REM 5 FOR X = 1 TO 100 : PRINT X : NEXT X
+REM 5 GOTO 5
+REM 6 END
 RUN
 )";
-    for(size_t s = 0; s < strlen(programString); s++)
+    if(1)for(size_t s = 0; s < strlen(programString); s++)
         enqueue_ascii(programString[s]);
     apple2_main(sizeof(args) / sizeof(args[0]), args); /* doesn't return */
 
-  while (1) {
+    while (1) {
 
-      float now = HAL_GetTick() / 1000.0f;
-      int lightLED = 0;
+        float now = HAL_GetTick() / 1000.0f;
+        int lightLED = 0;
 
-    /* USER CODE END WHILE */
-    MX_USB_HOST_Process();
+        /* USER CODE END WHILE */
+        MX_USB_HOST_Process();
 
-    /* USER CODE BEGIN 3 */
-    // ----- USER button test
+        /* USER CODE BEGIN 3 */
+        // ----- USER button test
 #if 0
-    if(HAL_GPIO_ReadPin(USER1_GPIO_Port, USER1_Pin)) {
-        // printf("user 1\n");
-        lightLED = 1;
-    }
+        if(HAL_GPIO_ReadPin(USER1_GPIO_Port, USER1_Pin)) {
+            // printf("user 1\n");
+            lightLED = 1;
+        }
 #endif
-    if(HAL_GPIO_ReadPin(USER2_GPIO_Port, USER2_Pin)) {
-        // printf("user 2\n");
-        lightLED = 1;
+        if(HAL_GPIO_ReadPin(USER2_GPIO_Port, USER2_Pin)) {
+            // printf("user 2\n");
+            lightLED = 1;
+        }
+        if(HAL_GPIO_ReadPin(USER3_GPIO_Port, USER3_Pin)) {
+            // printf("user 3\n");
+            lightLED = 1;
+        }
+        // ----- DEBUG LED test
+        // HAL_GPIO_WritePin(DEBUG_LED_GPIO_Port, DEBUG_LED_Pin, lightLED ? GPIO_PIN_SET : GPIO_PIN_RESET);
+
+        // ----- WS2812B RGB LED test
+        int halves = (int)(now * 2);
+        if(halves % 2) {
+            colors[0][0] = 0; colors[0][1] = 0; colors[0][2] = 0;
+        } else {
+            colors[0][0] = 0; colors[0][1] = 32; colors[0][2] = 0;
+        }
+
+        float h = now / 2.0f * 3.14159;
+        float s = 1.0f;
+        float v = 1.0f;
+        float r, g, b;
+        HSVToRGB3f(h, s, v, &r, &g, &b);
+        colors[1][0] = r * 32; colors[1][1] = g * 32; colors[1][2] = b * 32;
+
+        int phase = (int)now % 2;
+        float value = phase ? (now - (int)now) : (1 - (now - (int)now));
+        colors[2][0] = value * 32; colors[2][1] = value * 32; colors[2][2] = value * 32;
+
+        write3LEDString(colors);
+  
     }
-    if(HAL_GPIO_ReadPin(USER3_GPIO_Port, USER3_Pin)) {
-        // printf("user 3\n");
-        lightLED = 1;
-    }
-    // ----- DEBUG LED test
-    // HAL_GPIO_WritePin(DEBUG_LED_GPIO_Port, DEBUG_LED_Pin, lightLED ? GPIO_PIN_SET : GPIO_PIN_RESET);
-
-    // ----- WS2812B RGB LED test
-    int halves = (int)(now * 2);
-    if(halves % 2) {
-        colors[0][0] = 0; colors[0][1] = 0; colors[0][2] = 0;
-    } else {
-        colors[0][0] = 0; colors[0][1] = 32; colors[0][2] = 0;
-    }
-
-    float h = now / 2.0f * 3.14159;
-    float s = 1.0f;
-    float v = 1.0f;
-    float r, g, b;
-    HSVToRGB3f(h, s, v, &r, &g, &b);
-    colors[1][0] = r * 32; colors[1][1] = g * 32; colors[1][2] = b * 32;
-
-    int phase = (int)now % 2;
-    float value = phase ? (now - (int)now) : (1 - (now - (int)now));
-    colors[2][0] = value * 32; colors[2][1] = value * 32; colors[2][2] = value * 32;
-
-    write3LEDString(colors);
-
-    // ----- Composite DAC test
-    // DACvalue = (DACvalue + 1) % 256;
-    // GPIOI->ODR = (GPIOI->ODR & 0xFFFFFF00) | DACvalue;
-  }
 
   /* USER CODE END 3 */
 }
