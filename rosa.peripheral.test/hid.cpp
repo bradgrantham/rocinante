@@ -3,7 +3,7 @@
 #include <map> 
 #include <algorithm> 
 
-#include "keyboard.h"
+#include "hid.h"
 #include "events.h"
 #include "events_internal.h"
 
@@ -78,5 +78,27 @@ void ConvertUSBKeysToKeyEvent(int keys[6])
 
     oldKeyStatus = newKeyStatus;
     std::copy_n(keys, 6, oldKeys.begin());
+}
+
+void ConvertUSBMouseToMouseEvent(int dx, int dy, int buttons[3])
+{
+    static std::array<int, 3> oldButtons = {0};
+    if((dx != 0) && (dy != 0)) {
+        Event e { Event::MOUSE_MOVE }; e.u.mouseMove = { dx, dy };
+        SystemEventEnqueue(e);
+    } else {
+        for(int i = 0; i < 3; i++) {
+            if(buttons[i] != oldButtons[i]) {
+                if(buttons[i]) {
+                    Event e { Event::MOUSE_BUTTONPRESS }; e.u.mouseButtonPress.button = i;
+                    SystemEventEnqueue(e);
+                } else {
+                    Event e { Event::MOUSE_BUTTONRELEASE }; e.u.mouseButtonRelease.button = i;
+                    SystemEventEnqueue(e);
+                }
+            }
+            oldButtons[i] = buttons[i];
+        }
+    }
 }
 
