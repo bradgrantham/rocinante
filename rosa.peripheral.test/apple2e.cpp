@@ -366,16 +366,16 @@ void floppy_NybblizeImage(const unsigned char *image, unsigned char *nybblized, 
 // XXX readonly at this time
 struct DISKIIboard : board_base
 {
-    const unsigned int CA0 = 0xC0E0; // stepper phase 0 / control line 0
-    const unsigned int CA1 = 0xC0E2; // stepper phase 1 / control line 1
-    const unsigned int CA2 = 0xC0E4; // stepper phase 2 / control line 2
-    const unsigned int CA3 = 0xC0E6; // stepper phase 3 / control strobe
-    const unsigned int ENABLE = 0xC0E8; // disk drive off/on
-    const unsigned int SELECT = 0xC0EA; // select drive 1/2
-    const unsigned int Q6L = 0xC0EC; // IO strobe for read
-    const unsigned int Q6H = 0xC0ED; // IO strobe for write
-    const unsigned int Q7L = 0xC0EE; // IO strobe for clear
-    const unsigned int Q7H = 0xC0EF; // IO strobe for shift
+    static constexpr int CA0 = 0xC0E0; // stepper phase 0 / control line 0
+    static constexpr int CA1 = 0xC0E2; // stepper phase 1 / control line 1
+    static constexpr int CA2 = 0xC0E4; // stepper phase 2 / control line 2
+    static constexpr int CA3 = 0xC0E6; // stepper phase 3 / control strobe
+    static constexpr int ENABLE = 0xC0E8; // disk drive off/on
+    static constexpr int SELECT = 0xC0EA; // select drive 1/2
+    static constexpr int Q6L = 0xC0EC; // IO strobe for read
+    static constexpr int Q6H = 0xC0ED; // IO strobe for write
+    static constexpr int Q7L = 0xC0EE; // IO strobe for clear
+    static constexpr int Q7H = 0xC0EF; // IO strobe for shift
 
     map<unsigned int, string> io = {
         {0xC0E0, "CA0OFF"},
