@@ -30,7 +30,7 @@
 #include <stdio.h>
 #include <stdarg.h>
 
-#include "keyboard.h" // XXX Should not include, should be target API
+#include "hid.h" // XXX Should not include, should be target API
 #include "events.h" // XXX Should Not Include, should be target API
 
 /* USER CODE END Includes */
@@ -50,6 +50,8 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
+
+SD_HandleTypeDef hsd2;
 
 SPI_HandleTypeDef hspi4;
 
@@ -71,6 +73,7 @@ static void MX_USART2_UART_Init(void);
 static void MX_FMC_Init(void);
 static void MX_SPI4_Init(void);
 static void MX_TIM1_Init(void);
+static void MX_SDMMC2_SD_Init(void);
 void MX_USB_HOST_Process(void);
 
 /* USER CODE BEGIN PFP */
@@ -179,6 +182,17 @@ void USBH_HID_EventCallback(USBH_HandleTypeDef *phost)
             keys[i] = kbd->keys[i];
         }
         ConvertUSBKeysToKeyEvent(keys);
+    } else if(USBH_HID_GetDeviceType(phost) == HID_MOUSE) {
+        HID_MOUSE_Info_TypeDef *mouse = USBH_HID_GetMouseInfo(phost);
+        int dx = (mouse->x >= 128) ? (mouse->x - 256) : mouse->x;
+        int dy = (mouse->y >= 128) ? (mouse->y - 256) : mouse->y;
+        int buttons[3];
+        for(int i = 0; i < 3; i++) {
+            buttons[i] = mouse->buttons[i];
+        }
+        ConvertUSBMouseToMouseEvent(dx, dy, buttons);
+        if(0)printf("mouse %d, %d, %d, %d, %d\n", mouse->x, mouse->y,
+            mouse->buttons[0], mouse->buttons[1], mouse->buttons[2]);
     }
 }
 
@@ -915,8 +929,12 @@ __attribute__((hot,flatten)) void WozModeFillRowBufferHGR(int frameIndex, int ro
                     *rowDst++ = NTSCWhite;
                     *rowDst++ = NTSCWhite;
                 } else {
-                    // *rowDst++ = NTSCBlack;
-                    // *rowDst++ = NTSCBlack;
+                    if(0) {
+                        *rowDst++ = NTSCBlack;
+                        *rowDst++ = NTSCBlack;
+                    } else {
+                        rowDst += 2;
+                    }
                 }
                 byte = byte >> 1;
             }
@@ -1245,8 +1263,8 @@ void HGRModeTest()
     WozModeDisplayMode = HIRES;
     NTSCSwitchModeFuncs(WozModeFillRowBuffer, WozModeNeedsColorburst);
 
-    static int x = 0;
-    static int y = 0;
+    static int x = 140;
+    static int y = 96;
 
     struct Event ev;
     int done = 0;
@@ -1288,6 +1306,21 @@ void HGRModeTest()
             int draw = 0;
             int clear = 0;
             switch(ev.eventType) {
+                case MOUSE_MOVE: {
+                    const struct MouseMoveEvent move = ev.u.mouseMove;
+                    x += move.x;
+                    y += move.y;
+                    draw = 1;
+                    break;
+                }
+                case MOUSE_BUTTONPRESS: {
+                    const struct MouseButtonPressEvent press = ev.u.mouseButtonPress;
+                    if(press.button == 0) {
+                        clear = 1;
+                    } else {
+                        palette ^= 0x80;
+                    }
+                }
                 case KEYBOARD_RAW: {
                     const struct KeyboardRawEvent raw = ev.u.keyboardRaw;
                     if(raw.isPress) {
@@ -1412,6 +1445,7 @@ int main(void)
   MX_SPI4_Init();
   MX_USB_HOST_Init();
   MX_TIM1_Init();
+  MX_SDMMC2_SD_Init();
   /* USER CODE BEGIN 2 */
   
     if(0){
@@ -1497,10 +1531,10 @@ RUN
         float now = HAL_GetTick() / 1000.0f;
         int lightLED = 0;
 
-        /* USER CODE END WHILE */
-        MX_USB_HOST_Process();
+    /* USER CODE END WHILE */
+    MX_USB_HOST_Process();
 
-        /* USER CODE BEGIN 3 */
+    /* USER CODE BEGIN 3 */
         // ----- USER button test
 #if 0
         if(HAL_GPIO_ReadPin(USER1_GPIO_Port, USER1_Pin)) {
@@ -1601,8 +1635,10 @@ void SystemClock_Config(void)
     Error_Handler();
   }
   PeriphClkInitStruct.PeriphClockSelection = RCC_PERIPHCLK_USART2|RCC_PERIPHCLK_SPI4
-                              |RCC_PERIPHCLK_USB|RCC_PERIPHCLK_FMC;
+                              |RCC_PERIPHCLK_SDMMC|RCC_PERIPHCLK_USB
+                              |RCC_PERIPHCLK_FMC;
   PeriphClkInitStruct.FmcClockSelection = RCC_FMCCLKSOURCE_D1HCLK;
+  PeriphClkInitStruct.SdmmcClockSelection = RCC_SDMMCCLKSOURCE_PLL;
   PeriphClkInitStruct.Spi45ClockSelection = RCC_SPI45CLKSOURCE_D2PCLK1;
   PeriphClkInitStruct.Usart234578ClockSelection = RCC_USART234578CLKSOURCE_D2PCLK1;
   PeriphClkInitStruct.UsbClockSelection = RCC_USBCLKSOURCE_HSI48;
@@ -1613,6 +1649,38 @@ void SystemClock_Config(void)
   /** Enable USB Voltage detector
   */
   HAL_PWREx_EnableUSBVoltageDetector();
+}
+
+/**
+  * @brief SDMMC2 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_SDMMC2_SD_Init(void)
+{
+
+  /* USER CODE BEGIN SDMMC2_Init 0 */
+
+  /* USER CODE END SDMMC2_Init 0 */
+
+  /* USER CODE BEGIN SDMMC2_Init 1 */
+
+  /* USER CODE END SDMMC2_Init 1 */
+  hsd2.Instance = SDMMC2;
+  hsd2.Init.ClockEdge = SDMMC_CLOCK_EDGE_RISING;
+  hsd2.Init.ClockPowerSave = SDMMC_CLOCK_POWER_SAVE_DISABLE;
+  hsd2.Init.BusWide = SDMMC_BUS_WIDE_4B;
+  hsd2.Init.HardwareFlowControl = SDMMC_HARDWARE_FLOW_CONTROL_DISABLE;
+  hsd2.Init.ClockDiv = 0;
+  hsd2.Init.TranceiverPresent = SDMMC_TRANSCEIVER_NOT_PRESENT;
+  if (HAL_SD_Init(&hsd2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN SDMMC2_Init 2 */
+
+  /* USER CODE END SDMMC2_Init 2 */
+
 }
 
 /**
@@ -1840,9 +1908,9 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOG_CLK_ENABLE();
+  __HAL_RCC_GPIOB_CLK_ENABLE();
   __HAL_RCC_GPIOD_CLK_ENABLE();
   __HAL_RCC_GPIOI_CLK_ENABLE();
-  __HAL_RCC_GPIOB_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(DEBUG_LED_GPIO_Port, DEBUG_LED_Pin, GPIO_PIN_RESET);
