@@ -1,3 +1,9 @@
+Weird USB fail
+    works if FRACTAL.A is running *if* I'm using read_regions, write_regions, and repage_regions
+        -> interaction with a softswitch and a backed region?
+    It's not writes from interface.rosa.cpp; I have disabled them and USB is still hung
+    connects and disconnects are still reported
+
 is HAL_TIM_IC_MspInit being called?
     it calls __HAL_LINKDMA(htim_ic,hdma[TIM_DMA_ID_UPDATE],hdma_tim1_up);
 
