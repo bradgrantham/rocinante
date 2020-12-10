@@ -19,6 +19,7 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "fatfs.h"
 #include "usb_host.h"
 
 /* Private includes ----------------------------------------------------------*/
@@ -63,6 +64,9 @@ UART_HandleTypeDef huart2;
 SDRAM_HandleTypeDef hsdram1;
 
 /* USER CODE BEGIN PV */
+
+FATFS gFATVolume;
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -909,8 +913,6 @@ const int WozModeHGRRowOffsets[192] =
      0x03D0,  0x07D0,  0x0BD0,  0x0FD0,  0x13D0,  0x17D0,  0x1BD0,  0x1FD0,
 };
 
-// 00112233445566
-// x0011223344556x00112233445
 __attribute__((hot,flatten)) void WozModeFillRowBufferHGR(int frameIndex, int rowNumber, size_t maxSamples, uint8_t* rowBuffer)
 {
     int rowIndex = (rowNumber - WOZ_MODE_TOP) / 2;
@@ -1362,7 +1364,9 @@ void HGRModeTest()
                     break;
             }
             if(draw) {
-                WozModeHGRBuffers[0][WozModeHGRRowOffsets[y] + x / 7] |= (1 << (x % 7)) | palette;
+                if((x >= 0) && (y >= 0) && (x < 280) && (y < 192)) {
+                    WozModeHGRBuffers[0][WozModeHGRRowOffsets[y] + x / 7] |= (1 << (x % 7)) | palette;
+                }
             } 
             if(clear) {
                 memset(WozModeHGRBuffers[0], 0, sizeof(WozModeHGRBuffers[0]));
@@ -1404,6 +1408,35 @@ void TextModeTest()
 
 extern void enqueue_ascii(int s);
 
+int doCommandLS(int wordCount, char **words)
+{
+    FRESULT res;
+    DIR dir;
+    static FILINFO fno;
+
+    res = f_opendir(&dir, "/");                       /* Open the directory */
+    if (res == FR_OK) {
+        for (;;) {
+            res = f_readdir(&dir, &fno);                   /* Read a directory item */
+            if(res != FR_OK) {
+                printf("failed to readdir - %d\n", res);
+                break;
+            }
+            if (fno.fname[0] == 0) break;  /* Break on end of dir */
+            if (fno.fattrib & AM_DIR) {                    /* It is a directory */
+                printf("%s/\n", fno.fname);
+            } else {                                       /* It is a file. */
+                printf("%s\n", fno.fname);
+            }
+        }
+        f_closedir(&dir);
+    } else {
+        printf("failed to f_opendir - %d\n", res);
+    }
+    return 0;
+}
+
+
 /* USER CODE END 0 */
 
 /**
@@ -1428,6 +1461,8 @@ int main(void)
     SCB->CACR |= SCB_CACR_FORCEWT_Msk;
     SCB_EnableDCache();
 
+    printf("\n");
+
   /* USER CODE END Init */
 
   /* Configure the system clock */
@@ -1446,6 +1481,7 @@ int main(void)
   MX_USB_HOST_Init();
   MX_TIM1_Init();
   MX_SDMMC2_SD_Init();
+  MX_FATFS_Init();
   /* USER CODE BEGIN 2 */
   
     if(0){
@@ -1459,6 +1495,16 @@ int main(void)
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
+
+        FRESULT result = f_mount(&gFATVolume, "0:", 1);
+        if(result != FR_OK) {
+            printf("ERROR: FATFS mount result is %d\n", result);
+            panic();
+        } else {
+            printf("Mounted FATFS from SD card successfully.\n");
+        }
+        printf("# ls 0:\n");
+        doCommandLS(0, NULL);
 
     HAL_GPIO_WritePin(RGBLED_SPI_GPIO_Port, RGBLED_SPI_Pin, GPIO_PIN_RESET);
 
@@ -1576,6 +1622,8 @@ RUN
   
     }
 
+    return 0;
+
   /* USER CODE END 3 */
 }
 
@@ -1671,12 +1719,8 @@ static void MX_SDMMC2_SD_Init(void)
   hsd2.Init.ClockPowerSave = SDMMC_CLOCK_POWER_SAVE_DISABLE;
   hsd2.Init.BusWide = SDMMC_BUS_WIDE_4B;
   hsd2.Init.HardwareFlowControl = SDMMC_HARDWARE_FLOW_CONTROL_DISABLE;
-  hsd2.Init.ClockDiv = 0;
+  hsd2.Init.ClockDiv = 2;
   hsd2.Init.TranceiverPresent = SDMMC_TRANSCEIVER_NOT_PRESENT;
-  if (HAL_SD_Init(&hsd2) != HAL_OK)
-  {
-    Error_Handler();
-  }
   /* USER CODE BEGIN SDMMC2_Init 2 */
 
   /* USER CODE END SDMMC2_Init 2 */
@@ -1931,6 +1975,12 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(DEBUG_LED_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : SDIO_CD_Pin */
+  GPIO_InitStruct.Pin = SDIO_CD_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  HAL_GPIO_Init(SDIO_CD_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pins : PI0 PI1 PI2 PI3
                            PI4 PI5 PI6 PI7 */
