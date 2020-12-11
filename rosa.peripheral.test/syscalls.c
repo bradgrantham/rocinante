@@ -16,7 +16,7 @@
 #include <unistd.h>
 #include <sys/wait.h>
 
-#undef USE_FATFS
+#define USE_FATFS
 
 #ifdef USE_FATFS
 #include "ff.h"
