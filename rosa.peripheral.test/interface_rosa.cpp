@@ -13,6 +13,9 @@
 
 #include "interface.h"
 
+#include "hid.h"
+#include "events.h"
+
 using namespace std;
 
 namespace APPLE2Einterface
@@ -39,8 +42,11 @@ extern uint8_t WozModeHGRBuffers[2][8192];
 extern uint8_t WozModeTextBuffers[2][1024];
 };
 
+KeyRepeatManager keyRepeat;
 
 deque<event> event_queue;
+
+bool force_caps_on = true;
 
 bool event_waiting()
 {
@@ -71,37 +77,164 @@ void start(bool run_fast, bool add_floppies, bool floppy0_inserted, bool floppy1
 
 void apply_writes(void);
 
-void poll_keyboard()
+const std::map<int, int> HIDkeyToInterfaceKey = 
 {
-    int i;
-    char c;
+    {KEYCAP_A, 'A'},
+    {KEYCAP_B, 'B'},
+    {KEYCAP_C, 'C'},
+    {KEYCAP_D, 'D'},
+    {KEYCAP_E, 'E'},
+    {KEYCAP_F, 'F'},
+    {KEYCAP_G, 'G'},
+    {KEYCAP_H, 'H'},
+    {KEYCAP_I, 'I'},
+    {KEYCAP_J, 'J'},
+    {KEYCAP_K, 'K'},
+    {KEYCAP_L, 'L'},
+    {KEYCAP_M, 'M'},
+    {KEYCAP_N, 'N'},
+    {KEYCAP_O, 'O'},
+    {KEYCAP_P, 'P'},
+    {KEYCAP_Q, 'Q'},
+    {KEYCAP_R, 'R'},
+    {KEYCAP_S, 'S'},
+    {KEYCAP_T, 'T'},
+    {KEYCAP_U, 'U'},
+    {KEYCAP_V, 'V'},
+    {KEYCAP_W, 'W'},
+    {KEYCAP_X, 'X'},
+    {KEYCAP_Y, 'Y'},
+    {KEYCAP_Z, 'Z'},
+    {KEYCAP_1_EXCLAMATION, '1'},
+    {KEYCAP_2_AT, '2'},
+    {KEYCAP_3_NUMBER, '3'},
+    {KEYCAP_4_DOLLAR, '4'},
+    {KEYCAP_5_PERCENT, '5'},
+    {KEYCAP_6_CARET, '6'},
+    {KEYCAP_7_AMPERSAND, '7'},
+    {KEYCAP_8_ASTERISK, '8'},
+    {KEYCAP_9_OPAREN, '9'},
+    {KEYCAP_0_CPAREN, '0'},
+    {KEYCAP_HYPHEN_UNDER, '-'},
+    {KEYCAP_EQUAL_PLUS, '='},
+    {KEYCAP_OBRACKET_OBRACE, '['},
+    {KEYCAP_CBRACKET_CBRACE, ']'},
+    {KEYCAP_BACKSLASH_PIPE, '\\'},
+    {KEYCAP_SEMICOLON_COLON, ';'},
+    {KEYCAP_SINGLEQUOTE_DOUBLEQUOTE, '\''},
+    {KEYCAP_COMMA_LESS, ','},
+    {KEYCAP_PERIOD_GREATER, '.'},
+    {KEYCAP_SLASH_QUESTION, '/'},
+    {KEYCAP_GRAVE_TILDE, '`'},
+    {KEYCAP_SPACE, ' '},
+    {KEYCAP_ENTER, ENTER},
+    {KEYCAP_ESCAPE, ESCAPE},
+    {KEYCAP_BACKSPACE, BACKSPACE},
+    {KEYCAP_TAB, TAB},
+};
 
-    while((i = read(0, &c, 1)) != -1) {
-        bool control = false;
-        int ch;
-        if(c == '\r') {
-            ch = ENTER;
-        } else if(c >= 1 && c<= 26) {
-            control = true;
-            ch = 'A' + c - 1;
-        } else if(c >= 'a' && c<= 'z') {
-            ch = 'A' + c - 'a';
+void ProcessKey(int press, int key)
+{
+    static bool super_down = false;
+    static bool caps_lock_down = false;
+
+    // XXX not ideal, can be enqueued out of turn
+    if(caps_lock_down && !force_caps_on) {
+
+        caps_lock_down = false;
+        event_queue.push_back({KEYUP, CAPS_LOCK});
+
+    } else if(!caps_lock_down && force_caps_on) {
+
+        caps_lock_down = true;
+        event_queue.push_back({KEYDOWN, CAPS_LOCK});
+    }
+
+    if(press) {
+
+        if(key == KEYCAP_LEFTGUI || key == KEYCAP_RIGHTGUI) {
+
+            super_down = true;
+
         } else {
-            ch = c;
+
+            if(key == KEYCAP_CAPSLOCK) {
+                force_caps_on = true;
+            }
+
+            if(HIDkeyToInterfaceKey.count(key) > 0) {
+                event_queue.push_back({KEYDOWN, HIDkeyToInterfaceKey.at(key)});
+            }
         }
-        if(control)
-            event_queue.push_back({KEYDOWN, LEFT_CONTROL});
-        event_queue.push_back({KEYDOWN, ch});
-        event_queue.push_back({KEYUP, ch});
-        if(control)
-            event_queue.push_back({KEYUP, LEFT_CONTROL});
-    }
-    if (errno == EAGAIN) {
-        // Nothing to read.
+
     } else {
-        printf("Got error reading from keyboard: %d\n\r", errno);
-        exit(1);
+
+        if(key == KEYCAP_LEFTGUI || key == KEYCAP_RIGHTGUI) {
+
+            super_down = false;
+
+        } else {
+
+            if(key == KEYCAP_CAPSLOCK) {
+                force_caps_on = false;
+            }
+
+            if(HIDkeyToInterfaceKey.count(key) > 0) {
+                event_queue.push_back({KEYUP, HIDkeyToInterfaceKey.at(key)});
+            }
+        }
     }
+}
+
+void poll_events()
+{
+    struct Event ev;
+    int haveEvent;
+
+    do {
+        haveEvent = EventPoll(&ev);
+        
+        if(!haveEvent) {
+            haveEvent = KeyRepeatUpdate(&keyRepeat, &ev);
+        }
+
+        if(haveEvent) {
+
+            switch(ev.eventType) {
+
+                case Event::MOUSE_MOVE: {
+                    const struct MouseMoveEvent move = ev.u.mouseMove;
+                    // Enqueue joystick?
+                    break;
+                }
+
+                case Event::MOUSE_BUTTONPRESS: {
+                    const struct MouseButtonPressEvent press = ev.u.mouseButtonPress;
+                    if(press.button == 0) {
+                        // Enqueue joystick?
+                    }
+                }
+
+                case Event::KEYBOARD_RAW: {
+                    const struct KeyboardRawEvent raw = ev.u.keyboardRaw;
+                    if(raw.isPress) {
+
+                        KeyRepeatPress(&keyRepeat, raw.key);
+
+                    } else {
+
+                        KeyRepeatRelease(&keyRepeat, raw.key);
+                    }
+                    ProcessKey(raw.isPress, raw.key);
+                    break;
+                }
+
+                default:
+                    // pass;
+                    break;
+            }
+        }
+    } while(haveEvent);
 }
 
 extern "C" { 
@@ -170,7 +303,7 @@ void iterate(const ModeHistory& history, unsigned long long current_byte, float 
         WozModePage = lastMode.page;
     }
 
-    // poll_keyboard();
+    poll_events();
 }
 
 void shutdown()
