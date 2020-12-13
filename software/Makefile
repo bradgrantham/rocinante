@@ -241,6 +241,9 @@ $(BUILD_DIR)/%.bin: $(BUILD_DIR)/%.elf | $(BUILD_DIR)
 $(BUILD_DIR):
 	mkdir $@		
 
+burn: $(BUILD_DIR)/$(TARGET).hex
+	/Applications/STM32CubeIDE.app//Contents/Eclipse/plugins/com.st.stm32cube.ide.mcu.externaltools.cubeprogrammer.macos64_1.4.0.202007081208/tools/bin/STM32_Programmer_CLI -c port=SWD -w $< -rst
+
 #######################################
 # clean up
 #######################################
