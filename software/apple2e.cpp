@@ -1951,7 +1951,7 @@ int apple2_main(int argc, const char **argv)
                 break;
             }
 
-            int clocks_per_slice;
+            uint32_t clocks_per_slice;
             if(pause_cpu)
                 clocks_per_slice = 0;
             else {
