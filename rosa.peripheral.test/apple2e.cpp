@@ -1792,6 +1792,7 @@ void sleep_for(int32_t millis)
 extern "C" {
 int apple2_main(int argc, const char **argv);
 int main_iterate(void);
+uint32_t HAL_GetTick();
 };
 
 
@@ -1964,6 +1965,7 @@ int apple2_main(int argc, const char **argv)
                 }
             }
             clk_t prev_clock = clk;
+            uint32_t prevTick = HAL_GetTick();
             while(clk - prev_clock < clocks_per_slice) {
                 if(debug & DEBUG_DECODE) {
                     string dis = read_bus_and_disassemble(bus,
@@ -1985,6 +1987,11 @@ int apple2_main(int argc, const char **argv)
                     if(debug & DEBUG_STATE)
                         print_cpu_state(cpu);
                 }
+                uint32_t nowTick = HAL_GetTick();
+                if(nowTick != prevTick) {
+                    main_iterate();
+                    prevTick = nowTick;
+                }
             }
             mainboard->sync();
 
@@ -1999,6 +2006,7 @@ int apple2_main(int argc, const char **argv)
             float cpu_speed = cpu_elapsed_cycles / cpu_elapsed_seconds.count();
             cpu_speed_averaged.add(cpu_speed);
 
+
             APPLE2Einterface::iterate(mode_history, clk.clock_cpu, cpu_speed_averaged.get() / 1000000.0f);
             mode_history.clear();
 
@@ -2011,6 +2019,7 @@ int apple2_main(int argc, const char **argv)
             }
 
             then = now;
+
 
         } else {
 
@@ -2077,7 +2086,6 @@ int apple2_main(int argc, const char **argv)
             APPLE2Einterface::iterate(mode_history, clk.clock_cpu, 1.023);
             mode_history.clear();
         }
-        main_iterate();
     }
 
     APPLE2Einterface::shutdown();
