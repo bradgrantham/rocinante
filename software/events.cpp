@@ -111,43 +111,63 @@ void KeyRepeatPress(KeyRepeatManager *mgr, int pressed)
 
 void KeyRepeatRelease(KeyRepeatManager *mgr, int released)
 {
-    if(released != mgr->key) {
+    if(mgr->key == released) {
         mgr->state = KeyRepeatManager::NONE;
         mgr->key = KEYCAP_NONE;
     }
 }
 
-int KeyRepeatUpdate(KeyRepeatManager *mgr, Event* ev)
+int KeyRepeatUpdate(KeyRepeatManager *mgr, int haveEvent, Event* ev)
 {
     int now = HAL_GetTick();
     int generatedAnEvent = 0;
 
-    switch(mgr->state) {
-        case KeyRepeatManager::PRESSED:
-            if(now - mgr->lastTick > 500) {
-                mgr->state = KeyRepeatManager::REPEATING;
-                mgr->lastTick = now;
-                ev->eventType = Event::KEYBOARD_RAW;
-                ev->u.keyboardRaw.isPress = 1;
-                ev->u.keyboardRaw.key = mgr->key;
-                generatedAnEvent = 1;
+    if(haveEvent) {
+        switch(ev->eventType) {
+
+            case Event::KEYBOARD_RAW: {
+                const KeyboardRawEvent& raw = ev->u.keyboardRaw;
+                if(raw.isPress) {
+                    KeyRepeatPress(mgr, raw.key);
+                } else {
+                    KeyRepeatRelease(mgr, raw.key);
+                }
+                // printf("received raw %s for %d\n", raw.isPress ? "press" : "release", raw.key);
+                break;
             }
-            break;
-        case KeyRepeatManager::REPEATING:
-            if(now - mgr->lastTick > 20) {
-                mgr->lastTick = now;
-                ev->eventType = Event::KEYBOARD_RAW;
-                ev->u.keyboardRaw.isPress = 1;
-                ev->u.keyboardRaw.key = mgr->key;
-                generatedAnEvent = 1;
-            }
-            break;
-        default:
-            // pass;
-            break;
+
+            default:
+                // pass;
+                break;
+        }
+    } else {
+        switch(mgr->state) {
+            case KeyRepeatManager::PRESSED:
+                if(now - mgr->lastTick > 500) {
+                    mgr->state = KeyRepeatManager::REPEATING;
+                    mgr->lastTick = now;
+                    ev->eventType = Event::KEYBOARD_RAW;
+                    ev->u.keyboardRaw.isPress = 1;
+                    ev->u.keyboardRaw.key = mgr->key;
+                    haveEvent = 1;
+                }
+                break;
+            case KeyRepeatManager::REPEATING:
+                if(now - mgr->lastTick > 20) {
+                    mgr->lastTick = now;
+                    ev->eventType = Event::KEYBOARD_RAW;
+                    ev->u.keyboardRaw.isPress = 1;
+                    ev->u.keyboardRaw.key = mgr->key;
+                    haveEvent = 1;
+                }
+                break;
+            default:
+                // pass;
+                break;
+        }
     }
 
-    return generatedAnEvent;
+    return haveEvent;
 }
 
 

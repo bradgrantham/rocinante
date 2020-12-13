@@ -154,6 +154,7 @@ void ProcessKey(int press, int key)
 
         if(key == KEYCAP_LEFTGUI || key == KEYCAP_RIGHTGUI) {
 
+            printf("received press for GUI\n");
             super_down = true;
 
         } else {
@@ -162,8 +163,19 @@ void ProcessKey(int press, int key)
                 force_caps_on = true;
             }
 
-            if(HIDkeyToInterfaceKey.count(key) > 0) {
-                event_queue.push_back({KEYDOWN, HIDkeyToInterfaceKey.at(key)});
+            if(key == KEYCAP_F12) {
+
+                if(super_down) {
+                    event_queue.push_back({REBOOT, 0});
+                } else {
+                    event_queue.push_back({RESET, 0});
+                }
+
+            } else {
+
+                if(HIDkeyToInterfaceKey.count(key) > 0) {
+                    event_queue.push_back({KEYDOWN, HIDkeyToInterfaceKey.at(key)});
+                }
             }
         }
 
@@ -194,37 +206,28 @@ void poll_events()
     do {
         haveEvent = EventPoll(&ev);
         
-        if(!haveEvent) {
-            haveEvent = KeyRepeatUpdate(&keyRepeat, &ev);
-        }
+        haveEvent = KeyRepeatUpdate(&keyRepeat, haveEvent, &ev);
 
         if(haveEvent) {
 
             switch(ev.eventType) {
 
                 case Event::MOUSE_MOVE: {
-                    const struct MouseMoveEvent move = ev.u.mouseMove;
+                    const MouseMoveEvent& move = ev.u.mouseMove;
+                    (void)move;
                     // Enqueue joystick?
                     break;
                 }
 
                 case Event::MOUSE_BUTTONPRESS: {
-                    const struct MouseButtonPressEvent press = ev.u.mouseButtonPress;
+                    const MouseButtonPressEvent& press = ev.u.mouseButtonPress;
                     if(press.button == 0) {
                         // Enqueue joystick?
                     }
                 }
 
                 case Event::KEYBOARD_RAW: {
-                    const struct KeyboardRawEvent raw = ev.u.keyboardRaw;
-                    if(raw.isPress) {
-
-                        KeyRepeatPress(&keyRepeat, raw.key);
-
-                    } else {
-
-                        KeyRepeatRelease(&keyRepeat, raw.key);
-                    }
+                    const KeyboardRawEvent& raw = ev.u.keyboardRaw;
                     ProcessKey(raw.isPress, raw.key);
                     break;
                 }
@@ -335,7 +338,7 @@ void write2(int addr, bool aux, unsigned char data)
     // We know text page 1 and 2 are contiguous
     if((addr >= text_page1_base) && (addr < text_page2_base + text_page_size)) {
         int page = (addr >= text_page2_base) ? 1 : 0;
-        int within_page = addr - text_page1_base - page * text_page_size;
+        size_t within_page = addr - text_page1_base - page * text_page_size;
         // size_t within_page = (addr - text_page1_base) % text_page_size;
         if((within_page < 0) || (within_page >= sizeof(WozModeTextBuffers[0]))) {
             printf("%d outside HGR buffer\n", within_page);
@@ -345,7 +348,7 @@ void write2(int addr, bool aux, unsigned char data)
     } else if(((addr >= hires_page1_base) && (addr < hires_page1_base + hires_page_size)) || ((addr >= hires_page2_base) && (addr < hires_page2_base + hires_page_size))) {
 
         int page = (addr < hires_page2_base) ? 0 : 1;
-        int within_page = addr - hires_page1_base - page * hires_page_size;
+        size_t within_page = addr - hires_page1_base - page * hires_page_size;
         // size_t within_page = (addr - hires_page1_base) % hires_page_size;
         if((within_page < 0) || (within_page >= sizeof(WozModeHGRBuffers[0]))) {
             printf("%d outside HGR buffer\n", within_page);

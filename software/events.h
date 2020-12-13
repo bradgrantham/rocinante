@@ -88,7 +88,7 @@ typedef struct KeyRepeatManager
 
 void KeyRepeatRelease(KeyRepeatManager *mgr, int released);
 void KeyRepeatPress(KeyRepeatManager *mgr, int pressed);
-int KeyRepeatUpdate(KeyRepeatManager *mgr, Event* ev);
+int KeyRepeatUpdate(KeyRepeatManager *mgr, int haveEvent, Event* ev);
 
 #ifdef __cplusplus
 };

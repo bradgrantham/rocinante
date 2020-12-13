@@ -150,8 +150,6 @@ void msgprintf(const char *fmt, ...)
     HAL_Delay(10);
 }
 
-int fromUSB = -1;
-
 void USBH_HID_EventCallback(USBH_HandleTypeDef *phost)
 {
     if(USBH_HID_GetDeviceType(phost) == HID_KEYBOARD) {
@@ -1278,10 +1276,6 @@ int main_iterate(void)
     }
     MX_USB_HOST_Process();
 
-    if(fromUSB != -1) {
-        printf("key: %c\n", fromUSB);
-        fromUSB = -1;
-    }
     return 0;
 }
 
@@ -2198,9 +2192,7 @@ void HGRModeTest()
     while(!done) {
         int haveEvent = EventPoll(&ev);
         
-        if(!haveEvent) {
-            haveEvent = KeyRepeatUpdate(&keyRepeat, &ev);
-        }
+        haveEvent = KeyRepeatUpdate(&keyRepeat, haveEvent, &ev);
 
         if(haveEvent) {
             int draw = 0;
@@ -2225,8 +2217,6 @@ void HGRModeTest()
                     const struct KeyboardRawEvent raw = ev.u.keyboardRaw;
                     if(raw.isPress) {
 
-                        KeyRepeatPress(&keyRepeat, raw.key);
-
                         if(raw.key == KEYCAP_UP) {
                             y -= 1;
                             draw = 1;
@@ -2248,8 +2238,6 @@ void HGRModeTest()
                         } else if(raw.key == KEYCAP_END) {
                             clear = 1;
                         }
-                    } else {
-                        KeyRepeatRelease(&keyRepeat, raw.key);
                     }
                     break;
                 }
