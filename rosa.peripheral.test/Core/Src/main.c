@@ -55,6 +55,7 @@
 SD_HandleTypeDef hsd2;
 
 SPI_HandleTypeDef hspi4;
+DMA_HandleTypeDef hdma_spi4_tx;
 
 TIM_HandleTypeDef htim1;
 DMA_HandleTypeDef hdma_tim1_ch2;
@@ -154,6 +155,7 @@ int fromUSB = -1;
 void USBH_HID_EventCallback(USBH_HandleTypeDef *phost)
 {
     if(USBH_HID_GetDeviceType(phost) == HID_KEYBOARD) {
+
         HID_KEYBD_Info_TypeDef *kbd = USBH_HID_GetKeybdInfo(phost);
         if(0) printf("%02X %c%c%c%c%c%c%c%c [%d, %d, %d, %d, %d, %d]\n",
             kbd->state,
@@ -166,10 +168,7 @@ void USBH_HID_EventCallback(USBH_HandleTypeDef *phost)
             kbd->ralt ? '+' : '_',
             kbd->rgui ? '+' : '_',
             kbd->keys[0], kbd->keys[1], kbd->keys[2], kbd->keys[3], kbd->keys[4], kbd->keys[5]);
-        // char key = USBH_HID_GetASCIICode(kbd);
-        // if(key != 0) {
-            // fromUSB = key;
-        // }
+
         int modifiers[8];
         modifiers[0] = kbd->lctrl;
         modifiers[1] = kbd->lshift;
@@ -186,7 +185,9 @@ void USBH_HID_EventCallback(USBH_HandleTypeDef *phost)
             keys[i] = kbd->keys[i];
         }
         ConvertUSBKeysToKeyEvent(keys);
+
     } else if(USBH_HID_GetDeviceType(phost) == HID_MOUSE) {
+
         HID_MOUSE_Info_TypeDef *mouse = USBH_HID_GetMouseInfo(phost);
         int dx = (mouse->x >= 128) ? (mouse->x - 256) : mouse->x;
         int dy = (mouse->y >= 128) ? (mouse->y - 256) : mouse->y;
@@ -2139,9 +2140,10 @@ void DHGRModeTest()
     // XXX superhack
     static uint8_t buffer[512];
     int blocksFetched = 0;
-    // for(uint32_t blockIndex = 0; blockIndex < 15523840; blockIndex += 517) {
     if(0) {
-        for(uint32_t blockIndex = 0; blockIndex < 15523840; blockIndex += 127) {
+        // for(uint32_t blockIndex = 0; blockIndex < 15523840; blockIndex += 517)
+        for(uint32_t blockIndex = 0; blockIndex < 15523840; blockIndex += 127)
+        {
             // blockIndex = 15000000 + blockIndex % 1000000;
             // blockIndex = 2048 + blockIndex % 500;
             memset(buffer, 0, sizeof(buffer));
@@ -2163,15 +2165,16 @@ void DHGRModeTest()
         printf("read all blocks successfully\n");
     }
 
-    FILE *fp = fopen("venice.bin" , "rb");
+    FILE *fp = fopen("dhgr.bin" , "rb");
     if(fp == NULL) {
-        printf("failed to open millie.bin\n");
+        printf("failed to open dhgr.bin\n");
         return;
     }
     fread(DHGRBuffer, 1, sizeof(DHGRBuffer), fp);
-    fclose(fp);
 
-    // while(1);
+    memset(DHGRBuffer, 0x11, sizeof(DHGRBuffer)); // XXX
+
+    while(0);
 }
 
 void HGRModeTest()
@@ -2190,36 +2193,13 @@ void HGRModeTest()
     int done = 0;
     int palette = 0x00;
 
-    int repeatKey = 0;
-    int repeatState = 0;
-    int repeatTick = 0;
+    KeyRepeatManager keyRepeat;
 
     while(!done) {
         int haveEvent = EventPoll(&ev);
         
         if(!haveEvent) {
-            int now = HAL_GetTick();
-            switch(repeatState) {
-                case 1:
-                    if(now - repeatTick > 500) {
-                        repeatState = 2;
-                        repeatTick = now;
-                        ev.eventType = KEYBOARD_RAW;
-                        ev.u.keyboardRaw.isPress = 1;
-                        ev.u.keyboardRaw.key = repeatKey;
-                        haveEvent = 1;
-                    }
-                    break;
-                case 2:
-                    if(now - repeatTick > 20) {
-                        repeatTick = now;
-                        ev.eventType = KEYBOARD_RAW;
-                        ev.u.keyboardRaw.isPress = 1;
-                        ev.u.keyboardRaw.key = repeatKey;
-                        haveEvent = 1;
-                    }
-                    break;
-            }
+            haveEvent = KeyRepeatUpdate(&keyRepeat, &ev);
         }
 
         if(haveEvent) {
@@ -2245,11 +2225,7 @@ void HGRModeTest()
                     const struct KeyboardRawEvent raw = ev.u.keyboardRaw;
                     if(raw.isPress) {
 
-                        if((repeatKey != raw.key) || (repeatState == 0)) {
-                            repeatKey = raw.key;
-                            repeatState = 1;
-                            repeatTick = HAL_GetTick();
-                        }
+                        KeyRepeatPress(&keyRepeat, raw.key);
 
                         if(raw.key == KEYCAP_UP) {
                             y -= 1;
@@ -2273,7 +2249,7 @@ void HGRModeTest()
                             clear = 1;
                         }
                     } else {
-                        repeatState = 0;
+                        KeyRepeatRelease(&keyRepeat, raw.key);
                     }
                     break;
                 }
@@ -2454,15 +2430,15 @@ int main(void)
 
     if(0) HGRModeTest();
 
-    if(1) DHGRModeTest();
+    if(0) DHGRModeTest();
 
     const char *args[] = {
         "apple2e",
-        "-fast",
-        // "-diskII",
-        // "diskII.c600.c6ff.bin",
-        // "LodeRunner.dsk",
-        // "none",
+        // "-fast",
+        "-diskII",
+        "diskII.c600.c6ff.bin",
+        "1.DSK", // "LodeRunner.dsk",
+        "none",
         "apple2e.rom",
     };
     NTSCSwitchModeFuncs(WozModeFillRowBuffer, WozModeNeedsColorburst);
@@ -2493,7 +2469,7 @@ REM 5 GOTO 5
 REM 6 END
 RUN
 )";
-    if(1)for(size_t s = 0; s < strlen(programString); s++)
+    if(0)for(size_t s = 0; s < strlen(programString); s++)
         enqueue_ascii(programString[s]);
     apple2_main(sizeof(args) / sizeof(args[0]), args); /* doesn't return */
 
@@ -2644,7 +2620,7 @@ static void MX_SDMMC2_SD_Init(void)
   hsd2.Init.ClockPowerSave = SDMMC_CLOCK_POWER_SAVE_DISABLE;
   hsd2.Init.BusWide = SDMMC_BUS_WIDE_4B;
   hsd2.Init.HardwareFlowControl = SDMMC_HARDWARE_FLOW_CONTROL_DISABLE;
-  hsd2.Init.ClockDiv = 5; /* 4 worked but set to 5 for good measure */
+  hsd2.Init.ClockDiv = 4;
   hsd2.Init.TranceiverPresent = SDMMC_TRANSCEIVER_NOT_PRESENT;
   /* USER CODE BEGIN SDMMC2_Init 2 */
 
@@ -2806,8 +2782,12 @@ static void MX_DMA_Init(void)
 
   /* DMA controller clock enable */
   __HAL_RCC_DMA2_CLK_ENABLE();
+  __HAL_RCC_DMA1_CLK_ENABLE();
 
   /* DMA interrupt init */
+  /* DMA1_Stream0_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Stream0_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Stream0_IRQn);
   /* DMA2_Stream1_IRQn interrupt configuration */
   HAL_NVIC_SetPriority(DMA2_Stream1_IRQn, 0, 0);
   HAL_NVIC_EnableIRQ(DMA2_Stream1_IRQn);
