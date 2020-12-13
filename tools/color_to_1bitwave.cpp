@@ -178,8 +178,38 @@ int pnmRead(FILE *file, unsigned int *w, unsigned int *h, float **pixels,
     return(1);
 }
 
-typedef std::array<float,3> vec3f;
+typedef std::array<float,3> vec3fT;
 typedef std::array<int,4> vec4i;
+
+struct vec3f : public vec3fT
+{
+    vec3f& operator+=(const vec3f& v) {
+        (*this).at(0) = (*this).at(0) + v[0];
+        (*this).at(1) = (*this).at(1) + v[1];
+        (*this).at(2) = (*this).at(2) + v[2];
+        return *this;
+    }
+};
+
+vec3f operator+(const vec3f& v1, const vec3f& v2)
+{
+    return { {v1[0] + v2[0], v1[1] + v2[1], v1[2] + v2[2] } };
+}
+
+vec3f operator-(const vec3f& v1, const vec3f& v2)
+{
+    return { { v1[0] - v2[0], v1[1] - v2[1], v1[2] - v2[2] } };
+}
+
+vec3f operator*(const vec3f& v1, float v2)
+{
+    return { { v1[0] * v2, v1[1] * v2, v1[2] * v2 } };
+}
+
+vec3f operator/(const vec3f& v1, float v2)
+{
+    return { { v1[0] / v2, v1[1] / v2, v1[2] / v2 } };
+}
 
 int FindClosestColor(vec3f palette[], int paletteSize, const vec3f& color)
 {
@@ -221,16 +251,16 @@ void NTSCWaveToYIQ(float tcycles, float wave[4], float *y, float *i, float *q)
     float w_t = Rad(60.0f) - tcycles * TAU;
 
     *i =
-        waveHF[0] * sinf(w_t - TAU / 4.0f * 0.0f) +
-        waveHF[1] * sinf(w_t - TAU / 4.0f * 1.0f) +
-        waveHF[2] * sinf(w_t - TAU / 4.0f * 2.0f) +
-        waveHF[3] * sinf(w_t - TAU / 4.0f * 3.0f);
+        waveHF[0] * sinf(w_t - TAU / 4.0f * 0.0f) / 2 +
+        waveHF[1] * sinf(w_t - TAU / 4.0f * 1.0f) / 2 +
+        waveHF[2] * sinf(w_t - TAU / 4.0f * 2.0f) / 2 +
+        waveHF[3] * sinf(w_t - TAU / 4.0f * 3.0f) / 2;
 
     *q =
-        waveHF[0] * cosf(w_t - TAU / 4.0f * 0.0f) +
-        waveHF[1] * cosf(w_t - TAU / 4.0f * 1.0f) +
-        waveHF[2] * cosf(w_t - TAU / 4.0f * 2.0f) +
-        waveHF[3] * cosf(w_t - TAU / 4.0f * 3.0f);
+        waveHF[0] * cosf(w_t - TAU / 4.0f * 0.0f) / 2 +
+        waveHF[1] * cosf(w_t - TAU / 4.0f * 1.0f) / 2 +
+        waveHF[2] * cosf(w_t - TAU / 4.0f * 2.0f) / 2 +
+        waveHF[3] * cosf(w_t - TAU / 4.0f * 3.0f) / 2;
 }
 
 inline void YIQToRGB(float y, float i, float q, float *r, float *g, float *b)
@@ -239,7 +269,6 @@ inline void YIQToRGB(float y, float i, float q, float *r, float *g, float *b)
     *g = 1.000000f * y + -0.274788f * i + -0.635691f * q;
     *b = 1.000000f * y + -1.108545f * i + 1.709007f * q;
 }
-
 
 vec3f FindNTSCColor(const vec4i& pattern)
 {
@@ -251,10 +280,10 @@ vec3f FindNTSCColor(const vec4i& pattern)
     NTSCWaveToYIQ(0, wave, &y, &i, &q);
     float r, g, b;
     YIQToRGB(y, i, q, &r, &g, &b);
-    r = std::clamp(r, 0.0f, 1.0f);
-    g = std::clamp(g, 0.0f, 1.0f);
-    b = std::clamp(b, 0.0f, 1.0f);
-    return { r, g, b };
+    r = powf(std::clamp(r, 0.0f, 1.0f), 1.0 / 2.2);
+    g = powf(std::clamp(g, 0.0f, 1.0f), 1.0 / 2.2);
+    b = powf(std::clamp(b, 0.0f, 1.0f), 1.0 / 2.2);
+    return { { r, g, b } };
 }
 
 int main(int argc, char **argv)
@@ -283,7 +312,7 @@ int main(int argc, char **argv)
 
     unsigned char waveformRow[16384];
 
-    vec3f black = {0.0f, 0.0f, 0.0f};
+    vec3f black = { {0.0f, 0.0f, 0.0f} };
 
     std::array<vec3f,16384> errorThisRow;
     std::fill(errorThisRow.begin(), errorThisRow.end(), black);
@@ -299,13 +328,11 @@ int main(int argc, char **argv)
 
         for(int colIndex = 0; colIndex < imageWidth; colIndex++) {
 
-            float *pixel = imagePixels + (rowIndex * imageWidth + colIndex) * 4;
+            float *pixelp = imagePixels + (rowIndex * imageWidth + colIndex) * 4;
+            vec3f pixel{{pixelp[0], pixelp[1], pixelp[2]}};
 
             // get the color with error diffused from previous pixels
-            vec3f correctedRGB;
-            for(int i = 0; i < 3; i++) {
-                correctedRGB[i] = pixel[i] + errorThisRow[1 + colIndex][i];
-            }
+            vec3f correctedRGB = pixel + errorThisRow[1 + colIndex];
 
             // Find the closest color NTSC can offer given the last 3 samples
             vec3f palette[2];
@@ -328,47 +355,24 @@ int main(int argc, char **argv)
 
             // Calculate our error between what we wanted and what we got
             // and distribute it a la Floyd-Steinberg
-            vec3f error;
-            for(int i = 0; i < 3; i++) {
-                error[i] = correctedRGB[i] - palette[c][i];
-            }
-            if(0) {
-                for(int i = 0; i < 3; i++) {
-                    errorThisRow[1 + colIndex + 1][i] += error[i] * 7.0f / 16.0f;
-                }
-                for(int i = 0; i < 3; i++) {
-                    errorNextRow[1 + colIndex - 1][i] += error[i] * 3.0f / 16.0f;
-                }
-                for(int i = 0; i < 3; i++) {
-                    errorNextRow[1 + colIndex    ][i] += error[i] * 5.0f / 16.0f;
-                }
-                for(int i = 0; i < 3; i++) {
-                    errorNextRow[1 + colIndex + 1][i] += error[i] * 1.0f / 16.0f;
-                }
+            vec3f error = correctedRGB - palette[c];
+            if(1) {
+                errorThisRow[1 + colIndex + 1] += error * 7.0f / 16.0f;
+                errorNextRow[1 + colIndex - 1] += error * 3.0f / 16.0f;
+                errorNextRow[1 + colIndex    ] += error * 5.0f / 16.0f;
+                errorNextRow[1 + colIndex + 1] += error * 1.0f / 16.0f;
             } else if (0) {
-                for(int i = 0; i < 3; i++) {
-                    errorThisRow[1 + colIndex + 1][i] += error[i] * 16.0f / 16.0f;
-                }
-            } else if (1) {
-                for(int i = 0; i < 3; i++) {
-                    errorThisRow[1 + colIndex + 1][i] += error[i] * 7.0f / 16.0f;
-                    errorThisRow[1 + colIndex + 2][i] += error[i] * 5.0f / 16.0f;
-                    errorThisRow[1 + colIndex + 3][i] += error[i] * 3.0f / 16.0f;
-                    errorThisRow[1 + colIndex + 4][i] += error[i] * 1.0f / 16.0f;
-                }
-            } else { 
-                for(int i = 0; i < 3; i++) {
-                    errorThisRow[1 + colIndex + 1][i] += error[i] * 7.0f / 16.0f;
-                }
-                for(int i = 0; i < 3; i++) {
-                    errorNextRow[1 + colIndex - 1][i] += error[i] * 3.0f / 16.0f;
-                }
-                for(int i = 0; i < 3; i++) {
-                    errorNextRow[1 + colIndex + 1][i] += error[i] * 5.0f / 16.0f;
-                }
-                for(int i = 0; i < 3; i++) {
-                    errorNextRow[1 + colIndex + 2][i] += error[i] * 1.0f / 16.0f;
-                }
+                errorThisRow[1 + colIndex + 1] += error * 16.0f / 16.0f;
+            } else if (0) {
+                errorThisRow[1 + colIndex + 1] += error * 7.0f / 16.0f;
+                errorThisRow[1 + colIndex + 2] += error * 5.0f / 16.0f;
+                errorThisRow[1 + colIndex + 3] += error * 3.0f / 16.0f;
+                errorThisRow[1 + colIndex + 4] += error * 1.0f / 16.0f;
+            } else if(0) { 
+                errorThisRow[1 + colIndex + 1] += error * 7.0f / 16.0f;
+                errorNextRow[1 + colIndex - 1] += error * 3.0f / 16.0f;
+                errorNextRow[1 + colIndex + 1] += error * 5.0f / 16.0f;
+                errorNextRow[1 + colIndex + 2] += error * 1.0f / 16.0f;
             }
         }
         errorThisRow = errorNextRow; // Could move with a vector work here?
