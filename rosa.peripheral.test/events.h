@@ -5,37 +5,37 @@
 extern "C" {
 #endif /* __cplusplus */
 
-struct MouseMoveEvent {
+typedef struct MouseMoveEvent {
     int x, y;
-};
+} MouseMoveEvent ;
 
-struct MouseButtonPressEvent {
+typedef struct MouseButtonPressEvent {
     int button;
-};
+} MouseButtonPressEvent;
 
-struct MouseButtonReleaseEvent {
+typedef struct MouseButtonReleaseEvent {
     int button;
-};
+} MouseButtonReleaseEvent;
 
-struct KeyboardRawEvent {
+typedef struct KeyboardRawEvent {
     int isPress;
     int key;
-};
+} KeyboardRawEvent;
 
-struct WindowResizeEvent {
+typedef struct WindowResizeEvent {
     int window;
     int width, height;
-};
+} WindowResizeEvent;
 
-struct WindowRedrawRectEvent {
+typedef struct WindowRedrawRectEvent {
     int window;
     int left, top;
     int width, height;
-};
+} WindowRedrawRectEvent;
 
-struct WindowRepairMetadataEvent {
+typedef struct WindowRepairMetadataEvent {
     int window;
-};
+} WindowRepairMetadataEvent;
 
 enum WindowStatusFlag
 {
@@ -46,12 +46,12 @@ enum WindowStatusFlag
     WINDOWED = 0x0010,
 };
 
-struct WindowStatusEvent {
+typedef struct WindowStatusEvent {
     int window;
     uint16_t flags;
-};
+} WindowStatusEvent;
 
-struct Event
+typedef struct Event
 {
     enum {
         EVENTS_LOST,
@@ -65,19 +65,30 @@ struct Event
         WINDOW_STATUS,
     } eventType;
     union {
-        struct MouseMoveEvent mouseMove;
-        struct MouseButtonPressEvent mouseButtonPress;
-        struct MouseButtonReleaseEvent mouseButtonRelease;
-        struct KeyboardRawEvent keyboardRaw;
-        struct WindowResizeEvent windowResize;
-        struct WindowRedrawRectEvent windowRedrawRect;
-        struct WindowRepairMetadataEvent windowRepairMetadata;
-        struct WindowStatusEvent windowStatus;
+        MouseMoveEvent mouseMove;
+        MouseButtonPressEvent mouseButtonPress;
+        MouseButtonReleaseEvent mouseButtonRelease;
+        KeyboardRawEvent keyboardRaw;
+        WindowResizeEvent windowResize;
+        WindowRedrawRectEvent windowRedrawRect;
+        WindowRepairMetadataEvent windowRepairMetadata;
+        WindowStatusEvent windowStatus;
         uint8_t reserved[64];
     } u;
-};
+} Event;
 
-int EventPoll(struct Event *event); /* 0 if none, 1 if filled */
+int EventPoll(Event *event); /* 0 if none, 1 if filled */
+
+typedef struct KeyRepeatManager
+{
+    int key;
+    enum { NONE, PRESSED, REPEATING } state;
+    uint32_t lastTick;
+} KeyRepeatManager;
+
+void KeyRepeatRelease(KeyRepeatManager *mgr, int released);
+void KeyRepeatPress(KeyRepeatManager *mgr, int pressed);
+int KeyRepeatUpdate(KeyRepeatManager *mgr, Event* ev);
 
 #ifdef __cplusplus
 };

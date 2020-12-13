@@ -2,6 +2,7 @@
 #include <array>
 
 #include "events.h"
+#include "hid.h"
 #include "events_internal.h"
 
 template <class T, size_t SIZE>
@@ -93,4 +94,60 @@ void SystemEventEnqueue(const Event& ev)
 
     enqueueOrSetEventsLost(processId, ev);
 }
+
+extern "C" {
+uint32_t HAL_GetTick(); // XXX grantham bringup
+};
+
+// XXX don't repeat modifier keys!
+void KeyRepeatPress(KeyRepeatManager *mgr, int pressed)
+{
+    if(mgr->key != pressed) {
+        mgr->key = pressed;
+        mgr->state = KeyRepeatManager::PRESSED;
+        mgr->lastTick = HAL_GetTick();
+    }
+}
+
+void KeyRepeatRelease(KeyRepeatManager *mgr, int released)
+{
+    if(released != mgr->key) {
+        mgr->state = KeyRepeatManager::NONE;
+        mgr->key = KEYCAP_NONE;
+    }
+}
+
+int KeyRepeatUpdate(KeyRepeatManager *mgr, Event* ev)
+{
+    int now = HAL_GetTick();
+    int generatedAnEvent = 0;
+
+    switch(mgr->state) {
+        case KeyRepeatManager::PRESSED:
+            if(now - mgr->lastTick > 500) {
+                mgr->state = KeyRepeatManager::REPEATING;
+                mgr->lastTick = now;
+                ev->eventType = Event::KEYBOARD_RAW;
+                ev->u.keyboardRaw.isPress = 1;
+                ev->u.keyboardRaw.key = mgr->key;
+                generatedAnEvent = 1;
+            }
+            break;
+        case KeyRepeatManager::REPEATING:
+            if(now - mgr->lastTick > 20) {
+                mgr->lastTick = now;
+                ev->eventType = Event::KEYBOARD_RAW;
+                ev->u.keyboardRaw.isPress = 1;
+                ev->u.keyboardRaw.key = mgr->key;
+                generatedAnEvent = 1;
+            }
+            break;
+        default:
+            // pass;
+            break;
+    }
+
+    return generatedAnEvent;
+}
+
 
