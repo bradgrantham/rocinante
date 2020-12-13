@@ -200,16 +200,16 @@ void NTSCWaveToYIQ(float tcycles, float wave[4], float *y, float *i, float *q)
     float w_t = Rad(60.0f) - tcycles * TAU;
 
     *i =
-        waveHF[0] * sinf(w_t - TAU / 4.0f * 0.0f) +
-        waveHF[1] * sinf(w_t - TAU / 4.0f * 1.0f) +
-        waveHF[2] * sinf(w_t - TAU / 4.0f * 2.0f) +
-        waveHF[3] * sinf(w_t - TAU / 4.0f * 3.0f);
+        waveHF[0] * sinf(w_t - TAU / 4.0f * 0.0f) / 2 +
+        waveHF[1] * sinf(w_t - TAU / 4.0f * 1.0f) / 2 +
+        waveHF[2] * sinf(w_t - TAU / 4.0f * 2.0f) / 2 +
+        waveHF[3] * sinf(w_t - TAU / 4.0f * 3.0f) / 2;
 
     *q =
-        waveHF[0] * cosf(w_t - TAU / 4.0f * 0.0f) +
-        waveHF[1] * cosf(w_t - TAU / 4.0f * 1.0f) +
-        waveHF[2] * cosf(w_t - TAU / 4.0f * 2.0f) +
-        waveHF[3] * cosf(w_t - TAU / 4.0f * 3.0f);
+        waveHF[0] * cosf(w_t - TAU / 4.0f * 0.0f) / 2 +
+        waveHF[1] * cosf(w_t - TAU / 4.0f * 1.0f) / 2 +
+        waveHF[2] * cosf(w_t - TAU / 4.0f * 2.0f) / 2 +
+        waveHF[3] * cosf(w_t - TAU / 4.0f * 3.0f) / 2;
 }
 
 // Using inverse 3x3 matrix above.  Tested numerically to be the inverse of RGBToYIQ
