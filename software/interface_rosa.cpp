@@ -397,9 +397,17 @@ bool write(int addr, bool aux, unsigned char data)
     return false;
 }
 
+extern "C" {
+int RosaLEDSet(int which, uint8_t red, uint8_t green, uint8_t blue);
+};
 
 void show_floppy_activity(int number, bool activity)
 {
+    if(activity) {
+        RosaLEDSet(1 + number, 255, 0, 0);
+    } else {
+        RosaLEDSet(1 + number, 0, 0, 0);
+    }
 }
 
 void enqueue_audio_samples(char *buf, size_t sz)

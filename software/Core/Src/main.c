@@ -52,6 +52,8 @@
 
 /* Private variables ---------------------------------------------------------*/
 
+DAC_HandleTypeDef hdac1;
+
 SD_HandleTypeDef hsd2;
 
 SPI_HandleTypeDef hspi4;
@@ -79,6 +81,7 @@ static void MX_FMC_Init(void);
 static void MX_SPI4_Init(void);
 static void MX_TIM1_Init(void);
 static void MX_SDMMC2_SD_Init(void);
+static void MX_DAC1_Init(void);
 void MX_USB_HOST_Process(void);
 
 /* USER CODE BEGIN PFP */
@@ -769,6 +772,12 @@ int frameNumber = 0;
 
 int why;
 
+// XXX audio experiment
+// In this mode we would have a sampling rate of 15.6998 KHz
+uint8_t audioBufferRight[4096];
+uint8_t audioBufferLeft[4096];
+volatile size_t audioBufferPosition = 0;
+
 void DMA2_Stream1_IRQHandler(void)
 {
     rowNumber = (rowNumber + 1) % 525;
@@ -786,6 +795,11 @@ void DMA2_Stream1_IRQHandler(void)
     } else {
         panic();
     }
+
+// per-line, 15KHz
+    DAC1->DHR8R1 = audioBufferLeft[audioBufferPosition];
+    DAC1->DHR8R2 = audioBufferRight[audioBufferPosition];
+    audioBufferPosition = (audioBufferPosition + 1) % sizeof(audioBufferLeft);
 
     NTSCFillRowBuffer(frameNumber, rowNumber, rowDest);
 
@@ -807,6 +821,14 @@ void HAL_TIM_ErrorCallback(TIM_HandleTypeDef *htim)
 
 void startNTSCScanout()
 {
+    // AUDIO
+    for(unsigned int i = 0; i < sizeof(audioBufferLeft); i++) {
+        audioBufferLeft[i] = 128;
+        audioBufferRight[i] = 128;
+    }
+    DAC1->CR |= DAC_CR_EN1;
+    DAC1->CR |= DAC_CR_EN2;
+
     NTSCCalculateParameters();
     NTSCGenerateLineBuffers();
 
@@ -1273,8 +1295,25 @@ void ImageFillRowBuffer2(int frameIndex, int rowNumber, size_t maxSamples, uint8
 int apple2_main(int argc, const char **argv);
 
 int writeLEDColors = 1;
+// set these no higher than 32, maybe after getting a case and light
+// diffuser we could go higher.
 uint8_t LEDColors[3][3];
 int LEDSPIBusy = 0;
+
+int RosaLEDSet(int which, uint8_t red, uint8_t green, uint8_t blue)
+{
+    if((which < 0) || (which > 2)) {
+        return -1;
+    }
+
+    LEDColors[which][0] = (red + 7) / 8;
+    LEDColors[which][1] = (green + 7) / 8;
+    LEDColors[which][2] = (blue + 7) / 8;
+
+    writeLEDColors = 1;
+
+    return 0;
+}
 
 // ----- WS2812B RGB LED test
 void LEDTestIterate()
@@ -1285,9 +1324,9 @@ void LEDTestIterate()
     if(!LEDBusy && (now - then > .01666667f)) {
         int halves = (int)(now * 2);
         if(halves % 2) {
-            LEDColors[0][0] = 0; LEDColors[0][1] = 0; LEDColors[0][2] = 0;
+            RosaLEDSet(0, 0, 0, 0);
         } else {
-            LEDColors[0][0] = 0; LEDColors[0][1] = 32; LEDColors[0][2] = 0;
+            RosaLEDSet(0, 0, 255, 0);
         }
 
         float h = now / 2.0f * 3.14159;
@@ -1295,11 +1334,11 @@ void LEDTestIterate()
         float v = 1.0f;
         float r, g, b;
         HSVToRGB3f(h, s, v, &r, &g, &b);
-        LEDColors[1][0] = r * 32; LEDColors[1][1] = g * 32; LEDColors[1][2] = b * 32;
+        // RosaLEDSet(1, r * 255, g * 255, b * 255);
 
         int phase = (int)now % 2;
         float value = phase ? (now - (int)now) : (1 - (now - (int)now));
-        LEDColors[2][0] = value * 32; LEDColors[2][1] = value * 32; LEDColors[2][2] = value * 32;
+        // RosaLEDSet(2, value * 255, value * 255, value * 255);
 
         writeLEDColors = 1;
     }
@@ -2364,6 +2403,63 @@ int doCommandLS(int wordCount, char **words)
     return 0;
 }
 
+extern int errno;
+
+int playAudio(int argc, const char **argv)
+{
+    size_t bufferHalfSize = sizeof(audioBufferLeft) / 2;
+
+    const char *filename = argv[1];
+    FILE *fp = fopen (filename, "rb");
+    if(fp == NULL) {
+        printf("ERROR: couldn't open \"%s\" for reading, errno %d\n", filename, errno);
+        return 1;
+    }
+
+    int where = 0;
+
+    size_t wasRead = 0;
+    int quit = 0;
+    do {
+        // Wait for audio to get past the buffer we read
+        while((audioBufferPosition - where + sizeof(audioBufferLeft)) % sizeof(audioBufferLeft) < bufferHalfSize);
+        wasRead = fread(audioBufferLeft + where, 1, bufferHalfSize, fp);
+        if(wasRead < 1) {
+            printf("ERROR: couldn't read block of audio from \"%s\", read %zd\n", filename, wasRead);
+            memset(audioBufferLeft, 128, sizeof(audioBufferLeft));
+            return 1;
+        }
+        memcpy(audioBufferRight + where, audioBufferLeft + where, wasRead);
+        where = (where + bufferHalfSize) % sizeof(audioBufferLeft);
+
+        Event ev;
+        int haveEvent = EventPoll(&ev);
+        if(haveEvent) {
+            switch(ev.eventType) {
+                case KEYBOARD_RAW: {
+                    const struct KeyboardRawEvent raw = ev.u.keyboardRaw;
+                    if(raw.isPress) {
+                        quit = 1;
+                    }
+                    break;
+                }
+                default:
+                    // pass;
+                    break;
+            }
+        }
+        main_iterate();
+    } while(!quit && (wasRead == bufferHalfSize));
+
+    fclose(fp);
+
+    while((audioBufferPosition - where + sizeof(audioBufferLeft)) % sizeof(audioBufferLeft) < bufferHalfSize);
+    memset(audioBufferLeft, 128, sizeof(audioBufferLeft));
+    memset(audioBufferRight, 128, sizeof(audioBufferRight));
+
+    return 0;
+}
+
 
 /* USER CODE END 0 */
 
@@ -2408,6 +2504,7 @@ int main(void)
   MX_TIM1_Init();
   MX_SDMMC2_SD_Init();
   MX_FATFS_Init();
+  MX_DAC1_Init();
   /* USER CODE BEGIN 2 */
   
     if(0){
@@ -2464,17 +2561,27 @@ int main(void)
 
     if(0) DHGRModeTest();
 
-    const char *args[] = {
-        "apple2e",
-        // "-fast",
-        "-diskII",
-        "diskII.c600.c6ff.bin",
-        "1.DSK", // "LodeRunner.dsk",
-        "none",
-        "apple2e.rom",
-    };
-    NTSCSwitchModeFuncs(WozModeFillRowBuffer, WozModeNeedsColorburst);
-    const char* programString = R"(
+    if(0) {
+        const char *args[] = {
+            "play",
+            "inside-out.u8",
+        };
+        playAudio(sizeof(args) / sizeof(args[0]), args);
+    }
+
+    if(1) {
+        const char *args[] = {
+            "apple2e",
+            // "-fast",
+            "-diskII",
+            "diskII.c600.c6ff.bin",
+            // "1.DSK",
+            "LodeRunner.dsk",
+            "none",
+            "apple2e.rom",
+        };
+        NTSCSwitchModeFuncs(WozModeFillRowBuffer, WozModeNeedsColorburst);
+        const char* programString = R"(
 10  HGR : POKE  - 16302,0
 11 MX = 280
 12 MY = 192
@@ -2501,9 +2608,10 @@ REM 5 GOTO 5
 REM 6 END
 RUN
 )";
-    if(0)for(size_t s = 0; s < strlen(programString); s++)
-        enqueue_ascii(programString[s]);
-    apple2_main(sizeof(args) / sizeof(args[0]), args); /* doesn't return */
+        if(0)for(size_t s = 0; s < strlen(programString); s++)
+            enqueue_ascii(programString[s]);
+        apple2_main(sizeof(args) / sizeof(args[0]), args); /* doesn't return */
+    }
 
     while (1) {
 
@@ -2609,6 +2717,54 @@ void SystemClock_Config(void)
   /** Enable USB Voltage detector
   */
   HAL_PWREx_EnableUSBVoltageDetector();
+}
+
+/**
+  * @brief DAC1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_DAC1_Init(void)
+{
+
+  /* USER CODE BEGIN DAC1_Init 0 */
+
+  /* USER CODE END DAC1_Init 0 */
+
+  DAC_ChannelConfTypeDef sConfig = {0};
+
+  /* USER CODE BEGIN DAC1_Init 1 */
+
+  /* USER CODE END DAC1_Init 1 */
+  /** DAC Initialization
+  */
+  hdac1.Instance = DAC1;
+  if (HAL_DAC_Init(&hdac1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /** DAC channel OUT1 config
+  */
+  sConfig.DAC_SampleAndHold = DAC_SAMPLEANDHOLD_DISABLE;
+  sConfig.DAC_Trigger = DAC_TRIGGER_NONE;
+  sConfig.DAC_OutputBuffer = DAC_OUTPUTBUFFER_ENABLE;
+  sConfig.DAC_ConnectOnChipPeripheral = DAC_CHIPCONNECT_DISABLE;
+  sConfig.DAC_UserTrimming = DAC_TRIMMING_FACTORY;
+  if (HAL_DAC_ConfigChannel(&hdac1, &sConfig, DAC_CHANNEL_1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /** DAC channel OUT2 config
+  */
+  sConfig.DAC_ConnectOnChipPeripheral = DAC_CHIPCONNECT_DISABLE;
+  if (HAL_DAC_ConfigChannel(&hdac1, &sConfig, DAC_CHANNEL_2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN DAC1_Init 2 */
+
+  /* USER CODE END DAC1_Init 2 */
+
 }
 
 /**
