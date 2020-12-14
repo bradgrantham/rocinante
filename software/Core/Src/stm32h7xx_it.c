@@ -249,6 +249,8 @@ void FOO_DMA2_Stream1_IRQHandler(void) // XXX
 void SPI4_IRQHandler(void)
 {
   /* USER CODE BEGIN SPI4_IRQn 0 */
+  extern int LEDBusy;
+  LEDBusy = 0;
 
   /* USER CODE END SPI4_IRQn 0 */
   HAL_SPI_IRQHandler(&hspi4);

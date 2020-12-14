@@ -312,6 +312,8 @@ size_t rgb_to_WS2812_NZR(uint8_t r, uint8_t g, uint8_t b, uint8_t *buffer)
 // But in practice I needed this many bytes to reliably latch/reset.
 #define reset_bytes 150
 
+int LEDBusy = 0;
+
 void write3LEDString(uint8_t colors[3][3])
 {
     static uint8_t buffer[reset_bytes + 1 + 27 * 3 + reset_bytes];
@@ -328,12 +330,13 @@ void write3LEDString(uint8_t colors[3][3])
     // Write latch / reset to SPI buffer
     memset(p, 0, reset_bytes); p += reset_bytes;
 
-    int result = HAL_SPI_Transmit_IT(&hspi4, (unsigned char *)buffer, p - buffer); // , 2);
+    LEDBusy = 1;
+    int result = HAL_SPI_Transmit_DMA(&hspi4, (unsigned char *)buffer, p - buffer); // , 2);
     if(result != HAL_OK){
         printf("SPI_Transmit error %d, error code %08lX, status %08lX\n", result, hspi4.ErrorCode, SPI4->SR);
         panic();
     }
-    HAL_GPIO_WritePin(RGBLED_SPI_GPIO_Port, RGBLED_SPI_Pin, GPIO_PIN_RESET);
+    // HAL_GPIO_WritePin(RGBLED_SPI_GPIO_Port, RGBLED_SPI_Pin, GPIO_PIN_RESET);
 }
 
 void HSVToRGB3f(float h, float s, float v, float *r, float *g, float *b)
@@ -825,12 +828,14 @@ void startNTSCScanout()
 
     status = HAL_TIM_IC_Start(&htim1, TIM_CHANNEL_2);
 
-    msgprintf("DMA2_Stream1->CR = %08lX\n", DMA2_Stream1->CR);
-    msgprintf("DMA2_Stream1->NDTR = %08lX\n", DMA2_Stream1->NDTR);
-    msgprintf("DMA2_Stream1->PAR = %08lX\n", DMA2_Stream1->PAR);
-    msgprintf("DMA2_Stream1->M0AR = %08lX\n", DMA2_Stream1->M0AR);
-    msgprintf("DMA2_Stream1->M1AR = %08lX\n", DMA2_Stream1->M1AR);
-    msgprintf("DMA2_Stream1->FCR = %08lX\n", DMA2_Stream1->FCR);
+    if(0) {
+        msgprintf("DMA2_Stream1->CR = %08lX\n", DMA2_Stream1->CR);
+        msgprintf("DMA2_Stream1->NDTR = %08lX\n", DMA2_Stream1->NDTR);
+        msgprintf("DMA2_Stream1->PAR = %08lX\n", DMA2_Stream1->PAR);
+        msgprintf("DMA2_Stream1->M0AR = %08lX\n", DMA2_Stream1->M0AR);
+        msgprintf("DMA2_Stream1->M1AR = %08lX\n", DMA2_Stream1->M1AR);
+        msgprintf("DMA2_Stream1->FCR = %08lX\n", DMA2_Stream1->FCR);
+    }
 
     if(status != HAL_OK){
         printf("DMA error %08d, error code %08lX, line %d\n", status, hdma_tim1_ch2.ErrorCode, why);
@@ -1267,6 +1272,39 @@ void ImageFillRowBuffer2(int frameIndex, int rowNumber, size_t maxSamples, uint8
 
 int apple2_main(int argc, const char **argv);
 
+int writeLEDColors = 1;
+uint8_t LEDColors[3][3];
+int LEDSPIBusy = 0;
+
+// ----- WS2812B RGB LED test
+void LEDTestIterate()
+{
+    static float then = 0.0f;
+    float now = HAL_GetTick() / 1000.0f;
+
+    if(!LEDBusy && (now - then > .01666667f)) {
+        int halves = (int)(now * 2);
+        if(halves % 2) {
+            LEDColors[0][0] = 0; LEDColors[0][1] = 0; LEDColors[0][2] = 0;
+        } else {
+            LEDColors[0][0] = 0; LEDColors[0][1] = 32; LEDColors[0][2] = 0;
+        }
+
+        float h = now / 2.0f * 3.14159;
+        float s = 1.0f;
+        float v = 1.0f;
+        float r, g, b;
+        HSVToRGB3f(h, s, v, &r, &g, &b);
+        LEDColors[1][0] = r * 32; LEDColors[1][1] = g * 32; LEDColors[1][2] = b * 32;
+
+        int phase = (int)now % 2;
+        float value = phase ? (now - (int)now) : (1 - (now - (int)now));
+        LEDColors[2][0] = value * 32; LEDColors[2][1] = value * 32; LEDColors[2][2] = value * 32;
+
+        writeLEDColors = 1;
+    }
+}
+  
 int main_iterate(void)
 {
     static int q = 0;
@@ -1274,7 +1312,15 @@ int main_iterate(void)
         q = 0;
         printf(".");
     }
+
     MX_USB_HOST_Process();
+
+    LEDTestIterate();
+
+    if(writeLEDColors) {
+        write3LEDString(LEDColors);
+        writeLEDColors = 0;
+    }
 
     return 0;
 }
@@ -2405,12 +2451,10 @@ int main(void)
         HAL_GPIO_WritePin(DEBUG_LED_GPIO_Port, DEBUG_LED_Pin, GPIO_PIN_RESET );
     }
 
-    uint8_t colors[3][3];
-
-    colors[0][0] = 0x10; colors[0][1] = 0; colors[0][2] = 0;
-    colors[1][0] = 0; colors[1][1] = 0x10; colors[1][2] = 0;
-    colors[2][0] = 0; colors[2][1] = 0; colors[2][2] = 0x10;
-    write3LEDString(colors);
+    LEDColors[0][0] = 0x10; LEDColors[0][1] = 0; LEDColors[0][2] = 0;
+    LEDColors[1][0] = 0; LEDColors[1][1] = 0x10; LEDColors[1][2] = 0;
+    LEDColors[2][0] = 0; LEDColors[2][1] = 0; LEDColors[2][2] = 0x10;
+    write3LEDString(LEDColors);
 
     startNTSCScanout();
 
@@ -2463,7 +2507,6 @@ RUN
 
     while (1) {
 
-        float now = HAL_GetTick() / 1000.0f;
         int lightLED = 0;
 
     /* USER CODE END WHILE */
@@ -2488,27 +2531,7 @@ RUN
         // ----- DEBUG LED test
         // HAL_GPIO_WritePin(DEBUG_LED_GPIO_Port, DEBUG_LED_Pin, lightLED ? GPIO_PIN_SET : GPIO_PIN_RESET);
 
-        // ----- WS2812B RGB LED test
-        int halves = (int)(now * 2);
-        if(halves % 2) {
-            colors[0][0] = 0; colors[0][1] = 0; colors[0][2] = 0;
-        } else {
-            colors[0][0] = 0; colors[0][1] = 32; colors[0][2] = 0;
-        }
-
-        float h = now / 2.0f * 3.14159;
-        float s = 1.0f;
-        float v = 1.0f;
-        float r, g, b;
-        HSVToRGB3f(h, s, v, &r, &g, &b);
-        colors[1][0] = r * 32; colors[1][1] = g * 32; colors[1][2] = b * 32;
-
-        int phase = (int)now % 2;
-        float value = phase ? (now - (int)now) : (1 - (now - (int)now));
-        colors[2][0] = value * 32; colors[2][1] = value * 32; colors[2][2] = value * 32;
-
-        write3LEDString(colors);
-  
+        LEDTestIterate();
     }
 
     return 0;
