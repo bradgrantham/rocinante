@@ -375,6 +375,55 @@ void HSVToRGB3f(float h, float s, float v, float *r, float *g, float *b)
     }
 }
 
+
+// Audio subsystem =========================================================
+
+static uint8_t audioBuffer[4096 * 2];
+static volatile size_t audioBufferPosition = 0;
+
+void RoAudioGetSamplingInfo(float *rate, size_t *bufferLength, uint8_t **stereoBufferU8)
+{
+    // In NTSC mode we would have a sampling rate of 15.6998 KHz
+    *rate = 15699.76074561403508;
+    *bufferLength = sizeof(audioBuffer);
+    *stereoBufferU8 = audioBuffer;
+}
+
+// I'd prefer an API where:
+//
+// 1) apps could allocate a real-time buffer that is composited with
+// other apps' buffers, at the system rate, and blocking would occur on
+// the buffer, or
+//
+// 2) apps could submit a one-time clip for play, and the system
+// would block until the clip is played.
+
+// Returns where one should write a half-buffer's worth of data to
+// stay ahead of the audio streamer
+size_t RoAudioBlockToHalfBuffer()
+{
+    if(audioBufferPosition > sizeof(audioBuffer) / 2) {
+        size_t oldPosition = audioBufferPosition;
+        while(audioBufferPosition >= oldPosition);
+        return sizeof(audioBuffer) / 2;
+    } else {
+        while(audioBufferPosition < sizeof(audioBuffer) / 2);
+        return 0;
+    }
+}
+
+void RoAudioClear()
+{
+    memset(audioBuffer, 128, sizeof(audioBuffer));
+}
+
+void AudioStart()
+{
+    RoAudioClear();
+    DAC1->CR |= DAC_CR_EN1;
+    DAC1->CR |= DAC_CR_EN2;
+}
+
 //============================================================================
 // NTSC output
 
@@ -797,7 +846,7 @@ void RoDebugOverlayPrintf(const char *fmt, ...)
 
     char *line;
     char *inputstring = buffer;
-    while(line = strsep(&inputstring, "\n")) {
+    while((line = strsep(&inputstring, "\n")) != NULL) {
 
         if(debugLine == (debugDisplayHeight - 1)) {
             memcpy(debugDisplay, debugDisplay + 1, (debugDisplayHeight - 1) * debugDisplayWidth);
@@ -868,11 +917,6 @@ int frameNumber = 0;
 
 int why;
 
-// XXX audio experiment
-// In this mode we would have a sampling rate of 15.6998 KHz
-uint8_t audioBufferRight[4096];
-uint8_t audioBufferLeft[4096];
-volatile size_t audioBufferPosition = 0;
 
 void DMA2_Stream1_IRQHandler(void)
 {
@@ -893,9 +937,9 @@ void DMA2_Stream1_IRQHandler(void)
     }
 
 // per-line, 15KHz
-    DAC1->DHR8R1 = audioBufferLeft[audioBufferPosition];
-    DAC1->DHR8R2 = audioBufferRight[audioBufferPosition];
-    audioBufferPosition = (audioBufferPosition + 1) % sizeof(audioBufferLeft);
+    DAC1->DHR8R1 = audioBuffer[audioBufferPosition + 0];
+    DAC1->DHR8R2 = audioBuffer[audioBufferPosition + 1];
+    audioBufferPosition = (audioBufferPosition + 2) % sizeof(audioBuffer);
 
     NTSCFillRowBuffer(frameNumber, rowNumber, rowDest);
     if(debugOverlayEnabled) {
@@ -920,13 +964,7 @@ void HAL_TIM_ErrorCallback(TIM_HandleTypeDef *htim)
 
 void startNTSCScanout()
 {
-    // AUDIO
-    for(unsigned int i = 0; i < sizeof(audioBufferLeft); i++) {
-        audioBufferLeft[i] = 128;
-        audioBufferRight[i] = 128;
-    }
-    DAC1->CR |= DAC_CR_EN1;
-    DAC1->CR |= DAC_CR_EN2;
+    AudioStart();
 
     NTSCCalculateParameters();
     NTSCGenerateLineBuffers();
@@ -2506,7 +2544,14 @@ extern int errno;
 
 int playAudio(int argc, const char **argv)
 {
-    size_t bufferHalfSize = sizeof(audioBufferLeft) / 2;
+    float rate;
+    size_t bufferLength;
+    uint8_t *stereoBuffer;
+
+    RoAudioGetSamplingInfo(&rate, &bufferLength, &stereoBuffer);
+    size_t halfBufferSamples = bufferLength / 2;
+    size_t halfBufferMonoSamples = halfBufferSamples / 2;
+    uint8_t *monoTrack = malloc(halfBufferMonoSamples);
 
     const char *filename = argv[1];
     FILE *fp = fopen (filename, "rb");
@@ -2515,21 +2560,27 @@ int playAudio(int argc, const char **argv)
         return 1;
     }
 
-    int where = 0;
-
-    size_t wasRead = 0;
+    size_t where;
+    size_t samplesRead = 0;
     int quit = 0;
+    float angle = 0;
     do {
-        // Wait for audio to get past the buffer we read
-        while((audioBufferPosition - where + sizeof(audioBufferLeft)) % sizeof(audioBufferLeft) < bufferHalfSize);
-        wasRead = fread(audioBufferLeft + where, 1, bufferHalfSize, fp);
-        if(wasRead < 1) {
-            printf("ERROR: couldn't read block of audio from \"%s\", read %zd\n", filename, wasRead);
-            memset(audioBufferLeft, 128, sizeof(audioBufferLeft));
+        // Wait for audio to get at least half a buffer past us
+        samplesRead = fread(monoTrack, 1, halfBufferMonoSamples, fp);
+        if(samplesRead < 1) {
+            printf("ERROR: couldn't read block of audio from \"%s\", read %zd\n", filename, samplesRead);
             return 1;
         }
-        memcpy(audioBufferRight + where, audioBufferLeft + where, wasRead);
-        where = (where + bufferHalfSize) % sizeof(audioBufferLeft);
+        where = RoAudioBlockToHalfBuffer();
+        float a = sinf(angle) * .5 + .5;
+        for(int i = 0; i < samplesRead; i++) {
+            int v = monoTrack[i];
+            audioBuffer[where + i * 2 + 0] = 128 + (v - 128) * a;
+            audioBuffer[where + i * 2 + 1] = 128 + (v - 128) * (1 - a);
+        }
+        if(0)  {
+            angle += 3.14159 * 2 / 100;
+        }
 
         Event ev;
         int haveEvent = EventPoll(&ev);
@@ -2547,14 +2598,24 @@ int playAudio(int argc, const char **argv)
                     break;
             }
         }
-        main_iterate();
-    } while(!quit && (wasRead == bufferHalfSize));
+        main_iterate(); // XXX
+    } while(!quit && (samplesRead == halfBufferMonoSamples));
+
+    // fill any part not read from file to silence
+    for(int i = samplesRead; i < halfBufferMonoSamples; i++) {
+        audioBuffer[where + i * 2 + 0] = 128;
+        audioBuffer[where + i * 2 + 1] = 128;
+    }
+
+    // Wait until audio is playing our final half and clear the other half
+    where = RoAudioBlockToHalfBuffer();
+    memset(audioBuffer + where, 128, halfBufferSamples);
+
+    // Wait until audio is done with our final half then clear it
+    where = RoAudioBlockToHalfBuffer();
+    memset(audioBuffer + where, 128, halfBufferSamples);
 
     fclose(fp);
-
-    while((audioBufferPosition - where + sizeof(audioBufferLeft)) % sizeof(audioBufferLeft) < bufferHalfSize);
-    memset(audioBufferLeft, 128, sizeof(audioBufferLeft));
-    memset(audioBufferRight, 128, sizeof(audioBufferRight));
 
     return 0;
 }
