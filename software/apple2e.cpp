@@ -533,8 +533,6 @@ struct DISKIIboard : board_base
             return true;
         }
 
-        printf("read track %d\n", currentTrackNumber[driveSelected]);
-
         bool success = floppy::nybblizeTrackFromFile(floppyImageFiles[driveSelected], currentTrackNumber[driveSelected] / 2, trackBytes, floppySectorSkew[driveSelected]);
         if(!success) {
             fprintf(stderr, "unexpected failure reading track from disk \"%s\"\n", floppyImageNames[driveSelected].c_str());
@@ -662,7 +660,15 @@ struct DISKIIboard : board_base
         data = 0;
         return true;
     }
-    virtual void reset(void) {}
+    virtual void reset(void)
+    {
+        driveMotorEnabled[0] = false; // Is this safe?
+        driveMotorEnabled[1] = false; // Is this safe?
+        driveSelected = 0;
+        trackBytesOutOfDate = true;
+        floppy_activity(0, false);
+        floppy_activity(1, false);
+    }
 };
 
 struct Mockingboard : board_base
@@ -1076,6 +1082,9 @@ struct MAINboard : board_base
         C08X_write_RAM = true;
         internal_C800_ROM_selected = true;
         repage_regions("reset");
+        for(auto b : boards) {
+            b->reset();
+        }
     }
 
     bool read(int addr, unsigned char &data)
@@ -1460,23 +1469,31 @@ struct bus_frontend
     {
         unsigned char data = 0xaa;
         if(board->read(addr & 0xFFFF, data)) {
-            if(debug & DEBUG_BUS) printf("read %04X returned %02X\n", addr & 0xFFFF, data);
+            if(debug & DEBUG_BUS)
+            {
+                printf("read %04X returned %02X\n", addr & 0xFFFF, data);
+            }
             // reads[addr & 0xFFFF].push_back(data);
             return data;
         }
-        if(debug & DEBUG_ERROR)
+        if(debug & DEBUG_ERROR) {
             fprintf(stderr, "no ownership of read at %04X\n", addr & 0xFFFF);
+        }
         return 0xAA;
     }
     void write(int addr, unsigned char data)
     {
         if(board->write(addr & 0xFFFF, data)) {
-            if(debug & DEBUG_BUS) printf("write %04X %02X\n", addr & 0xFFFF, data);
+            if(debug & DEBUG_BUS)
+            {
+                printf("write %04X %02X\n", addr & 0xFFFF, data);
+            }
             // writes[addr & 0xFFFF].push_back(data);
             return;
         }
-        if(debug & DEBUG_ERROR)
+        if(debug & DEBUG_ERROR) {
             fprintf(stderr, "no ownership of write %02X at %04X\n", data, addr & 0xFFFF);
+        }
     }
 
     void reset()
