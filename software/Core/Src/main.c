@@ -766,6 +766,102 @@ void NTSCFillRowBuffer(int frameNumber, int lineNumber, unsigned char *rowBuffer
     }
 }
 
+// debug overlay scanout
+
+#include "8x16.h"
+// static int font8x16Width = 8, font8x16Height = 16;
+// static unsigned char font8x16Bits[] = /* was a bracket here */
+
+int debugOverlayEnabled = 1; // 0;
+
+#define debugDisplayLeftTick (NTSCHSyncClocks + NTSCBackPorchClocks + 56)
+#define debugDisplayTopTick (NTSC_EQPULSE_LINES + NTSC_VSYNC_LINES + NTSC_EQPULSE_LINES + NTSC_VBLANK_LINES + 10)
+/* debugFontWidthScale != 4 looks terrible in a color field because of adjacent color columns; probably need to ensure 0s around any 1 text column */
+#define debugFontWidthScale 2
+#define debugCharGapPixels 1
+#define debugFontHeightScale 1
+#define debugDisplayWidth (604 / (font8x16Width * debugFontWidthScale + 1))
+#define debugDisplayHeight ((218 + 10) / font8x16Height)
+
+char debugDisplay[debugDisplayHeight][debugDisplayWidth];
+
+void RoDebugOverlayPrintf(const char *fmt, ...)
+{
+    static int debugLine = 0;
+    static char buffer[debugDisplayWidth + 1];
+    va_list args;
+
+    va_start(args, fmt);
+    vsnprintf(buffer, sizeof(buffer), fmt, args);
+    va_end(args);
+
+    char *line;
+    char *inputstring = buffer;
+    while(line = strsep(&inputstring, "\n")) {
+
+        if(debugLine == (debugDisplayHeight - 1)) {
+            memcpy(debugDisplay, debugDisplay + 1, (debugDisplayHeight - 1) * debugDisplayWidth);
+        }
+
+        memset(debugDisplay[debugLine] + strlen(buffer), 0, debugDisplayWidth - strlen(buffer));
+        memcpy(debugDisplay[debugLine], buffer, strlen(buffer));
+
+        if(debugLine < (debugDisplayHeight - 1)) {
+            debugLine ++;
+        }
+    }
+}
+
+void NTSCFillRowDebugOverlay(int frameNumber, int lineNumber, unsigned char* nextRowBuffer)
+{
+    ntsc_wave_t NTSCWhiteLong =
+        (NTSCWhite <<  0) |
+        (NTSCWhite <<  8) |
+        (NTSCWhite << 16) |
+        (NTSCWhite << 24);
+    int debugFontScanlineHeight = font8x16Height * debugFontHeightScale;
+
+    int rowWithinDebugArea = (lineNumber % 263) - debugDisplayTopTick;
+    int charRow = rowWithinDebugArea / debugFontScanlineHeight;
+    int charPixelY = (rowWithinDebugArea % debugFontScanlineHeight) / debugFontHeightScale;
+
+// XXX this code assumes font width <= 8 and each row padded out to a byte
+    if((rowWithinDebugArea >= 0) && (charRow < debugDisplayHeight)) {
+        for(int charCol = 0; charCol < debugDisplayWidth; charCol++) {
+            unsigned char debugChar = debugDisplay[charRow][charCol];
+            if(debugChar != 0) {
+                unsigned char charRowBits = font8x16Bits[debugChar * font8x16Height + charPixelY];
+#if debugFontWidthScale == 4 && font8x16Width == 8
+                unsigned char *charPixels = nextRowBuffer + debugDisplayLeftTick + (charCol * (font8x16Width + debugCharGapPixels)) * debugFontWidthScale;
+                if(charRowBits & 0x80) { ((ntsc_wave_t*)charPixels)[0] = NTSCWhiteLong; } 
+                if(charRowBits & 0x40) { ((ntsc_wave_t*)charPixels)[1] = NTSCWhiteLong; }
+                if(charRowBits & 0x20) { ((ntsc_wave_t*)charPixels)[2] = NTSCWhiteLong; }
+                if(charRowBits & 0x10) { ((ntsc_wave_t*)charPixels)[3] = NTSCWhiteLong; }
+                if(charRowBits & 0x08) { ((ntsc_wave_t*)charPixels)[4] = NTSCWhiteLong; }
+                if(charRowBits & 0x04) { ((ntsc_wave_t*)charPixels)[5] = NTSCWhiteLong; }
+                if(charRowBits & 0x02) { ((ntsc_wave_t*)charPixels)[6] = NTSCWhiteLong; }
+                if(charRowBits & 0x01) { ((ntsc_wave_t*)charPixels)[7] = NTSCWhiteLong; }
+#else
+                for(int charPixelX = 0; charPixelX < font8x16Width; charPixelX++) {
+                    int pixel = charRowBits & (0x80 >> charPixelX);
+                    if(pixel) {
+                        unsigned char *charPixels = nextRowBuffer + debugDisplayLeftTick + (charCol * (font8x16Width + debugCharGapPixels) + charPixelX) * debugFontWidthScale;
+#if debugFontWidthScale == 4
+                        *(ntsc_wave_t *)charPixels = NTSCWhiteLong; 
+#else
+                        for(int col = 0; col < debugFontWidthScale; col++) {
+                            charPixels[col] = NTSCWhite;
+                        }
+#endif
+                    }
+                }
+#endif
+            }
+        }
+    }
+}
+
+
 uint8_t /*  __attribute__((section (".ram_d1"))) */ rowDoubleBuffer[ROW_SAMPLES * 2];
 int rowNumber = 0;
 int frameNumber = 0;
@@ -802,6 +898,9 @@ void DMA2_Stream1_IRQHandler(void)
     audioBufferPosition = (audioBufferPosition + 1) % sizeof(audioBufferLeft);
 
     NTSCFillRowBuffer(frameNumber, rowNumber, rowDest);
+    if(debugOverlayEnabled) {
+        NTSCFillRowDebugOverlay(frameNumber, rowNumber, rowDest);
+    }
 
     // A little pulse so we know where we are on the line when we finished
     if(0 /* markHandlerInSamples */) {
@@ -1300,7 +1399,7 @@ int writeLEDColors = 1;
 uint8_t LEDColors[3][3];
 int LEDSPIBusy = 0;
 
-int RosaLEDSet(int which, uint8_t red, uint8_t green, uint8_t blue)
+int RoLEDSet(int which, uint8_t red, uint8_t green, uint8_t blue)
 {
     if((which < 0) || (which > 2)) {
         return -1;
@@ -1324,9 +1423,9 @@ void LEDTestIterate()
     if(!LEDBusy && (now - then > .01666667f)) {
         int halves = (int)(now * 2);
         if(halves % 2) {
-            RosaLEDSet(0, 0, 0, 0);
+            RoLEDSet(0, 0, 0, 0);
         } else {
-            RosaLEDSet(0, 0, 255, 0);
+            RoLEDSet(0, 0, 255, 0);
         }
 
         float h = now / 2.0f * 3.14159;
@@ -1334,11 +1433,11 @@ void LEDTestIterate()
         float v = 1.0f;
         float r, g, b;
         HSVToRGB3f(h, s, v, &r, &g, &b);
-        // RosaLEDSet(1, r * 255, g * 255, b * 255);
+        // RoLEDSet(1, r * 255, g * 255, b * 255);
 
         int phase = (int)now % 2;
         float value = phase ? (now - (int)now) : (1 - (now - (int)now));
-        // RosaLEDSet(2, value * 255, value * 255, value * 255);
+        // RoLEDSet(2, value * 255, value * 255, value * 255);
 
         writeLEDColors = 1;
     }
@@ -2537,6 +2636,8 @@ int main(void)
     printf("Hello World\n");
     printf("System clock is %lu\n", HAL_RCC_GetSysClockFreq());
 
+    RoDebugOverlayPrintf("Hello World\n");
+
     while(0) {
         for(int i = 0; i < 1000000; i++) {
             delayNanos(1000);
@@ -2787,7 +2888,7 @@ static void MX_SDMMC2_SD_Init(void)
   hsd2.Init.ClockPowerSave = SDMMC_CLOCK_POWER_SAVE_DISABLE;
   hsd2.Init.BusWide = SDMMC_BUS_WIDE_4B;
   hsd2.Init.HardwareFlowControl = SDMMC_HARDWARE_FLOW_CONTROL_DISABLE;
-  hsd2.Init.ClockDiv = 4;
+  hsd2.Init.ClockDiv = 5;
   hsd2.Init.TranceiverPresent = SDMMC_TRANSCEIVER_NOT_PRESENT;
   /* USER CODE BEGIN SDMMC2_Init 2 */
 
