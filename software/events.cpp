@@ -120,7 +120,6 @@ void KeyRepeatRelease(KeyRepeatManager *mgr, int released)
 int KeyRepeatUpdate(KeyRepeatManager *mgr, int haveEvent, Event* ev)
 {
     int now = HAL_GetTick();
-    int generatedAnEvent = 0;
 
     if(haveEvent) {
         switch(ev->eventType) {
