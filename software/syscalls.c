@@ -22,6 +22,8 @@
 #include "ff.h"
 #endif
 
+#include "rocinante.h"
+
 #undef errno
 extern int errno;
 
@@ -30,7 +32,6 @@ extern int errno;
 
 extern int __io_putchar(int ch) __attribute__((weak));
 extern int __io_getchar(void) __attribute__((weak));
-
 
 caddr_t _sbrk(int incr)
 {
@@ -46,6 +47,9 @@ caddr_t _sbrk(int incr)
 
 	if (heap_end + incr > &heap_top)
 	{
+            static const char failed[] = "sbrk() failed!";
+            RoDebugOverlaySetLine(9, failed, sizeof(failed));
+            panic();
 //		write(1, "Heap and stack collision\n", 25);
 //		abort();
 		errno = ENOMEM;

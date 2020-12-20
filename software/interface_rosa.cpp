@@ -37,10 +37,11 @@ static constexpr int hires_page_size = 8192;
 
 extern "C" {
 extern int WozModePage;
+extern int WozModeAux;
 extern enum DisplayMode WozModeDisplayMode;
 extern int WozModeMixed;
-extern uint8_t WozModeHGRBuffers[2][8192];
-extern uint8_t WozModeTextBuffers[2][1024];
+extern uint8_t WozModeHGRBuffers[2][2][8192];
+extern uint8_t WozModeTextBuffers[2][2][1024];
 };
 
 KeyRepeatManager keyRepeat;
@@ -303,17 +304,29 @@ void enqueue_ascii(int key)
     }
 }
 
-void iterate(const ModeHistory& history, unsigned long long current_byte, float megahertz)
+void map_history_to_lines(const ModeHistory& history, unsigned long long current_byte)
 {
-    apply_writes();
+#if 0
+    for(const auto& modePoint: history) {
+#else
+    // We don't have per-line modes yet, so just update to the
+    // last mode setting for speed.
     if(history.size() > 0) {
-        const auto& lastModePoint = history.back();
-        const auto& [when, lastMode] = lastModePoint;
+        const auto& modePoint = history.back();
+#endif
+        const auto& [when, lastMode] = modePoint;
         (void)when;
         WozModeDisplayMode = lastMode.mode;
         WozModeMixed = lastMode.mixed;
         WozModePage = lastMode.page;
     }
+}
+
+void iterate(const ModeHistory& history, unsigned long long current_byte, float megahertz)
+{
+    apply_writes();
+
+    map_history_to_lines(history, current_byte);
 
     poll_events();
 }
@@ -322,47 +335,29 @@ void shutdown()
 {
 }
 
-void set_switches(DisplayMode mode_, bool mixed, int page, bool vid80_, bool altchar_)
-{
-    display_mode = mode_;
-    mixed_mode = mixed;
-    display_page = page;
-    vid80 = vid80_;
-    altchar = altchar_;
-
-    // XXX
-    static bool altchar_warned = false;
-    if(altchar && !altchar_warned) {
-        fprintf(stderr, "Warning: ALTCHAR activated, is not implemented\n");
-        altchar_warned = true;
-    }
-}
-
 typedef pair<int, bool> address_auxpage;
-map<address_auxpage, unsigned char> writes;
+map<address_auxpage, uint8_t> writes;
 int collisions = 0;
 
-void write2(int addr, bool aux, unsigned char data)
+void write2(int addr, bool aux, uint8_t data)
 {
     // We know text page 1 and 2 are contiguous
     if((addr >= text_page1_base) && (addr < text_page2_base + text_page_size)) {
         int page = (addr >= text_page2_base) ? 1 : 0;
         size_t within_page = addr - text_page1_base - page * text_page_size;
-        // size_t within_page = (addr - text_page1_base) % text_page_size;
         if((within_page < 0) || (within_page >= sizeof(WozModeTextBuffers[0]))) {
-            printf("%d outside HGR buffer\n", within_page);
+            printf("%d outside TEXT buffer\n", within_page);
         }
-        WozModeTextBuffers[page][within_page] = data;
+        WozModeTextBuffers[aux ? 1 : 0][page][within_page] = data;
 
     } else if(((addr >= hires_page1_base) && (addr < hires_page1_base + hires_page_size)) || ((addr >= hires_page2_base) && (addr < hires_page2_base + hires_page_size))) {
 
         int page = (addr < hires_page2_base) ? 0 : 1;
         size_t within_page = addr - hires_page1_base - page * hires_page_size;
-        // size_t within_page = (addr - hires_page1_base) % hires_page_size;
         if((within_page < 0) || (within_page >= sizeof(WozModeHGRBuffers[0]))) {
             printf("%d outside HGR buffer\n", within_page);
         }
-        WozModeHGRBuffers[page][within_page] = data;
+        WozModeHGRBuffers[aux ? 1 : 0][page][within_page] = data;
     }
 }
 
@@ -378,7 +373,7 @@ void apply_writes(void)
     collisions = 0;
 }
 
-bool write(int addr, bool aux, unsigned char data)
+bool write(uint16_t addr, bool aux, uint8_t data)
 {
     // We know text page 1 and 2 are contiguous
     if((addr >= text_page1_base) && (addr < text_page2_base + text_page_size)) {
@@ -386,6 +381,9 @@ bool write(int addr, bool aux, unsigned char data)
         if(writes.find({addr, aux}) != writes.end())
             collisions++;
         writes[{addr, aux}] = data;
+        if(writes.size() > 1000) {
+            apply_writes();
+        }
         return true;
 
     } else if(((addr >= hires_page1_base) && (addr < hires_page1_base + hires_page_size)) || ((addr >= hires_page2_base) && (addr < hires_page2_base + hires_page_size))) {
@@ -393,6 +391,9 @@ bool write(int addr, bool aux, unsigned char data)
         if(writes.find({addr, aux}) != writes.end())
             collisions++;
         writes[{addr, aux}] = data;
+        if(writes.size() > 1000) {
+            apply_writes();
+        }
         return true;
     }
     return false;
@@ -407,7 +408,7 @@ void show_floppy_activity(int number, bool activity)
     }
 }
 
-void enqueue_audio_samples(char *buf, size_t sz)
+void enqueue_audio_samples(uint8_t *buf, size_t sz)
 {
 }
 

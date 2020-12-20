@@ -116,12 +116,30 @@ int __io_getchar(void)
     }
 #endif
     return -1;
-}
+} 
+
+volatile int USARTBusy = 0;
 
 void __io_putchar( char c )
 {
-    HAL_UART_Transmit_IT(&huart2, (uint8_t *)&c, 1);
-    HAL_Delay(1);
+    static int which = 0;
+    static int where = 0;
+    static char buffer[2][256];
+
+    buffer[which][where++] = c;
+    if(/* !USARTBusy || */ (c == '\n') || (where >= sizeof(buffer[0]))) {
+        while(USARTBusy);
+        USARTBusy = 1;
+        HAL_UART_Transmit_IT(&huart2, (uint8_t *)&buffer[which], where);
+        // HAL_UART_Transmit(&huart2, (uint8_t *)&buffer[which], where, 100);
+        which = (which + 1) % 2;
+        where = 0;
+    }
+}  
+
+void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
+{
+    USARTBusy = 0;
 }
 
 #ifdef __cplusplus
@@ -323,7 +341,8 @@ void write3LEDString(uint8_t colors[3][3])
     uint8_t *p = buffer;
 
     // Wait for SPI to finish transmitting the previous color
-    while (hspi4.State != HAL_SPI_STATE_READY);
+    // while (hspi4.State != HAL_SPI_STATE_READY);
+    while(LEDBusy);
 
     *p++ = 0;
     for(int i = 0; i < 3; i++) {
@@ -435,7 +454,9 @@ void AudioStart()
 #define MAX_DAC_VOLTAGE 1.32f
 #define MAX_DAC_VOLTAGE_F16 (132 * 65536 / 100)
 
-inline unsigned char voltageToDACValue(float voltage)
+#define INLINE inline
+
+INLINE unsigned char voltageToDACValue(float voltage)
 {
     if(voltage < 0.0f) {
         return 0x0;
@@ -447,12 +468,12 @@ inline unsigned char voltageToDACValue(float voltage)
     return value;
 }
 
-inline unsigned char voltageToDACValueNoBounds(float voltage)
+INLINE unsigned char voltageToDACValueNoBounds(float voltage)
 {
     return (uint32_t)(voltage / MAX_DAC_VOLTAGE * 255);
 }
 
-inline int voltageToDACValueFixed16NoBounds(int voltage)
+INLINE int voltageToDACValueFixed16NoBounds(int voltage)
 {
     return (uint32_t)(voltage * 65535 / MAX_DAC_VOLTAGE_F16) * 256;
 }
@@ -492,7 +513,7 @@ inline int voltageToDACValueFixed16NoBounds(int voltage)
 
 typedef uint32_t ntsc_wave_t;
 
-inline unsigned char NTSCYIQToDAC(float y, float i, float q, float tcycles)
+INLINE unsigned char NTSCYIQToDAC(float y, float i, float q, float tcycles)
 {
 // This is transcribed from the NTSC spec, double-checked.
     float w_t = tcycles * M_PI * 2;
@@ -504,7 +525,7 @@ inline unsigned char NTSCYIQToDAC(float y, float i, float q, float tcycles)
     return voltageToDACValue(NTSC_SYNC_BLACK_VOLTAGE + signal * (NTSC_SYNC_WHITE_VOLTAGE - NTSC_SYNC_BLACK_VOLTAGE));
 }
 
-inline unsigned char NTSCYIQDegreesToDAC(float y, float i, float q, int degrees)
+INLINE unsigned char NTSCYIQDegreesToDAC(float y, float i, float q, int degrees)
 {
     float sine, cosine;
     if(degrees == 0) {
@@ -528,7 +549,7 @@ inline unsigned char NTSCYIQDegreesToDAC(float y, float i, float q, int degrees)
     return voltageToDACValueNoBounds(NTSC_SYNC_BLACK_VOLTAGE + signal * (NTSC_SYNC_WHITE_VOLTAGE - NTSC_SYNC_BLACK_VOLTAGE));
 }
 
-inline ntsc_wave_t NTSCYIQToWave(float y, float i, float q)
+INLINE ntsc_wave_t NTSCYIQToWave(float y, float i, float q)
 {
     unsigned char b0 = NTSCYIQToDAC(y, i, q,  .0f);
     unsigned char b1 = NTSCYIQToDAC(y, i, q, .25f);
@@ -539,7 +560,7 @@ inline ntsc_wave_t NTSCYIQToWave(float y, float i, float q)
 }
 
 // This is transcribed from the NTSC spec, double-checked.
-inline void RGBToYIQ(float r, float g, float b, float *y, float *i, float *q)
+INLINE void RGBToYIQ(float r, float g, float b, float *y, float *i, float *q)
 {
     *y = .30f * r + .59f * g + .11f * b;
     *i = -.27f * (b - *y) + .74f * (r - *y);
@@ -559,14 +580,14 @@ inline void RGBToYIQ(float r, float g, float b, float *y, float *i, float *q)
 // 1.000000 -1.108545 1.709007
 
 // Using inverse 3x3 matrix above.  Tested numerically to be the inverse of RGBToYIQ
-inline void YIQToRGB(float y, float i, float q, float *r, float *g, float *b)
+INLINE void YIQToRGB(float y, float i, float q, float *r, float *g, float *b)
 {
     *r = 1.0f * y + .946882f * i + 0.623557f * q;
     *g = 1.000000f * y + -0.274788f * i + -0.635691f * q;
     *b = 1.000000f * y + -1.108545f * i + 1.709007f * q;
 }
 
-inline ntsc_wave_t NTSCRGBToWave(float r, float g, float b)
+INLINE ntsc_wave_t NTSCRGBToWave(float r, float g, float b)
 {
     float y, i, q;
     RGBToYIQ(r, g, b, &y, &i, &q);
@@ -817,11 +838,16 @@ void NTSCFillRowBuffer(int frameNumber, int lineNumber, unsigned char *rowBuffer
 
 // debug overlay scanout
 
+// There should be some kind of a way to reserve a "slot" (not
+// always the same line on screen) for debug output for system or other
+// continuous output, and then a way to scroll debug output logging
+
+
 #include "8x16.h"
 // static int font8x16Width = 8, font8x16Height = 16;
 // static unsigned char font8x16Bits[] = /* was a bracket here */
 
-int debugOverlayEnabled = 1; // 0;
+int debugOverlayEnabled = 0;
 
 #define debugDisplayLeftTick (NTSCHSyncClocks + NTSCBackPorchClocks + 56)
 #define debugDisplayTopTick (NTSC_EQPULSE_LINES + NTSC_VSYNC_LINES + NTSC_EQPULSE_LINES + NTSC_VBLANK_LINES + 10)
@@ -839,6 +865,8 @@ void RoDebugOverlayPrintf(const char *fmt, ...)
     static int debugLine = 0;
     static char buffer[debugDisplayWidth + 1];
     va_list args;
+
+    debugOverlayEnabled = 1;
 
     va_start(args, fmt);
     vsnprintf(buffer, sizeof(buffer), fmt, args);
@@ -859,6 +887,11 @@ void RoDebugOverlayPrintf(const char *fmt, ...)
             debugLine ++;
         }
     }
+}
+
+void RoDebugOverlaySetLine(int line, const char *str, size_t size)
+{
+    memcpy(debugDisplay[line], str, size);
 }
 
 void NTSCFillRowDebugOverlay(int frameNumber, int lineNumber, unsigned char* nextRowBuffer)
@@ -900,6 +933,9 @@ void NTSCFillRowDebugOverlay(int frameNumber, int lineNumber, unsigned char* nex
 #else
                         for(int col = 0; col < debugFontWidthScale; col++) {
                             charPixels[col] = NTSCWhite;
+                            charPixels[col + 1] = NTSCBlack;
+                            charPixels[col + 2] = NTSCBlack;
+                            charPixels[col + 3] = NTSCBlack;
                         }
 #endif
                     }
@@ -1015,10 +1051,11 @@ void startNTSCScanout()
 
 enum DisplayMode {TEXT, LORES, HIRES};
 enum DisplayMode WozModeDisplayMode = TEXT;
+int WozModeAux = 0;
 int WozModeMixed = 0;
 int WozModePage = 0;
-uint8_t WozModeHGRBuffers[2][8192];
-uint8_t WozModeTextBuffers[2][1024];
+uint8_t WozModeHGRBuffers[2][2][8192];
+uint8_t WozModeTextBuffers[2][2][1024];
 
 const int WozModeTextRowOffsets[24] =
 {
@@ -1079,8 +1116,9 @@ const int WozModeHGRRowOffsets[192] =
 __attribute__((hot,flatten)) void WozModeFillRowBufferHGR(int frameIndex, int rowNumber, size_t maxSamples, uint8_t* rowBuffer)
 {
     int rowIndex = (rowNumber - WOZ_MODE_TOP) / 2;
+    uint8_t darker = NTSCBlack + (NTSCWhite - NTSCBlack) / 4; // XXX debug
     if((rowIndex >= 0) && (rowIndex < 192)) {
-        const uint8_t *rowSrc = WozModeHGRBuffers[WozModePage] + WozModeHGRRowOffsets[rowIndex]; // row - ...?
+        const uint8_t *rowSrc = WozModeHGRBuffers[WozModeAux][WozModePage] + WozModeHGRRowOffsets[rowIndex]; // row - ...?
 
         for(int byteIndex = 0; byteIndex < 40; byteIndex++) {
 
@@ -1091,6 +1129,8 @@ __attribute__((hot,flatten)) void WozModeFillRowBufferHGR(int frameIndex, int ro
 
             for(int bitIndex = 0; bitIndex < 7; bitIndex++) {
                 if(byte & 0x1) {
+                    // *rowDst++ = darker; // XXX debug NTSCWhite;
+                    // *rowDst++ = darker; // XXX debug NTSCWhite;
                     *rowDst++ = NTSCWhite;
                     *rowDst++ = NTSCWhite;
                 } else {
@@ -1338,7 +1378,7 @@ void WozModeFillRowBuffer40Text(int frameIndex, int rowNumber, size_t maxSamples
         memset(rowBuffer + WOZ_MODE_LEFT, NTSCBlack, WOZ_MODE_WIDTH);
         int rowInText = rowIndex / 8;
         int rowInGlyph = rowIndex % 8;
-        const uint8_t *rowSrc = WozModeTextBuffers[WozModePage] + WozModeTextRowOffsets[rowInText]; // row - ...?
+        const uint8_t *rowSrc = WozModeTextBuffers[WozModeAux][WozModePage] + WozModeTextRowOffsets[rowInText]; // row - ...?
         uint8_t *rowDst = rowBuffer + WOZ_MODE_LEFT;
         for(int textColumn = 0; textColumn < 40; textColumn++) {
             uint8_t byte = rowSrc[textColumn];
@@ -1484,9 +1524,9 @@ void LEDTestIterate()
 int main_iterate(void)
 {
     static int q = 0;
-    if(++q > 100000) {
+    if(++q > 1000) {
         q = 0;
-        printf(".");
+        // printf(".");
     }
 
     MX_USB_HOST_Process();
@@ -1494,7 +1534,7 @@ int main_iterate(void)
     LEDTestIterate();
 
     if(writeLEDColors) {
-        write3LEDString(LEDColors);
+        // write3LEDString(LEDColors);
         writeLEDColors = 0;
     }
 
@@ -2397,8 +2437,7 @@ void HGRModeTest()
 {
     printf("HGR Mode Test\n");
 
-    memset(WozModeHGRBuffers[0], 0, sizeof(WozModeHGRBuffers[0]));
-    memset(WozModeHGRBuffers[1], 0, sizeof(WozModeHGRBuffers[1]));
+    memset(WozModeHGRBuffers, 0, sizeof(WozModeHGRBuffers));
     WozModeDisplayMode = HIRES;
     NTSCSwitchModeFuncs(WozModeFillRowBuffer, WozModeNeedsColorburst);
 
@@ -2469,12 +2508,11 @@ void HGRModeTest()
             }
             if(draw) {
                 if((x >= 0) && (y >= 0) && (x < 280) && (y < 192)) {
-                    WozModeHGRBuffers[0][WozModeHGRRowOffsets[y] + x / 7] |= (1 << (x % 7)) | palette;
+                    WozModeHGRBuffers[0][0][WozModeHGRRowOffsets[y] + x / 7] |= (1 << (x % 7)) | palette;
                 }
             } 
             if(clear) {
-                memset(WozModeHGRBuffers[0], 0, sizeof(WozModeHGRBuffers[0]));
-                memset(WozModeHGRBuffers[1], 0, sizeof(WozModeHGRBuffers[1]));
+                memset(WozModeHGRBuffers, 0, sizeof(WozModeHGRBuffers));
             }
         }
 
@@ -2486,24 +2524,23 @@ void TextModeTest()
 {
     printf("Text Mode Text\n");
 
-    memset(WozModeTextBuffers[0], 248, 1024);
-    memset(WozModeTextBuffers[1], 248, 1024);
+    memset(WozModeTextBuffers, 248, sizeof(WozModeTextBuffers));
     NTSCSwitchModeFuncs(WozModeFillRowBuffer, WozModeNeedsColorburst);
     // fill with ONE TWO THREE FOUR over and over again
 
     const char *str = "ONE TWO FREE FOUR ";
     int stringIndex = 0;
 
-    char *buffer = malloc(sizeof(WozModeTextBuffers[0]) * 2);
-    for(size_t s = 0; s < sizeof(WozModeTextBuffers[0]) * 2; s++) {
+    char *buffer = malloc(sizeof(WozModeTextBuffers[0][0]) * 2);
+    for(size_t s = 0; s < sizeof(WozModeTextBuffers[0][0]) * 2; s++) {
         buffer[s] = str[stringIndex];
         stringIndex = (stringIndex + 1) % strlen(str);
     }
 
     int bufferIndex = 0;
     while(1) {
-        memcpy(WozModeTextBuffers[0], buffer + bufferIndex, sizeof(WozModeTextBuffers[0]));
-        bufferIndex = (bufferIndex + 1) % sizeof(WozModeTextBuffers[0]);
+        memcpy(WozModeTextBuffers[0][0], buffer + bufferIndex, sizeof(WozModeTextBuffers[0][0]));
+        bufferIndex = (bufferIndex + 1) % sizeof(WozModeTextBuffers[0][0]);
         char *foobar = malloc(bufferIndex * 667 % 513);
         free(foobar);
         main_iterate();
@@ -2675,7 +2712,7 @@ int main(void)
         HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
     }
 
-    printf("Rocinante Bringup Tests --------------------------------\n");
+    printf("Rocinante Firmware -------------------------------------\n");
 
   /* USER CODE END 2 */
 
@@ -2697,7 +2734,7 @@ int main(void)
     printf("Hello World\n");
     printf("System clock is %lu\n", HAL_RCC_GetSysClockFreq());
 
-    RoDebugOverlayPrintf("Hello World\n");
+    // RoDebugOverlayPrintf("Hello World\n");
 
     while(0) {
         for(int i = 0; i < 1000000; i++) {
@@ -2737,8 +2774,9 @@ int main(void)
             // "-fast",
             "-diskII",
             "diskII.c600.c6ff.bin",
-            // "1.DSK",
-            "LodeRunner.dsk",
+            // // "1.DSK",
+            // // "LodeRunner.dsk",
+            "Chop.dsk",
             "none",
             "apple2e.rom",
         };
