@@ -11,7 +11,7 @@
 
     BUS template parameter must provide methods:
         uint8_t read(uint16_t addr);
-        void read(uint16_t addr, uint8_t data);
+        void write(uint16_t addr, uint8_t data);
 */
 
 /*
@@ -38,6 +38,7 @@ struct CPU6502
 
     static constexpr uint8_t N = 0x80;
     static constexpr uint8_t V = 0x40;
+    static constexpr uint8_t B2 = 0x20;
     static constexpr uint8_t B = 0x10;
     static constexpr uint8_t D = 0x08;
     static constexpr uint8_t I = 0x04;
@@ -146,15 +147,15 @@ struct CPU6502
         a(0),
         x(0),
         y(0),
-        s(0),
-        p(0x20),
+        s(0xFF),
+        p(I),
         exception(RESET)
     {
     }
 
     void reset()
     {
-        s = 0xFD;
+        s = 0xFF;
         uint8_t low = bus.read(0xFFFC);
         uint8_t high = bus.read(0xFFFD);
         pc = low + high * 256;
@@ -165,7 +166,7 @@ struct CPU6502
     {
         stack_push((pc - 1) >> 8);
         stack_push((pc - 1) & 0xFF);
-        stack_push(p);
+        stack_push(p | B2);
         uint8_t low = bus.read(0xFFFE);
         uint8_t high = bus.read(0xFFFF);
         pc = low + high * 256;
@@ -176,7 +177,7 @@ struct CPU6502
     {
         stack_push((pc - 1) >> 8);
         stack_push((pc - 1) & 0xFF);
-        stack_push(p);
+        stack_push(p | B2);
         uint8_t low = bus.read(0xFFFA);
         uint8_t high = bus.read(0xFFFB);
         pc = low + high * 256;
@@ -200,9 +201,10 @@ struct CPU6502
 
         switch(inst) {
             case 0x00: { // BRK
-                stack_push((pc - 1) >> 8);
-                stack_push((pc - 1) & 0xFF);
-                stack_push(p | B); // | B says the Synertek 6502 reference
+                stack_push((pc + 1) >> 8);
+                stack_push((pc + 1) & 0xFF);
+                stack_push(p | B2 | B); // | B says the Synertek 6502 reference
+                p |= I;
                 uint8_t low = bus.read(0xFFFE);
                 uint8_t high = bus.read(0xFFFF);
                 pc = low + high * 256;
@@ -281,6 +283,13 @@ struct CPU6502
 
             case 0xC6: { // DEC zpg
                 uint8_t zpg = read_pc_inc();
+                set_flags(N | Z, m = bus.read(zpg) - 1);
+                bus.write(zpg, m);
+                break;
+            }
+
+            case 0xD6: { // DEC zpg, X
+                uint8_t zpg = (read_pc_inc() + x) % 0xFF;
                 set_flags(N | Z, m = bus.read(zpg) - 1);
                 bus.write(zpg, m);
                 break;
@@ -576,6 +585,29 @@ struct CPU6502
                 break;
             }
 
+            case 0xE1: { // SBC ind, X
+                uint8_t zpg = (read_pc_inc() + x) & 0xFF;
+                uint8_t low = bus.read(zpg);
+                uint8_t high = bus.read((zpg + 1) & 0xFF);
+                uint16_t addr = low + high * 256;
+                if((addr - y) / 256 != addr / 256)
+                    clk.add_cpu_cycles(1);
+                m = bus.read(addr);
+                uint8_t borrow = isset(C) ? 0 : 1;
+                if(isset(D)) {
+                    uint8_t bcd = a / 16 * 10 + a % 16;
+                    flag_change(C, !(bcd <  m + borrow));
+                    flag_change(V, sbc_overflow_d(bcd, m, borrow));
+                    set_flags(N | Z, bcd = bcd - (m + borrow));
+                    a = bcd / 10 * 16 + bcd % 10;
+                } else {
+                    flag_change(C, !(a < (m + borrow)));
+                    flag_change(V, sbc_overflow(a, m, borrow));
+                    set_flags(N | Z, a = a - (m + borrow));
+                }
+                break;
+            }
+
             case 0xF1: { // SBC ind, Y
                 uint8_t zpg = read_pc_inc();
                 uint8_t low = bus.read(zpg);
@@ -703,6 +735,29 @@ struct CPU6502
                 break;
             }
 
+            case 0x61: { // ADC (ind, X)
+                uint8_t zpg = (read_pc_inc() + x) & 0xFF;
+                uint8_t low = bus.read(zpg);
+                uint8_t high = bus.read((zpg + 1) & 0xFF);
+                uint16_t addr = low + high * 256;
+                if((addr - y) / 256 != addr / 256)
+                    clk.add_cpu_cycles(1);
+                m = bus.read(addr);
+                uint8_t carry = isset(C) ? 1 : 0;
+                if(isset(D)) {
+                    uint8_t bcd = a / 16 * 10 + a % 16;
+                    flag_change(C, ((uint16_t)bcd + (uint16_t)m + carry) > 99);
+                    flag_change(V, adc_overflow_d(bcd, m, carry));
+                    set_flags(N | Z, bcd = bcd + m + carry);
+                    a = bcd / 10 * 16 + bcd % 10;
+                } else {
+                    flag_change(C, ((uint16_t)a + (uint16_t)m + carry) > 0xFF);
+                    flag_change(V, adc_overflow(a, m, carry));
+                    set_flags(N | Z, a = a + m + carry);
+                }
+                break;
+            }
+
             case 0x6D: { // ADC abs
                 uint8_t low = read_pc_inc();
                 uint8_t high = read_pc_inc();
@@ -808,6 +863,15 @@ struct CPU6502
                 flag_change(C, m & 0x80);
                 set_flags(N | Z, m = m << 1);
                 bus.write(addr, m);
+                break;
+            }
+
+            case 0x1E: { // ASL abs
+                uint16_t addr = read_pc_inc() + read_pc_inc() * 256;
+                m = bus.read(addr + x);
+                flag_change(C, m & 0x80);
+                set_flags(N | Z, m = m << 1);
+                bus.write(addr + x, m);
                 break;
             }
 
@@ -970,6 +1034,17 @@ struct CPU6502
                 break;
             }
 
+            case 0x21: { // AND (ind, X)
+                uint8_t zpg = (read_pc_inc() + x) & 0xFF;
+                uint8_t low = bus.read(zpg);
+                uint8_t high = bus.read((zpg + 1) & 0xFF);
+                uint16_t addr = low + high * 256;
+                if((addr - y) / 256 != addr / 256)
+                    clk.add_cpu_cycles(1);
+                set_flags(N | Z, a = a & bus.read(addr));
+                break;
+            }
+
             case 0x31: { // AND (ind), y
                 uint8_t zpg = read_pc_inc();
                 uint8_t low = bus.read(zpg);
@@ -1032,7 +1107,7 @@ struct CPU6502
                 uint16_t addr = low + high * 256;
                 m = bus.read(addr + x);
                 bool c = isset(C);
-                flag_change(C, m & 0x80);
+                flag_change(C, m & 0x01);
                 set_flags(N | Z, m = (c ? 0x80 : 0x00) | (m >> 1));
                 bus.write(addr + x, m);
                 break;
@@ -1042,7 +1117,7 @@ struct CPU6502
                 uint8_t zpg = (read_pc_inc() + x) & 0xFF;
                 m = bus.read(zpg);
                 bool c = isset(C);
-                flag_change(C, m & 0x01);
+                flag_change(C, m & 0x80);
                 set_flags(N | Z, m = (c ? 0x01 : 0x00) | (m << 1));
                 bus.write(zpg, m);
                 break;
@@ -1192,12 +1267,12 @@ struct CPU6502
             }
 
             case 0x08: { // PHP
-                stack_push(p);
+                stack_push(p | B2 | B);
                 break;
             }
 
             case 0x28: { // PLP
-                p = stack_pull();
+                p = stack_pull() & ~ (B2 | B);
                 break;
             }
 
@@ -1472,10 +1547,10 @@ struct CPU6502
             }
 
             case 0x40: { // RTI
-                p = stack_pull();
+                p = stack_pull() & ~ (B2 | B);
                 uint8_t pcl = stack_pull();
                 uint8_t pch = stack_pull();
-                pc = pcl + pch * 256 + 1;
+                pc = pcl + pch * 256;
                 break;
             }
 
@@ -1512,6 +1587,13 @@ struct CPU6502
                 break;
             }
 
+            case 0x96: { // STX zpg, Y
+                uint8_t zpg = read_pc_inc();
+                uint16_t addr = (zpg + y) & 0xFF;
+                bus.write(addr, x);
+                break;
+            }
+
             case 0x84: { // STY
                 uint8_t zpg = read_pc_inc();
                 bus.write(zpg, y);
@@ -1538,6 +1620,49 @@ struct CPU6502
 
 #if SUPPORT_65C02
             // 65C02 instructions
+
+            case 0x0F: case 0x1F: case 0x2F: case 0x3F:
+            case 0x4F: case 0x5F: case 0x6F: case 0x7F: { // BBRn zpg, rel, 65C02
+                int whichbit = (inst >> 4) & 0x7;
+                uint8_t zpg = read_pc_inc();
+                uint8_t m = bus.read(zpg);
+                if(!(m & (1 << whichbit))) {
+                    int32_t rel = (read_pc_inc() + 128) % 256 - 128;
+                    // if((pc + rel) / 256 != pc / 256)
+                        // clk.add_cpu_cycles(1); // XXX ???
+                    pc += rel;
+                }
+                break;
+            }
+            
+            case 0x8F: case 0x9F: case 0xAF: case 0xBF:
+            case 0xCF: case 0xDF: case 0xEF: case 0xFF: { // BBSn zpg, rel, 65C02
+                int whichbit = (inst >> 4) & 0x7;
+                uint8_t zpg = read_pc_inc();
+                uint8_t m = bus.read(zpg);
+                if(m & (1 << whichbit)) {
+                    int32_t rel = (read_pc_inc() + 128) % 256 - 128;
+                    // if((pc + rel) / 256 != pc / 256)
+                        // clk.add_cpu_cycles(1); // XXX ???
+                    pc += rel;
+                }
+                break;
+            }
+            
+            case 0x5A: { // PHY, 65C02
+                stack_push(y);
+                break;
+            }
+
+            case 0x7A: { // PLY, 65C02
+                set_flags(N | Z, y = stack_pull());
+                break;
+            }
+
+            case 0xFA: { // PLX, 65C02
+                set_flags(N | Z, x = stack_pull());
+                break;
+            }
 
             case 0x80: { // BRA imm, 65C02
                 int32_t rel = (read_pc_inc() + 128) % 256 - 128;
@@ -1605,6 +1730,25 @@ struct CPU6502
                 break;
             }
 
+            case 0x75: { // ADC zpg, X
+                uint8_t zpg = read_pc_inc();
+                uint16_t addr = (zpg + x)& 0xFF;
+                m = bus.read(addr);
+                uint8_t carry = isset(C) ? 1 : 0;
+                if(isset(D)) {
+                    uint8_t bcd = a / 16 * 10 + a % 16;
+                    flag_change(C, ((uint16_t)bcd + (uint16_t)m + carry) > 99);
+                    flag_change(V, adc_overflow_d(bcd, m, carry));
+                    set_flags(N | Z, bcd = bcd + m + carry);
+                    a = bcd / 10 * 16 + bcd % 10;
+                } else {
+                    flag_change(C, ((uint16_t)a + (uint16_t)m + carry) > 0xFF);
+                    flag_change(V, adc_overflow(a, m, carry));
+                    set_flags(N | Z, a = a + m + carry);
+                }
+                break;
+            }
+
             case 0x3A: { // DEC, 65C02
                 set_flags(N | Z, a = a - 1);
                 break;
@@ -1650,22 +1794,22 @@ struct CPU6502
 template<class CLK, class BUS>
 const int32_t CPU6502<CLK, BUS>::cycles[256] =
 {
-    /* 0x0- */ 7, 6, -1, -1, -1, 3, 5, -1, 3, 2, 2, -1, -1, 4, 6, -1,
-    /* 0x1- */ 2, 5, 5, -1, -1, 4, 6, -1, 2, 4, 2, -1, -1, 4, 7, -1,
-    /* 0x2- */ 6, 6, -1, -1, 3, 3, 5, -1, 4, 2, 2, -1, 4, 4, 6, -1,
-    /* 0x3- */ 2, 5, -1, -1, -1, 4, 6, -1, 2, 4, 2, -1, -1, 4, 7, -1,
-    /* 0x4- */ 6, 6, -1, -1, -1, 3, 5, -1, 3, 2, 2, -1, 3, 4, 6, -1,
-    /* 0x5- */ 2, 5, -1, -1, -1, 4, 6, -1, 2, 4, -1, -1, -1, 4, 7, -1,
-    /* 0x6- */ 6, 6, -1, -1, 3, 3, 5, -1, 4, 2, 2, -1, 5, 4, 6, -1,
-    /* 0x7- */ 2, 5, 5, -1, -1, 4, 6, -1, 2, 4, -1, -1, -1, 4, 7, -1,
-    /* 0x8- */ 2, 6, -1, -1, 3, 3, 3, -1, 2, -1, 2, -1, 4, 4, 4, -1,
-    /* 0x9- */ 2, 6, 5, -1, 4, 4, 4, -1, 2, 5, 2, -1, 4, 5, -1, -1,
-    /* 0xA- */ 2, 6, 2, -1, 3, 3, 3, -1, 2, 2, 2, -1, 4, 4, 4, -1,
-    /* 0xB- */ 2, 5, 5, -1, 4, 4, 4, -1, 2, 4, 2, -1, 4, 4, 4, -1,
-    /* 0xC- */ 2, 6, -1, -1, 3, 3, 5, -1, 2, 2, 2, -1, 4, 4, 3, -1,
-    /* 0xD- */ 2, 5, 5, -1, -1, 4, 6, -1, 2, 4, 3, -1, -1, 4, 7, -1,
-    /* 0xE- */ 2, 6, -1, -1, 3, 3, 5, -1, 2, 2, 2, -1, 4, 4, 6, -1,
-    /* 0xF- */ 2, 5, -1, -1, -1, 4, 6, -1, 2, 4, -1, -1, -1, 4, 7, -1,
+    /* 0x0- */ 7, 6, -1, -1, -1, 3, 5, -1, 3, 2, 2, -1, -1, 4, 6, 5,
+    /* 0x1- */ 2, 5, 5, -1, -1, 4, 6, -1, 2, 4, 2, -1, -1, 4, 7, 5,
+    /* 0x2- */ 6, 6, -1, -1, 3, 3, 5, -1, 4, 2, 2, -1, 4, 4, 6, 5,
+    /* 0x3- */ 2, 5, -1, -1, -1, 4, 6, -1, 2, 4, 2, -1, -1, 4, 7, 5,
+    /* 0x4- */ 6, 6, -1, -1, -1, 3, 5, -1, 3, 2, 2, -1, 3, 4, 6, 5,
+    /* 0x5- */ 2, 5, -1, -1, -1, 4, 6, -1, 2, 4, 3, -1, -1, 4, 7, 5,
+    /* 0x6- */ 6, 6, -1, -1, 3, 3, 5, -1, 4, 2, 2, -1, 5, 4, 6, 5,
+    /* 0x7- */ 2, 5, 5, -1, -1, 4, 6, -1, 2, 4, 4, -1, -1, 4, 7, 5,
+    /* 0x8- */ 2, 6, -1, -1, 3, 3, 3, -1, 2, -1, 2, -1, 4, 4, 4, 5,
+    /* 0x9- */ 2, 6, 5, -1, 4, 4, 4, -1, 2, 5, 2, -1, 4, 5, -1, 5,
+    /* 0xA- */ 2, 6, 2, -1, 3, 3, 3, -1, 2, 2, 2, -1, 4, 4, 4, 5,
+    /* 0xB- */ 2, 5, 5, -1, 4, 4, 4, -1, 2, 4, 2, -1, 4, 4, 4, 5,
+    /* 0xC- */ 2, 6, -1, -1, 3, 3, 5, -1, 2, 2, 2, -1, 4, 4, 3, 5,
+    /* 0xD- */ 2, 5, 5, -1, -1, 4, 6, -1, 2, 4, 3, -1, -1, 4, 7, 5,
+    /* 0xE- */ 2, 6, -1, -1, 3, 3, 5, -1, 2, 2, 2, -1, 4, 4, 6, 5,
+    /* 0xF- */ 2, 5, -1, -1, -1, 4, 6, -1, 2, 4, 4, -1, -1, 4, 7, 5,
 };
 
 #endif // CPU6502_H

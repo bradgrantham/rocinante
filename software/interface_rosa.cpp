@@ -50,6 +50,11 @@ deque<event> event_queue;
 
 bool force_caps_on = true;
 
+float audioSampleRate;
+size_t audioBufferLengthBytes;
+size_t audioBufferCurrent;
+// uint8_t *audioBuffer;
+
 bool event_waiting()
 {
     return event_queue.size() > 0;
@@ -74,6 +79,10 @@ tuple<float,bool> get_paddle(int num)
 
 void start(bool run_fast, bool add_floppies, bool floppy0_inserted, bool floppy1_inserted)
 {
+    uint8_t *audioBufferPtr; /* ignored */
+    RoAudioGetSamplingInfo(&audioSampleRate, &audioBufferLengthBytes, &audioBufferPtr);
+    // audioBuffer = new uint8_t[audioBufferLength];
+    // audioBufferCurrent = 0;
     event_queue.push_back({KEYDOWN, CAPS_LOCK});
 }
 
@@ -408,8 +417,23 @@ void show_floppy_activity(int number, bool activity)
     }
 }
 
-void enqueue_audio_samples(uint8_t *buf, size_t sz)
+int get_audio_sample_rate()
 {
+    return (int)audioSampleRate;
+}
+
+size_t get_preferred_audio_buffer_size_samples()
+{
+    // Divide by 2 because Rocinante alternates between blocking at beginning and middle
+    return audioBufferLengthBytes / 2 / 2;
+}
+
+void enqueue_audio_samples(uint8_t *buf, size_t count)
+{
+    // while(count > 
+    size_t where = RoAudioBlockToHalfBuffer();
+    Status success = RoAudioSetHalfBufferMonoSamples(where, buf);
+    (void)success;
 }
 
 };

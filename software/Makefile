@@ -22,7 +22,7 @@ TARGET = rocinante_rev1
 # debug build?
 DEBUG = 1
 # optimization
-OPT = -O2 -g
+OPT = -O1 -g # -O2 -g
 
 
 #######################################

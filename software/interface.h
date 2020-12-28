@@ -92,7 +92,9 @@ std::tuple<float,bool> get_paddle(int num);
 
 void show_floppy_activity(int number, bool activity);
 
-void enqueue_audio_samples(uint8_t *buf, size_t sz);
+int get_audio_sample_rate();
+size_t get_preferred_audio_buffer_size_samples();
+void enqueue_audio_samples(uint8_t *buf, size_t count);
 
 void start(bool run_fast, bool add_floppies, bool floppy0_inserted, bool floppy1_inserted);
 void iterate(const ModeHistory& history, unsigned long long current_byte_in_frame, float megahertz); // display

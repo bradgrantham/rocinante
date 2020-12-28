@@ -31,6 +31,7 @@
 #include <stdio.h>
 #include <stdarg.h>
 
+#include "rocinante.h" // XXX Should not include, should be target API
 #include "hid.h" // XXX Should not include, should be target API
 #include "events.h" // XXX Should Not Include, should be target API
 
@@ -397,12 +398,12 @@ void HSVToRGB3f(float h, float s, float v, float *r, float *g, float *b)
 
 // Audio subsystem =========================================================
 
-static uint8_t audioBuffer[4096 * 2];
+static uint8_t audioBuffer[15700 / 60 * 2 * 2]; // Two 16.667ms buffers of stereo u8 
 static volatile size_t audioBufferPosition = 0;
 
 void RoAudioGetSamplingInfo(float *rate, size_t *bufferLength, uint8_t **stereoBufferU8)
 {
-    // In NTSC mode we would have a sampling rate of 15.6998 KHz
+    // If NTSC line ISR is providing audio, we would have a sampling rate of 15.6998 KHz
     *rate = 15699.76074561403508;
     *bufferLength = sizeof(audioBuffer);
     *stereoBufferU8 = audioBuffer;
@@ -431,6 +432,15 @@ size_t RoAudioBlockToHalfBuffer()
     }
 }
 
+Status RoAudioSetHalfBufferMonoSamples(size_t where, const uint8_t *monoBufferU8)
+{
+    for(size_t i = 0; i < sizeof(audioBuffer) / 4; i++) {
+        audioBuffer[where + i * 2 + 0] = monoBufferU8[i];
+        audioBuffer[where + i * 2 + 1] = monoBufferU8[i];
+    }
+    return RO_SUCCESS;
+}
+
 void RoAudioClear()
 {
     memset(audioBuffer, 128, sizeof(audioBuffer));
@@ -454,7 +464,8 @@ void AudioStart()
 #define MAX_DAC_VOLTAGE 1.32f
 #define MAX_DAC_VOLTAGE_F16 (132 * 65536 / 100)
 
-#define INLINE inline
+#define INLINE 
+//inline
 
 INLINE unsigned char voltageToDACValue(float voltage)
 {
@@ -877,7 +888,9 @@ void RoDebugOverlayPrintf(const char *fmt, ...)
     while((line = strsep(&inputstring, "\n")) != NULL) {
 
         if(debugLine == (debugDisplayHeight - 1)) {
-            memcpy(debugDisplay, debugDisplay + 1, (debugDisplayHeight - 1) * debugDisplayWidth);
+            for(int i = 0; i < debugDisplayHeight - 1; i++) {
+                memcpy(debugDisplay[i], debugDisplay[i + 1], debugDisplayWidth);
+            }
         }
 
         memset(debugDisplay[debugLine] + strlen(buffer), 0, debugDisplayWidth - strlen(buffer));
@@ -891,16 +904,19 @@ void RoDebugOverlayPrintf(const char *fmt, ...)
 
 void RoDebugOverlaySetLine(int line, const char *str, size_t size)
 {
-    memcpy(debugDisplay[line], str, size);
+    size_t toWrite = (size > debugDisplayWidth) ? debugDisplayWidth : size;
+    memcpy(debugDisplay[line], str, toWrite);
 }
 
 void NTSCFillRowDebugOverlay(int frameNumber, int lineNumber, unsigned char* nextRowBuffer)
 {
+#if debugFontWidthScale == 4 && font8x16Width == 8
     ntsc_wave_t NTSCWhiteLong =
         (NTSCWhite <<  0) |
         (NTSCWhite <<  8) |
         (NTSCWhite << 16) |
         (NTSCWhite << 24);
+#endif
     int debugFontScanlineHeight = font8x16Height * debugFontHeightScale;
 
     int rowWithinDebugArea = (lineNumber % 263) - debugDisplayTopTick;
@@ -1129,10 +1145,14 @@ __attribute__((hot,flatten)) void WozModeFillRowBufferHGR(int frameIndex, int ro
 
             for(int bitIndex = 0; bitIndex < 7; bitIndex++) {
                 if(byte & 0x1) {
-                    // *rowDst++ = darker; // XXX debug NTSCWhite;
-                    // *rowDst++ = darker; // XXX debug NTSCWhite;
-                    *rowDst++ = NTSCWhite;
-                    *rowDst++ = NTSCWhite;
+                    if(0) {
+                        // XXX debug
+                        *rowDst++ = darker;
+                        *rowDst++ = darker;
+                    } else {
+                        *rowDst++ = NTSCWhite;
+                        *rowDst++ = NTSCWhite;
+                    }
                 } else {
                     if(0) {
                         *rowDst++ = NTSCBlack;
@@ -1515,7 +1535,7 @@ void LEDTestIterate()
 
         int phase = (int)now % 2;
         float value = phase ? (now - (int)now) : (1 - (now - (int)now));
-        // RoLEDSet(2, value * 255, value * 255, value * 255);
+        if(0)RoLEDSet(2, value * 255, value * 255, value * 255);
 
         writeLEDColors = 1;
     }
@@ -2774,9 +2794,10 @@ int main(void)
             // "-fast",
             "-diskII",
             "diskII.c600.c6ff.bin",
-            // // "1.DSK",
-            // // "LodeRunner.dsk",
-            "Chop.dsk",
+            // "1.DSK",
+            // "LodeRunner.dsk",
+            // "Chop.dsk",
+            "Plasmania.dsk",
             "none",
             "apple2e.rom",
         };
@@ -2815,27 +2836,21 @@ RUN
 
     while (1) {
 
-        int lightLED = 0;
-
     /* USER CODE END WHILE */
     MX_USB_HOST_Process();
 
     /* USER CODE BEGIN 3 */
         // ----- USER button test
-#if 0
         if(HAL_GPIO_ReadPin(USER1_GPIO_Port, USER1_Pin)) {
             // printf("user 1\n");
-            lightLED = 1;
         }
-#endif
         if(HAL_GPIO_ReadPin(USER2_GPIO_Port, USER2_Pin)) {
             // printf("user 2\n");
-            lightLED = 1;
         }
         if(HAL_GPIO_ReadPin(USER3_GPIO_Port, USER3_Pin)) {
             // printf("user 3\n");
-            lightLED = 1;
         }
+
         // ----- DEBUG LED test
         // HAL_GPIO_WritePin(DEBUG_LED_GPIO_Port, DEBUG_LED_Pin, lightLED ? GPIO_PIN_SET : GPIO_PIN_RESET);
 

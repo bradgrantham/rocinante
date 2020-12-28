@@ -10,7 +10,7 @@ extern "C" {
 // XXX constexpr size_t MAX_RAM = 300 * 1024;  // XXX unless I upgrade to static RAM or other part
 
 typedef enum Status {
-    SUCCESS = 0,
+    RO_SUCCESS = 0,
     NO_VIDEO_SUBSYSTEM_SET = -1,        // The platform did not set the video subsystem
     INVALID_VIDEO_MODE_NUMBER = -2,     // The index passed was not in the range of valid modes
     INVALID_STRUCTURE_SIZE = -3,        // The "size" parameter did not match the size of the requested structure
@@ -29,7 +29,7 @@ typedef enum Status {
     \param red Red component, 0 to 255.
     \param green Green component, 0 to 255.
     \param blue Blue component, 0 to 255.
-    \return SUCCESS, or INVALID_PARAMETER_VALUE for LED > 2
+    \return RO_SUCCESS, or INVALID_PARAMETER_VALUE for LED > 2
 */
 int RoLEDSet(int which, uint8_t red, uint8_t green, uint8_t blue);
 
@@ -57,6 +57,13 @@ void RoAudioGetSamplingInfo(float *rate, size_t *bufferLength, uint8_t **stereoB
     \return Where application should now fill one half the buffer's worth of audio.
 */
 size_t RoAudioBlockToHalfBuffer();
+
+/*! Write audio samples.  This function will copy a mono U8 buffer with half the samples reported by RoAudioGetSamplingInfo into the audio stream.
+    \param where Where to write samples (returned from RoAudioBlockToHalfBuffer).
+    \param monoBufferU8 The buffer of mono unsigned samples to write into the audio stream buffer.
+    \return INVALID_PARAMETER_VALUE if where was outside of the audio buffer
+*/
+Status RoAudioSetHalfBufferMonoSamples(size_t where, const uint8_t *monoBufferU8);
 
 /*! Clear the audio stream to silence
 */

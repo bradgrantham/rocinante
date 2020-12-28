@@ -3,6 +3,7 @@
 #include <cassert>
 #include <cmath>
 #include <cstring>
+#include <cinttypes>
 #include <array>
 #include <string>
 #include <set>
@@ -56,7 +57,7 @@ void PrintToLine3(const char *fmt, ...)
     vsnprintf(buffer, sizeof(buffer), fmt, args);
     va_end(args);
 
-    RoDebugOverlaySetLine(3, buffer);
+    RoDebugOverlaySetLine(3, buffer, strlen(buffer));
     write(0, buffer, strlen(buffer));
 }
 
@@ -203,14 +204,15 @@ struct SoftSwitch
     int set_address;
     int read_address;
     bool read_also_changes;
-    bool enabled = false;
+    bool enabled;
     bool implemented;
-    SoftSwitch(const char* name_, int clear, int on, int read, bool read_changes, vector<SoftSwitch*>& s, bool implemented_ = false) :
+    SoftSwitch(const char* name_, int clear, int on, int read, bool read_changes, vector<SoftSwitch*>& s, bool initialValue, bool implemented_ = false) :
         name(name_),
         clear_address(clear),
         set_address(on),
         read_address(read),
         read_also_changes(read_changes),
+        enabled(initialValue),
         implemented(implemented_)
     {
         s.push_back(this);
@@ -303,7 +305,7 @@ and a ".dsk" floppy image is only 143360 bytes.
 */
 constexpr int sectorSize = 256;
 constexpr int sectorsPerTrack = 16;
-constexpr int tracksPerFloppy = 35;
+// constexpr int tracksPerFloppy = 35;
 
 const uint8_t sectorHeader[21] =
 {
@@ -348,7 +350,7 @@ constexpr size_t nybblizedTrackSize = trackGapSize + sectorsPerTrack * nybblized
 
 void nybblizeSector(int trackIndex, int sectorIndex, const uint8_t *sectorBytes, uint8_t *sectorNybblized)
 {
-    memset(sectorNybblized, 0xFF, nybblizedSectorSize); // Doesn't matter if 00s or FFs...
+    // memset(sectorNybblized, 0xFF, nybblizedSectorSize); // Doesn't matter if 00s or FFs...
 
     uint8_t *p = sectorNybblized;
 
@@ -380,7 +382,7 @@ void nybblizeSector(int trackIndex, int sectorIndex, const uint8_t *sectorBytes,
     memcpy(p + 0x56, sectorBytes, 256);
 
     // XOR the data block with itself, offset by one byte,
-    // creating a 343rd byte which is used as a cheksum.
+    // creating a 343rd byte which is used as a checksum.
 
     p[342] = 0x00;
 
@@ -396,7 +398,6 @@ void nybblizeSector(int trackIndex, int sectorIndex, const uint8_t *sectorBytes,
     // Done with the nybblization, now for the epilogue...
 
     memcpy(p, sectorFooter, sizeof(sectorFooter));
-    // p += 48;
 }
 
 bool nybblizeTrackFromFile(FILE *floppyImageFile, int trackIndex, uint8_t *nybblizedTrack, const int *skew)
@@ -420,7 +421,9 @@ bool nybblizeTrackFromFile(FILE *floppyImageFile, int trackIndex, uint8_t *nybbl
             return false;
         }
 
-        nybblizeSector(trackIndex, sectorIndex, sectorBytes, nybblizedTrack + trackGapSize + sectorIndex * nybblizedSectorSize);
+        uint8_t *sectorDest = nybblizedTrack + trackGapSize + sectorIndex * nybblizedSectorSize;
+
+        nybblizeSector(trackIndex, sectorIndex, sectorBytes, sectorDest);
     }
     return true;
 }
@@ -535,8 +538,11 @@ struct DISKIIboard : board_base
 
     uint8_t readNextTrackByte()
     {
-        if(headMode != READ || !driveMotorEnabled[driveSelected] || !floppyPresent[driveSelected])
+        // bool dataValid = (headMode != READ || !driveMotorEnabled[driveSelected] || !floppyPresent[driveSelected]);
+        bool dataValid = floppyPresent[driveSelected];
+        if(!dataValid) {
             return 0x00;
+        }
 
         if(trackBytesOutOfDate) {
             readDriveTrack();
@@ -544,6 +550,10 @@ struct DISKIIboard : board_base
         }
 
         uint8_t data = trackBytes[trackByteIndex];
+
+        if(false) {
+            printf("read track %d byte %d (sector %ld byte %ld), yields %d (%02X)\n", nybblizedTrackIndex / 2, trackByteIndex, trackByteIndex / floppy::nybblizedSectorSize, trackByteIndex % floppy::nybblizedSectorSize, data, data);
+        }
 
         trackByteIndex = (trackByteIndex + 1) % floppy::nybblizedTrackSize;
 
@@ -568,6 +578,7 @@ struct DISKIIboard : board_base
 
         nybblizedTrackIndex = currentTrackNumber[driveSelected];
         nybblizedDriveIndex = driveSelected;
+        trackByteIndex = 0;
 
         return true;
     }
@@ -660,13 +671,19 @@ struct DISKIIboard : board_base
             return true;
         } else if(addr == SELECT) {
             if(debug & DEBUG_FLOPPY) printf("floppy select first drive\n");
-            driveSelected = 0;
-            trackBytesOutOfDate = true;
+            if(driveSelected != 0) {
+                driveSelected = 0;
+                trackBytesOutOfDate = true;
+            }
+            data = 0;
             return true;
         } else if(addr == SELECT + 1) {
             if(debug & DEBUG_FLOPPY) printf("floppy select second drive\n");
-            driveSelected = 1;
-            trackBytesOutOfDate = true;
+            if(driveSelected != 1) {
+                driveSelected = 1;
+                trackBytesOutOfDate = true;
+            }
+            data = 0;
             return true;
         } else if(addr == ENABLE) {
             if(debug & DEBUG_FLOPPY) printf("floppy switch off\n");
@@ -674,6 +691,7 @@ struct DISKIIboard : board_base
             floppy_activity(driveSelected, false);
             // go disable reading
             // disable other drive?
+            data = 0;
             return true;
         } else if(addr == ENABLE + 1) {
             if(debug & DEBUG_FLOPPY) printf("floppy switch on\n");
@@ -681,6 +699,7 @@ struct DISKIIboard : board_base
             floppy_activity(driveSelected, true);
             // go enable reading
             // disable other drive?
+            data = 0;
             return true;
         }
         if(debug & DEBUG_WARN) printf("DISK II unhandled read from %04X (%s)\n", addr, io.at(addr).c_str());
@@ -689,8 +708,8 @@ struct DISKIIboard : board_base
     }
     virtual void reset(void)
     {
-        driveMotorEnabled[0] = false; // Is this safe?
-        driveMotorEnabled[1] = false; // Is this safe?
+        driveMotorEnabled[0] = false; // Is this what the drive HW does?
+        driveMotorEnabled[1] = false; // Is this what the drive HW does?
         driveSelected = 0;
         trackBytesOutOfDate = true;
         floppy_activity(0, false);
@@ -739,7 +758,7 @@ void initialize_audio_waveform()
 }
 
 int hires_blanking_address_base[262];
-extern int hires_visible_address_base[262];
+extern const int hires_visible_address_base[262];
 
 static void generate_hires_scanout_addresses() __attribute__((constructor));
 void generate_hires_scanout_addresses()
@@ -761,7 +780,7 @@ int get_hires_scanout_address(int byte_in_frame)
     return 0x2000 + (hires_visible_address_base[line_in_frame] + byte_in_line - 25) % 0x2000;
 }
 
-static int text_blanking_address_base[] =
+const static int text_blanking_address_base[] =
 {
     0x1468,
     0x14E8,
@@ -798,7 +817,7 @@ static int text_blanking_address_base[] =
     0x17E0, // last text line is actually scanned 14 times so add another row
 };
 
-static int text_visible_address_base[] =
+const static int text_visible_address_base[] =
 {
     0x0400,
     0x0480,
@@ -854,20 +873,19 @@ struct MAINboard : board_base
 
     vector<SoftSwitch*> switches;
     SoftSwitch* switches_by_address[256];
-    // SoftSwitch(const char* name_, int clear, int on, int read, bool read_changes, vector<SoftSwitch*>& s, bool implemented_ = false) :
     // Inside the Apple //e, page 379
-    SoftSwitch CXROM {"CXROM", 0xC006, 0xC007, 0xC015, false, switches, true};
-    SoftSwitch STORE80 {"STORE80", 0xC000, 0xC001, 0xC018, false, switches, true};
-    SoftSwitch RAMRD {"RAMRD", 0xC002, 0xC003, 0xC013, false, switches, true};
-    SoftSwitch RAMWRT {"RAMWRT", 0xC004, 0xC005, 0xC014, false, switches, true};
-    SoftSwitch ALTZP {"ALTZP", 0xC008, 0xC009, 0xC016, false, switches, true};
-    SoftSwitch C3ROM {"C3ROM", 0xC00A, 0xC00B, 0xC017, false, switches, true};
-    SoftSwitch ALTCHAR {"ALTCHAR", 0xC00E, 0xC00F, 0xC01E, false, switches, true};
-    SoftSwitch VID80 {"VID80", 0xC00C, 0xC00D, 0xC01F, false, switches, true};
-    SoftSwitch TEXT {"TEXT", 0xC050, 0xC051, 0xC01A, true, switches, true};
-    SoftSwitch MIXED {"MIXED", 0xC052, 0xC053, 0xC01B, true, switches, true};
-    SoftSwitch PAGE2 {"PAGE2", 0xC054, 0xC055, 0xC01C, true, switches, true};
-    SoftSwitch HIRES {"HIRES", 0xC056, 0xC057, 0xC01D, true, switches, true};
+    SoftSwitch SLOTCXROM {"SLOTCXROM", 0xC007, 0xC006, 0xC015, false, switches, false, true};
+    SoftSwitch STORE80 {"STORE80", 0xC000, 0xC001, 0xC018, false, switches, false, true};
+    SoftSwitch RAMRD {"RAMRD", 0xC002, 0xC003, 0xC013, false, switches, false, true};
+    SoftSwitch RAMWRT {"RAMWRT", 0xC004, 0xC005, 0xC014, false, switches, false, true};
+    SoftSwitch ALTZP {"ALTZP", 0xC008, 0xC009, 0xC016, false, switches, false, true};
+    SoftSwitch C3ROM {"C3ROM", 0xC00A, 0xC00B, 0xC017, false, switches, false, true};
+    SoftSwitch ALTCHAR {"ALTCHAR", 0xC00E, 0xC00F, 0xC01E, false, switches, false, true};
+    SoftSwitch VID80 {"VID80", 0xC00C, 0xC00D, 0xC01F, false, switches, false, true};
+    SoftSwitch TEXT {"TEXT", 0xC050, 0xC051, 0xC01A, true, switches, false, true};
+    SoftSwitch MIXED {"MIXED", 0xC052, 0xC053, 0xC01B, true, switches, false, true};
+    SoftSwitch PAGE2 {"PAGE2", 0xC054, 0xC055, 0xC01C, true, switches, false, true};
+    SoftSwitch HIRES {"HIRES", 0xC056, 0xC057, 0xC01D, true, switches, false, true};
 
     vector<backed_region*> regions;
     std::array<backed_region*,256> read_regions_by_page;
@@ -882,9 +900,11 @@ struct MAINboard : board_base
             int lastpage = (r->base + r->size - 1) / 256;
             if((r->type == RAM) && r->write_enabled()) {
                 for(int i = firstpage; i <= lastpage; i++) {
-                    if(write_regions_by_page[i] != nullptr) {
-                        if(0)printf("warning, write region for 0x%02X00 setting for \"%s\" but was already filled by \"%s\"; repaged because \"%s\"\n",
-                            i, r->name.c_str(), write_regions_by_page[i]->name.c_str(), reason);
+                    if(write_regions_by_page[i]) {
+                        if(false) {
+                            printf("warning, write region for 0x%02X00 setting for \"%s\" but was already filled by \"%s\"; repaged because \"%s\"\n",
+                                i, r->name.c_str(), write_regions_by_page[i]->name.c_str(), reason);
+                        }
                     } else {
                         write_regions_by_page[i] = r;
                     }
@@ -892,9 +912,11 @@ struct MAINboard : board_base
             }
             if(r->read_enabled()) {
                 for(int i = firstpage; i <= lastpage; i++) {
-                    if(read_regions_by_page[i] != nullptr) {
-                        if(0)printf("warning, read region for 0x%02X00 setting for \"%s\" but was already filled by \"%s\"; repaged because \"%s\"\n",
-                            i, r->name.c_str(), read_regions_by_page[i]->name.c_str(), reason);
+                    if(read_regions_by_page[i]) {
+                        if(false) {
+                            printf("warning, read region for 0x%02X00 setting for \"%s\" but was already filled by \"%s\"; repaged because \"%s\"\n",
+                                i, r->name.c_str(), read_regions_by_page[i]->name.c_str(), reason);
+                        }
                     } else {
                         read_regions_by_page[i] = r;
                     }
@@ -909,10 +931,10 @@ struct MAINboard : board_base
     enabled_func always_disabled = []{return false;};
 
     bool internal_C800_ROM_selected = false;
-    backed_region rom_C100 = {"rom_C100", 0xC100, 0x0200, ROM, &regions, [&]{return CXROM;}, always_disabled};
-    backed_region rom_C300 = {"rom_C300", 0xC300, 0x0100, ROM, &regions, [&]{return CXROM || (!CXROM && !C3ROM);}, always_disabled};
-    backed_region rom_C400 = {"rom_C400", 0xC400, 0x0400, ROM, &regions, [&]{return CXROM;}, always_disabled};
-    backed_region rom_C800 = {"rom_C800", 0xC800, 0x0800, ROM, &regions, [&]{return CXROM || (!CXROM && !C3ROM && internal_C800_ROM_selected);}, always_disabled};
+    backed_region rom_C100 = {"rom_C100", 0xC100, 0x0200, ROM, &regions, [&]{return !SLOTCXROM;}, always_disabled};
+    backed_region rom_C300 = {"rom_C300", 0xC300, 0x0100, ROM, &regions, [&]{return !SLOTCXROM || (SLOTCXROM && !C3ROM);}, always_disabled};
+    backed_region rom_C400 = {"rom_C400", 0xC400, 0x0400, ROM, &regions, [&]{return !SLOTCXROM;}, always_disabled};
+    backed_region rom_C800 = {"rom_C800", 0xC800, 0x0800, ROM, &regions, [&]{return !SLOTCXROM || (SLOTCXROM && !C3ROM && internal_C800_ROM_selected);}, always_disabled};
     backed_region rom_CXXX_default = {"rom_CXXX_default", 0xC100, 0x0F00, ROM, &regions, [&]{return true;}, always_disabled};
 
     enabled_func read_from_aux_ram = [&]{return RAMRD;};
@@ -941,8 +963,8 @@ struct MAINboard : board_base
     backed_region ram2_main_D000_x = {"ram2_main_D000_x", 0xD000, 0x1000, RAM, &regions, [&]{return ALTZP && C08X_read_RAM && (C08X_bank == BANK2);}, [&]{return ALTZP && C08X_write_RAM && (C08X_bank == BANK2);}};
     backed_region ram_main_E000_x = {"ram1_main_E000_x", 0xE000, 0x2000, RAM, &regions, [&]{return ALTZP && C08X_read_RAM;}, [&]{return ALTZP && C08X_write_RAM;}};
 
-    enabled_func read_from_aux_text1 = [&]{return (RAMRD && !STORE80) || (STORE80 && PAGE2);};
-    enabled_func write_to_aux_text1 = [&]{return (RAMWRT && !STORE80) || (STORE80 && PAGE2);};
+    enabled_func read_from_aux_text1 = [&]{return (!STORE80 && RAMRD) || (STORE80 && !HIRES && PAGE2);};
+    enabled_func write_to_aux_text1 = [&]{return (!STORE80 && RAMWRT) || (STORE80 && !HIRES && PAGE2);};
     enabled_func read_from_main_text1 = [&]{return !read_from_aux_text1();};
     enabled_func write_to_main_text1 = [&]{return !write_to_aux_text1();};
 
@@ -961,25 +983,55 @@ struct MAINboard : board_base
     backed_region hires_page2 = {"hires_page2", 0x4000, 0x2000, RAM, &regions, read_from_main_ram, write_to_main_ram};
     backed_region hires_page2x = {"hires_page2x", 0x4000, 0x2000, RAM, &regions, read_from_aux_ram, write_to_aux_ram};
 
-    set<int> ignore_mmio = {0xC058, 0xC05A, 0xC05D, 0xC05F, 0xC061, 0xC062};
+    set<int> ignore_mmio = {
+        0xC058, // CLRAN0 through Apple //e
+        0xC05A, // CLRAN1 through Apple //e
+        0xC05D, // SETAN2 through Apple //e
+        0xC05F, // SETAN3 through Apple //e
+        0xC060, // TAPEIN through Apple //e
+        0xC061, // RDBTN0 Open Apple on and after Apple //e
+        0xC062, // BUTN1 Solid Apple on and after Apple //e
+        };
     set<int> banking_read_switches = {
-        0xC080, 0xC081, 0xC082, 0xC083, 0xC084, 0xC085, 0xC086, 0xC087,
-        0xC088, 0xC089, 0xC08A, 0xC08B, 0xC08C, 0xC08D, 0xC08E, 0xC08F,
+        0xC080,
+        0xC081,
+        0xC082,
+        0xC083,
+        0xC084,
+        0xC085, 
+        0xC086,
+        0xC087,
+        0xC088,
+        0xC089,
+        0xC08A,
+        0xC08B,
+        0xC08C,
+        0xC08D,
+        0xC08E,
+        0xC08F,
     };
     set<int> banking_write_switches = {
-        0xC006, 0xC007,
-        0xC000, 0xC001,
-        0xC002, 0xC003,
-        0xC004, 0xC005,
-        0xC008, 0xC009,
-        0xC00A, 0xC00B,
+        0xC006,
+        0xC007,
+        0xC000,
+        0xC001,
+        0xC002,
+        0xC003,
+        0xC004,
+        0xC005,
+        0xC008,
+        0xC009,
+        0xC00A,
+        0xC00B,
     };
 
     deque<uint8_t> keyboard_buffer;
 
-    static const int sample_rate = 44100;
-    static const size_t audio_buffer_size = sample_rate / 100;
-    uint8_t audio_buffer[audio_buffer_size];
+    static constexpr int max_sample_rate = 44100;
+    static constexpr size_t max_audio_buffer_size = max_sample_rate / 16;
+    int actual_sample_rate;
+    size_t actual_audio_buffer_size;
+    uint8_t audio_buffer[max_audio_buffer_size];
     uint64_t audio_buffer_start_sample = 0;
     uint64_t audio_buffer_next_sample = 0;
     uint8_t speaker_level;
@@ -996,7 +1048,7 @@ struct MAINboard : board_base
 
     void fill_flush_audio()
     {
-        uint64_t current_sample = clk * sample_rate / machine_clock_rate;
+        uint64_t current_sample = clk * actual_sample_rate / machine_clock_rate;
 
         for(uint64_t i = audio_buffer_next_sample; i < current_sample; i++) {
             if(where_in_waveform < waveform_length) {
@@ -1004,10 +1056,10 @@ struct MAINboard : board_base
                 speaker_level = speaker_transitioning_to_high ? level : (255 - level);
             }
 
-            audio_buffer[i % audio_buffer_size] = speaker_level;
+            audio_buffer[i % actual_audio_buffer_size] = speaker_level;
 
-            if(i - audio_buffer_start_sample == audio_buffer_size - 1) {
-                audio_flush(audio_buffer, audio_buffer_size);
+            if(i - audio_buffer_start_sample == actual_audio_buffer_size - 1) {
+                audio_flush(audio_buffer, actual_audio_buffer_size);
 
                 audio_buffer_start_sample = i + 1;
             }
@@ -1050,25 +1102,23 @@ struct MAINboard : board_base
     {
         APPLE2Einterface::ModeSettings settings = convert_switches_to_mode_settings();
         if(settings != old_mode_settings) {
-            if(mode_history.size() == 0) {
-                mode_history.push_back(make_tuple(clk.clock_cpu, settings));
-            } else {
-                mode_history[0] = make_tuple(clk.clock_cpu, settings);
-            }
+            mode_history.push_back(make_tuple(clk.clock_cpu, settings));
             old_mode_settings = settings;
         }
     }
 
     typedef std::function<bool (int addr, bool aux, uint8_t data)> display_write_func;
     display_write_func display_write;
-    typedef std::function<void (uint8_t *audiobuffer, size_t dist)> audio_flush_func;
+    typedef std::function<void (uint8_t *buffer, size_t bufferSize)> audio_flush_func;
     audio_flush_func audio_flush;
     typedef std::function<tuple<float, bool> (int num)> get_paddle_func;
     get_paddle_func get_paddle;
     clk_t paddles_clock_out[4];
-    MAINboard(system_clock& clk_, const uint8_t rom_image[32768],  display_write_func display_write_, audio_flush_func audio_flush_, get_paddle_func get_paddle_) :
+    MAINboard(system_clock& clk_, const uint8_t rom_image[32768], display_write_func display_write_, int audio_sample_rate, size_t actual_audio_buffer_size, audio_flush_func audio_flush_, get_paddle_func get_paddle_) :
         clk(clk_),
         internal_C800_ROM_selected(true),
+        actual_sample_rate(audio_sample_rate),
+        actual_audio_buffer_size(actual_audio_buffer_size),
         speaker_level(waveform[0]),
         display_write(display_write_),
         audio_flush(audio_flush_),
@@ -1081,15 +1131,21 @@ struct MAINboard : board_base
         std::copy(rom_image + rom_C400.base - 0x8000, rom_image + rom_C400.base - 0x8000 + rom_C400.size, rom_C400.memory.begin());
         std::copy(rom_image + rom_C800.base - 0x8000, rom_image + rom_C800.base - 0x8000 + rom_C800.size, rom_C800.memory.begin());
 
+        printf("audio buffer samples %d\n", actual_audio_buffer_size);
+        printf("audio rate %d\n", actual_sample_rate);
+
         repage_regions("init");
 
-        for(int i = 0; i < 256; i++)
-            switches_by_address[i] = NULL;
+        for(int i = 0; i < 256; i++) {
+            switches_by_address[i] = nullptr;
+        }
+
         for(auto sw : switches) {
             switches_by_address[sw->clear_address - 0xC000] = sw;
             switches_by_address[sw->set_address - 0xC000] = sw;
             switches_by_address[sw->read_address - 0xC000] = sw;
         }
+
         //  TEXT.enabled = true;
         old_mode_settings = convert_switches_to_mode_settings();
     }
@@ -1103,7 +1159,7 @@ struct MAINboard : board_base
         // Partially from Apple //e Technical Reference
         // XXX need to double-check these against the actual hardware
         ALTZP.enabled = false;
-        CXROM.enabled = false;
+        SLOTCXROM.enabled = false;
         RAMRD.enabled = false;
         RAMWRT.enabled = false;
         C3ROM.enabled = false;
@@ -1138,7 +1194,7 @@ struct MAINboard : board_base
                 exit(1);
             }
             SoftSwitch* sw = switches_by_address[addr - 0xC000];
-            if(sw != nullptr) {
+            if(sw) {
 
                 uint8_t result = 0xFF;
 
@@ -1194,19 +1250,27 @@ struct MAINboard : board_base
                     data = sw->enabled ? 0x80 : 0x00;
                     if(debug & DEBUG_SWITCH) printf("Read status of %s = %02X\n", sw->name.c_str(), data);
                     return true;
-                } else if(sw->read_also_changes && addr == sw->set_address) {
+                } else if(sw->read_also_changes && (addr == sw->set_address)) {
                     if(!sw->implemented) { printf("%s ; set is unimplemented\n", sw->name.c_str()); fflush(stdout); exit(0); }
                     data = result;
-                    sw->enabled = true;
-                    if(debug & DEBUG_SWITCH) printf("Set %s\n", sw->name.c_str());
-                    post_soft_switch_mode_change();
+                    if(!sw->enabled) {
+                        sw->enabled = true;
+                        if(debug & DEBUG_SWITCH) printf("Set %s\n", sw->name.c_str());
+                        post_soft_switch_mode_change();
+                        static char reason[512]; sprintf(reason, "set %s", sw->name.c_str());
+                        repage_regions(reason);
+                    }
                     return true;
-                } else if(sw->read_also_changes && addr == sw->clear_address) {
+                } else if(sw->read_also_changes && (addr == sw->clear_address)) {
                     if(!sw->implemented) { printf("%s ; unimplemented\n", sw->name.c_str()); fflush(stdout); exit(0); }
                     data = result;
-                    sw->enabled = false;
-                    if(debug & DEBUG_SWITCH) printf("Clear %s\n", sw->name.c_str());
-                    post_soft_switch_mode_change();
+                    if(sw->enabled) {
+                        sw->enabled = false;
+                        if(debug & DEBUG_SWITCH) printf("Clear %s\n", sw->name.c_str());
+                        post_soft_switch_mode_change();
+                        static char reason[512]; sprintf(reason, "clear %s", sw->name.c_str());
+                        repage_regions(reason);
+                    }
                     return true;
                 }
             }
@@ -1427,7 +1491,7 @@ struct MAINboard : board_base
                 exit(1);
             }
             SoftSwitch* sw = switches_by_address[addr - 0xC000];
-            if(sw != NULL) {
+            if(sw) {
                 if(addr == sw->set_address) {
                     if(!sw->implemented) { printf("%s ; set is unimplemented\n", sw->name.c_str()); fflush(stdout); exit(0); }
                     data = 0xff;
@@ -1591,7 +1655,7 @@ string read_bus_and_disassemble(bus_frontend &bus, int pc)
     buf[1] = bus.read(pc + 1);
     buf[2] = bus.read(pc + 2);
     buf[3] = bus.read(pc + 3);
-    tie(bytes, dis) = disassemble_6502(pc - 1, buf);
+    tie(bytes, dis) = disassemble_6502(pc, buf);
     return dis;
 }
 
@@ -1942,19 +2006,17 @@ int apple2_main(int argc, const char **argv)
             return 1;
     }
 
+    APPLE2Einterface::start(run_fast, diskII_rom_name != NULL, floppy1_name != NULL, floppy2_name != NULL);
+
     MAINboard* mainboard;
 
     MAINboard::display_write_func display = [](uint16_t addr, bool aux, uint8_t data)->bool{return APPLE2Einterface::write(addr, aux, data);};
 
     MAINboard::get_paddle_func paddle = [](int num)->tuple<float, bool>{return APPLE2Einterface::get_paddle(num);};
 
-    MAINboard::audio_flush_func audio;
-    if(mute)
-        audio = [](uint8_t *buf, size_t sz){ };
-    else
-        audio = [](uint8_t *buf, size_t sz){ if(!run_fast) APPLE2Einterface::enqueue_audio_samples(buf, sz); };
+    MAINboard::audio_flush_func audio = [](uint8_t *buf, size_t size){ if(!run_fast) APPLE2Einterface::enqueue_audio_samples(buf, size); };
 
-    mainboard = new MAINboard(clk, b, display, audio, paddle);
+    mainboard = new MAINboard(clk, b, display, APPLE2Einterface::get_audio_sample_rate(), APPLE2Einterface::get_preferred_audio_buffer_size_samples(), audio, paddle);
     bus.board = mainboard;
     bus.reset();
 
@@ -1994,12 +2056,15 @@ int apple2_main(int argc, const char **argv)
         reset6502();
 #endif
 
-    APPLE2Einterface::start(run_fast, diskII_rom_name != NULL, floppy1_name != NULL, floppy2_name != NULL);
-
     chrono::time_point<chrono::system_clock> then = std::chrono::system_clock::now();
     chrono::time_point<chrono::system_clock> cpu_speed_then = std::chrono::system_clock::now();
     clk_t cpu_previous_cycles = 0;
     averaged_sequence<float, 20> cpu_speed_averaged;
+
+    int audio_sample_rate = APPLE2Einterface::get_audio_sample_rate();
+    size_t audio_buffer_size = APPLE2Einterface::get_preferred_audio_buffer_size_samples();
+
+    std::set<uint16_t> breakpoints;
 
     while(1) {
         if(!debugging) {
@@ -2017,8 +2082,9 @@ int apple2_main(int argc, const char **argv)
                 } else if(run_fast) {
                     clocks_per_slice = machine_clock_rate / 50; // 5; 
                 } else {
-                    clocks_per_slice = millis_per_slice * machine_clock_rate / 1000 * 3;
+                    // clocks_per_slice = millis_per_slice * machine_clock_rate / 1000 * 1.05;
                     // clocks_per_slice = millis_per_slice * machine_clock_rate / 1000 * 1.05 ;
+                    clocks_per_slice = (machine_clock_rate + audio_sample_rate - 1)/ audio_sample_rate * audio_buffer_size;
                 }
             }
             clk_t prev_clock = clk;
@@ -2083,6 +2149,7 @@ int apple2_main(int argc, const char **argv)
 
         } else {
 
+            int steps = 1;
             printf("> ");
             char line[512];
             if(fgets(line, sizeof(line) - 1, stdin) == NULL) {
@@ -2092,6 +2159,20 @@ int apple2_main(int argc, const char **argv)
             if(strcmp(line, "go") == 0) {
                 printf("continuing\n");
                 debugging = false;
+                continue;
+            } else if(strncmp(line, "step", 4) == 0) {
+                if(line[5] != '\0') {
+                    steps = atoi(line + 5);
+                    printf("run for %d steps\n", steps);
+                }
+            } else if(strncmp(line, "break", 5) == 0) {
+                if(line[6] != '\0') {
+                    uint16_t addr = strtoul(line + 5, NULL, 0);
+                    printf("breakpoint at 0x%04X\n", addr);
+                    breakpoints.insert(addr);
+                } else {
+                    printf("expected breakpoint address\n");
+                }
                 continue;
             } else if(strcmp(line, "fast") == 0) {
                 printf("run flat out\n");
@@ -2106,7 +2187,7 @@ int apple2_main(int argc, const char **argv)
                 exit_on_banking = true;
                 continue;
             } else if(strncmp(line, "debug", 5) == 0) {
-                sscanf(line + 6, "%lu", &debug);
+                sscanf(line + 6, "%u", &debug);
                 printf("debug set to %02X\n", debug);
                 continue;
             } else if(strcmp(line, "reset") == 0) {
@@ -2120,31 +2201,48 @@ int apple2_main(int argc, const char **argv)
                 cpu.nmi();
                 continue;
             }
-            if(debug & DEBUG_DECODE) {
-                string dis = read_bus_and_disassemble(bus,
+            for(int i = 0; i < steps; i++) {
+                if(debug & DEBUG_DECODE) {
+                    string dis = read_bus_and_disassemble(bus,
 #ifdef SUPPORT_FAKE_6502
-                        use_fake6502 ? pc :
+                            use_fake6502 ? pc :
 #endif
-                        cpu.pc);
-                printf("%s\n", dis.c_str());
-            }
+                            cpu.pc);
+                    printf("%s\n", dis.c_str());
+                }
 
 #ifdef SUPPORT_FAKE_6502
-            if(use_fake6502) {
-                clockticks6502 = 0;
-                step6502();
-                clk.add_cpu_cycles(clockticks6502);
-            } else
+                if(use_fake6502) {
+                    clockticks6502 = 0;
+                    step6502();
+                    clk.add_cpu_cycles(clockticks6502);
+                } else
 #endif
-            {
-                cpu.cycle();
-                if(debug & DEBUG_STATE)
-                    print_cpu_state(cpu);
-            }
-            mainboard->sync();
+                {
+                    cpu.cycle();
+                    if(debug & DEBUG_STATE)
+                        print_cpu_state(cpu);
+                }
+                if((i % 10000) == 0) {
+                    mainboard->sync();
+                }
+                if((i % 100000) == 0) {
+                    APPLE2Einterface::iterate(mode_history, clk.clock_cpu, 1.023);
+                    mode_history.clear();
+                }
 
-            APPLE2Einterface::iterate(mode_history, clk.clock_cpu, 1.023);
-            mode_history.clear();
+                uint16_t pcnow = 
+#ifdef SUPPORT_FAKE_6502
+                    use_fake6502 ? pc :
+#endif
+                    cpu.pc;
+                printf("%04X, %zd\n", pcnow, breakpoints.count(pcnow));
+                if(breakpoints.count(pcnow) > 0) {
+                    printf("break at 0x%4X\n", pcnow);
+                    break;
+                }
+            }
+
         }
     }
 
@@ -2152,7 +2250,7 @@ int apple2_main(int argc, const char **argv)
     return 0;
 }
 
-int hires_visible_address_base[262] =
+const int hires_visible_address_base[262] =
 {
      0x0000,  0x0400,  0x0800,  0x0C00,  0x1000,  0x1400,  0x1800,  0x1C00, 
      0x0080,  0x0480,  0x0880,  0x0C80,  0x1080,  0x1480,  0x1880,  0x1C80, 
