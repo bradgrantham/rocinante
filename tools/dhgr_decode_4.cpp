@@ -1,3 +1,5 @@
+#include <string>
+#include <map>
 #include <array>
 #include <cmath>
 
@@ -60,15 +62,42 @@ vec3f FindNTSCColor(const vec4i& pattern)
     return { r, g, b };
 }
 
+std::map<int, std::string> colorNames = 
+{
+    {0, "black"},
+    {1, "red"},
+    {2, "dark blue"},
+    {3, "purple"},
+    {4, "dark green"},
+    {5, "gray 1"},
+    {6, "medium blue"},
+    {7, "light blue"},
+    {8, "brown"},
+    {9, "orange"},
+    {10, "gray 2"},
+    {11, "pink"},
+    {12, "light green"},
+    {13, "yello"},
+    {14, "aqua"},
+    {15, "white"},
+};
+
 int main(int argc, char **argv)
 {
+    printf("uint8_t artifact_colors[][3] = {\n");
     for(int i = 0; i < 16; i++) {
         vec4i pattern = {i & 1, (i >> 1) & 1, (i >> 2) & 1, (i >> 3) & 1};
         vec3f color = FindNTSCColor(pattern);
-        printf("%d%d%d%d -> %d, %d, %d (%f, %f, %f)\n", pattern[0], pattern[1], pattern[2], pattern[3],
+        printf("    {%3d, %3d, %3d}, // %2d \"%s\"%*s -> %d,%d,%d,%d -> {%f, %f, %f}\n",
             (int)(color[0] * 255), (int)(color[1] * 255), (int)(color[2] * 255),
+            i, colorNames.at(i).c_str(),
+            11 - (int)colorNames.at(i).size(), "",
+            pattern[0], pattern[1], pattern[2], pattern[3],
             color[0], color[1], color[2]);
+
     }
+    printf("};\n");
+
     FILE *fp = fopen("dhgr_colors.ppm", "wb");
     fprintf(fp, "P6 512 512 255\n");
     for(int rowIndex = 0; rowIndex < 512; rowIndex++) {
