@@ -1070,71 +1070,17 @@ enum DisplayMode WozModeDisplayMode = TEXT;
 int WozModeAux = 0;
 int WozModeMixed = 0;
 int WozModePage = 0;
-uint8_t WozModeHGRBuffers[2][2][8192];
-uint8_t WozModeTextBuffers[2][2][1024];
-
-const int WozModeTextRowOffsets[24] =
-{
-    0x000,
-    0x080,
-    0x100,
-    0x180,
-    0x200,
-    0x280,
-    0x300,
-    0x380,
-    0x028,
-    0x0A8,
-    0x128,
-    0x1A8,
-    0x228,
-    0x2A8,
-    0x328,
-    0x3A8,
-    0x050,
-    0x0D0,
-    0x150,
-    0x1D0,
-    0x250,
-    0x2D0,
-    0x350,
-    0x3D0,
-};
-
-const int WozModeHGRRowOffsets[192] =
-{
-     0x0000,  0x0400,  0x0800,  0x0C00,  0x1000,  0x1400,  0x1800,  0x1C00,
-     0x0080,  0x0480,  0x0880,  0x0C80,  0x1080,  0x1480,  0x1880,  0x1C80,
-     0x0100,  0x0500,  0x0900,  0x0D00,  0x1100,  0x1500,  0x1900,  0x1D00,
-     0x0180,  0x0580,  0x0980,  0x0D80,  0x1180,  0x1580,  0x1980,  0x1D80,
-     0x0200,  0x0600,  0x0A00,  0x0E00,  0x1200,  0x1600,  0x1A00,  0x1E00,
-     0x0280,  0x0680,  0x0A80,  0x0E80,  0x1280,  0x1680,  0x1A80,  0x1E80,
-     0x0300,  0x0700,  0x0B00,  0x0F00,  0x1300,  0x1700,  0x1B00,  0x1F00,
-     0x0380,  0x0780,  0x0B80,  0x0F80,  0x1380,  0x1780,  0x1B80,  0x1F80,
-     0x0028,  0x0428,  0x0828,  0x0C28,  0x1028,  0x1428,  0x1828,  0x1C28,
-     0x00A8,  0x04A8,  0x08A8,  0x0CA8,  0x10A8,  0x14A8,  0x18A8,  0x1CA8,
-     0x0128,  0x0528,  0x0928,  0x0D28,  0x1128,  0x1528,  0x1928,  0x1D28,
-     0x01A8,  0x05A8,  0x09A8,  0x0DA8,  0x11A8,  0x15A8,  0x19A8,  0x1DA8,
-     0x0228,  0x0628,  0x0A28,  0x0E28,  0x1228,  0x1628,  0x1A28,  0x1E28,
-     0x02A8,  0x06A8,  0x0AA8,  0x0EA8,  0x12A8,  0x16A8,  0x1AA8,  0x1EA8,
-     0x0328,  0x0728,  0x0B28,  0x0F28,  0x1328,  0x1728,  0x1B28,  0x1F28,
-     0x03A8,  0x07A8,  0x0BA8,  0x0FA8,  0x13A8,  0x17A8,  0x1BA8,  0x1FA8,
-     0x0050,  0x0450,  0x0850,  0x0C50,  0x1050,  0x1450,  0x1850,  0x1C50,
-     0x00D0,  0x04D0,  0x08D0,  0x0CD0,  0x10D0,  0x14D0,  0x18D0,  0x1CD0,
-     0x0150,  0x0550,  0x0950,  0x0D50,  0x1150,  0x1550,  0x1950,  0x1D50,
-     0x01D0,  0x05D0,  0x09D0,  0x0DD0,  0x11D0,  0x15D0,  0x19D0,  0x1DD0,
-     0x0250,  0x0650,  0x0A50,  0x0E50,  0x1250,  0x1650,  0x1A50,  0x1E50,
-     0x02D0,  0x06D0,  0x0AD0,  0x0ED0,  0x12D0,  0x16D0,  0x1AD0,  0x1ED0,
-     0x0350,  0x0750,  0x0B50,  0x0F50,  0x1350,  0x1750,  0x1B50,  0x1F50,
-     0x03D0,  0x07D0,  0x0BD0,  0x0FD0,  0x13D0,  0x17D0,  0x1BD0,  0x1FD0,
-};
+int WozModeVid80 = 0;
+// indexed by aux, then by page, then by buffer address in scan order, not in Apple ][ memory order
+uint8_t WozModeHGRBuffers[2][2][7680];
+uint8_t WozModeTextBuffers[2][2][960];
 
 __attribute__((hot,flatten)) void WozModeFillRowBufferHGR(int frameIndex, int rowNumber, size_t maxSamples, uint8_t* rowBuffer)
 {
     int rowIndex = (rowNumber - WOZ_MODE_TOP) / 2;
     uint8_t darker = NTSCBlack + (NTSCWhite - NTSCBlack) / 4; // XXX debug
     if((rowIndex >= 0) && (rowIndex < 192)) {
-        const uint8_t *rowSrc = WozModeHGRBuffers[WozModeAux][WozModePage] + WozModeHGRRowOffsets[rowIndex]; // row - ...?
+        const uint8_t *rowSrc = WozModeHGRBuffers[WozModeAux][WozModePage] + rowIndex * 40; // row - ...?
 
         for(int byteIndex = 0; byteIndex < 40; byteIndex++) {
 
@@ -1391,6 +1337,48 @@ void WozMemoryByteToFontIndex(int byte, int *fontIndex, int *inverse)
         *fontIndex = 33;
 }
 
+void WozModeFillRowBuffer80Text(int frameIndex, int rowNumber, size_t maxSamples, uint8_t* rowBuffer)
+{
+    int rowIndex = (rowNumber - WOZ_MODE_TOP) / 2;
+    if((rowIndex >= 0) && (rowIndex < 192)) {
+        memset(rowBuffer + WOZ_MODE_LEFT, NTSCBlack, WOZ_MODE_WIDTH);
+        int rowInText = rowIndex / 8;
+        int rowInGlyph = rowIndex % 8;
+
+        const uint8_t *rowSrc;
+        uint8_t *rowDst;
+
+        rowSrc = WozModeTextBuffers[0][WozModePage] + rowInText * 40;
+        rowDst = rowBuffer + WOZ_MODE_LEFT + 7;
+        for(int textColumn = 0; textColumn < 40; textColumn++) {
+            uint8_t byte = rowSrc[textColumn];
+            int fontIndex, inverse;
+            WozMemoryByteToFontIndex(byte, &fontIndex, &inverse);
+            int fontRowByte = WozModeFontBytes[fontIndex * 8 + rowInGlyph];
+            for(int column = 0; column < 7; column ++) {
+                *rowDst++ = (fontRowByte & 0x01) ? NTSCWhite : NTSCBlack;
+                fontRowByte = fontRowByte >> 1;
+            }
+            rowDst += 7;
+        }
+
+        rowSrc = WozModeTextBuffers[1][WozModePage] + rowInText * 40;
+        rowDst = rowBuffer + WOZ_MODE_LEFT + 0;
+        for(int textColumn = 0; textColumn < 40; textColumn++) {
+            uint8_t byte = rowSrc[textColumn];
+            int fontIndex, inverse;
+            WozMemoryByteToFontIndex(byte, &fontIndex, &inverse);
+            int fontRowByte = WozModeFontBytes[fontIndex * 8 + rowInGlyph];
+            for(int column = 0; column < 7; column ++) {
+                *rowDst++ = (fontRowByte & 0x01) ? NTSCWhite : NTSCBlack;
+                fontRowByte = fontRowByte >> 1;
+            }
+            rowDst += 7;
+        }
+
+    }
+}
+
 void WozModeFillRowBuffer40Text(int frameIndex, int rowNumber, size_t maxSamples, uint8_t* rowBuffer)
 {
     int rowIndex = (rowNumber - WOZ_MODE_TOP) / 2;
@@ -1398,7 +1386,7 @@ void WozModeFillRowBuffer40Text(int frameIndex, int rowNumber, size_t maxSamples
         memset(rowBuffer + WOZ_MODE_LEFT, NTSCBlack, WOZ_MODE_WIDTH);
         int rowInText = rowIndex / 8;
         int rowInGlyph = rowIndex % 8;
-        const uint8_t *rowSrc = WozModeTextBuffers[WozModeAux][WozModePage] + WozModeTextRowOffsets[rowInText]; // row - ...?
+        const uint8_t *rowSrc = WozModeTextBuffers[WozModeAux][WozModePage] + rowInText * 40;
         uint8_t *rowDst = rowBuffer + WOZ_MODE_LEFT;
         for(int textColumn = 0; textColumn < 40; textColumn++) {
             uint8_t byte = rowSrc[textColumn];
@@ -1414,6 +1402,34 @@ void WozModeFillRowBuffer40Text(int frameIndex, int rowNumber, size_t maxSamples
     }
 }
 
+void WozModeFillRowBufferLGR(int frameIndex, int rowNumber, size_t maxSamples, uint8_t* rowBuffer)
+{
+    int rowIndex = (rowNumber - WOZ_MODE_TOP) / 2;
+    if((rowIndex >= 0) && (rowIndex < 192)) {
+
+        memset(rowBuffer + WOZ_MODE_LEFT, NTSCBlack, WOZ_MODE_WIDTH);
+
+        int rowInText = rowIndex / 8;
+        int rowInGlyph = rowIndex % 8;
+
+        const uint8_t *rowSrc = WozModeTextBuffers[WozModeAux][WozModePage] + rowInText * 40;
+
+        uint8_t *rowDst = rowBuffer + WOZ_MODE_LEFT;
+
+        for(int column = 0; column < 560;) {
+            uint8_t byte = rowSrc[column / 14];
+            uint8_t nybble = ((rowInGlyph < 4) ? (byte) : (byte >> 4)) & 0xF;
+
+            for(int i = 0; i < 14; i++, column++) {
+                int bitInNybble = column % 4;
+                int bit = nybble & (1 << bitInNybble);
+                *rowDst++ = bit ? NTSCWhite : NTSCBlack;
+            }
+        }
+    }
+}
+
+
 int WozModeNeedsColorburst()
 {
     return (WozModeDisplayMode != TEXT);
@@ -1428,13 +1444,17 @@ void WozModeFillRowBuffer(int frameIndex, int rowNumber, size_t maxSamples, uint
     }
     switch(mode) {
         case TEXT: 
-            WozModeFillRowBuffer40Text(frameIndex, rowNumber, maxSamples, rowBuffer);
+            if(WozModeVid80) {
+                WozModeFillRowBuffer80Text(frameIndex, rowNumber, maxSamples, rowBuffer);
+            } else {
+                WozModeFillRowBuffer40Text(frameIndex, rowNumber, maxSamples, rowBuffer);
+            }
             break;
         case HIRES: 
             WozModeFillRowBufferHGR(frameIndex, rowNumber, maxSamples, rowBuffer);
             break;
         case LORES: 
-            // WozModeFillRowBufferGR(frameIndex, rowNumber, maxSamples, rowBuffer);
+            WozModeFillRowBufferLGR(frameIndex, rowNumber, maxSamples, rowBuffer);
             break;
     }
 }
@@ -1561,6 +1581,7 @@ int main_iterate(void)
     return 0;
 }
 
+#if 0
 const unsigned char dhgr_bytes[] = {
     0x00, 0x00, 0xa0, 0x70, 0x74, 0x74, 0x74, 0x2a, 0x56, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x75, 
     0x2a, 0x56, 0x55, 0x75, 0x62, 0x55, 0x75, 0x2a, 0x56, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 
@@ -2452,6 +2473,7 @@ void DHGRModeTest()
 
     while(0);
 }
+#endif
 
 void HGRModeTest()
 {
@@ -2528,7 +2550,7 @@ void HGRModeTest()
             }
             if(draw) {
                 if((x >= 0) && (y >= 0) && (x < 280) && (y < 192)) {
-                    WozModeHGRBuffers[0][0][WozModeHGRRowOffsets[y] + x / 7] |= (1 << (x % 7)) | palette;
+                    WozModeHGRBuffers[0][0][y * 40 + x / 7] |= (1 << (x % 7)) | palette;
                 }
             } 
             if(clear) {
@@ -2778,7 +2800,7 @@ int main(void)
 
     if(0) HGRModeTest();
 
-    if(0) DHGRModeTest();
+    // if(0) DHGRModeTest();
 
     if(0) {
         const char *args[] = {
@@ -2792,13 +2814,14 @@ int main(void)
         const char *args[] = {
             "apple2e",
             // "-fast",
-            "-diskII",
-            "diskII.c600.c6ff.bin",
-            // "1.DSK",
-            // "LodeRunner.dsk",
-            // "Chop.dsk",
-            "Plasmania.dsk",
-            "none",
+            // "-diskII",
+            // "diskII.c600.c6ff.bin",
+            // // "1.DSK",
+            // // "LodeRunner.dsk",
+            // // "Chop.dsk",
+            // // "Plasmania.dsk",
+            // "xmas.dsk",
+            // "none",
             "apple2e.rom",
         };
         NTSCSwitchModeFuncs(WozModeFillRowBuffer, WozModeNeedsColorburst);
@@ -2828,6 +2851,11 @@ REM 5 FOR X = 1 TO 100 : PRINT X : NEXT X
 REM 5 GOTO 5
 REM 6 END
 RUN
+)";
+        programString = R"(
+CALL -151
+70: 2C 50 C0 2C 52 C0 20 70 FC A9 FF 91 2A 88 10 FB A9 16 85 25 20 22 FC A0 27 68 F0 05 0A F0 04 90 02 49 1D 48 30 09 B1 28 29 07 AA B5 A8 91 28 88 10 E7 C6 25 10 DE 30 CE 00 BB 00 AA 00 99 00 DD
+70G
 )";
         if(0)for(size_t s = 0; s < strlen(programString); s++)
             enqueue_ascii(programString[s]);

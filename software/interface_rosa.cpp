@@ -38,11 +38,13 @@ static constexpr int hires_page_size = 8192;
 extern "C" {
 extern int WozModePage;
 extern int WozModeAux;
+extern int WozModeVid80;
 extern enum DisplayMode WozModeDisplayMode;
 extern int WozModeMixed;
-extern uint8_t WozModeHGRBuffers[2][2][8192];
-extern uint8_t WozModeTextBuffers[2][2][1024];
+extern uint8_t WozModeHGRBuffers[2][2][7680];
+extern uint8_t WozModeTextBuffers[2][2][960];
 };
+
 
 KeyRepeatManager keyRepeat;
 
@@ -328,6 +330,7 @@ void map_history_to_lines(const ModeHistory& history, unsigned long long current
         WozModeDisplayMode = lastMode.mode;
         WozModeMixed = lastMode.mixed;
         WozModePage = lastMode.page;
+        WozModeVid80 = lastMode.vid80;
     }
 }
 
@@ -348,24 +351,49 @@ typedef pair<int, bool> address_auxpage;
 map<address_auxpage, uint8_t> writes;
 int collisions = 0;
 
+std::tuple<uint16_t, uint16_t> wozAddressToHGRBufferAddress(uint16_t wozAddress)
+{
+    uint16_t part1 = (wozAddress & 0x1C00) >>  10;
+    uint16_t part2 = (wozAddress & 0x0380) >>   7;
+    uint16_t part3 = (wozAddress & 0x007F) / 0x28;
+    uint16_t byte = (wozAddress & 0x007F) % 0x28;
+
+    uint16_t row = part3 * 64 + part2 * 8 + part1;
+    uint16_t bufferAddress = row * 40 + byte;
+
+    return std::make_tuple(row, bufferAddress);
+}
+
+std::tuple<uint16_t, uint16_t> wozAddressToTextBufferAddress(uint16_t wozAddress)
+{
+    uint16_t part1 = (wozAddress & 0x0380) >>   7;
+    uint16_t part2 = (wozAddress & 0x007F) / 0x28;
+    uint16_t byte = (wozAddress & 0x007F) % 0x28;
+
+    uint16_t row = part2 * 8 + part1;
+    uint16_t bufferAddress = row * 40 + byte;
+
+    return std::make_tuple(row, bufferAddress);
+}
+
+
 void write2(int addr, bool aux, uint8_t data)
 {
     // We know text page 1 and 2 are contiguous
     if((addr >= text_page1_base) && (addr < text_page2_base + text_page_size)) {
+
         int page = (addr >= text_page2_base) ? 1 : 0;
-        size_t within_page = addr - text_page1_base - page * text_page_size;
-        if((within_page < 0) || (within_page >= sizeof(WozModeTextBuffers[0]))) {
-            printf("%d outside TEXT buffer\n", within_page);
-        }
+        size_t wozAddress = addr - text_page1_base - page * text_page_size;
+        uint16_t within_page;
+        std::tie(std::ignore, within_page) = wozAddressToTextBufferAddress(wozAddress);
         WozModeTextBuffers[aux ? 1 : 0][page][within_page] = data;
 
     } else if(((addr >= hires_page1_base) && (addr < hires_page1_base + hires_page_size)) || ((addr >= hires_page2_base) && (addr < hires_page2_base + hires_page_size))) {
 
         int page = (addr < hires_page2_base) ? 0 : 1;
-        size_t within_page = addr - hires_page1_base - page * hires_page_size;
-        if((within_page < 0) || (within_page >= sizeof(WozModeHGRBuffers[0]))) {
-            printf("%d outside HGR buffer\n", within_page);
-        }
+        uint16_t wozAddress = addr - hires_page1_base - page * hires_page_size;
+        uint16_t within_page;
+        std::tie(std::ignore, within_page) = wozAddressToHGRBufferAddress(wozAddress);
         WozModeHGRBuffers[aux ? 1 : 0][page][within_page] = data;
     }
 }
