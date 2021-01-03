@@ -1071,6 +1071,7 @@ int WozModeAux = 0;
 int WozModeMixed = 0;
 int WozModePage = 0;
 int WozModeVid80 = 0;
+int WozModeDHGR = 0;
 // indexed by aux, then by page, then by buffer address in scan order, not in Apple ][ memory order
 uint8_t WozModeHGRBuffers[2][2][7680];
 uint8_t WozModeTextBuffers[2][2][960];
@@ -1107,6 +1108,44 @@ __attribute__((hot,flatten)) void WozModeFillRowBufferHGR(int frameIndex, int ro
                         rowDst += 2;
                     }
                 }
+                byte = byte >> 1;
+            }
+        }
+    }
+}
+
+__attribute__((hot,flatten)) void WozModeFillRowBufferDHGR(int frameIndex, int rowNumber, size_t maxSamples, uint8_t* rowBuffer)
+{
+    int rowIndex = (rowNumber - WOZ_MODE_TOP) / 2;
+    if((rowIndex >= 0) && (rowIndex < 192)) {
+        const uint8_t *rowSrc;
+        
+        /* Even is bytes from AUX DHGR */
+        rowSrc = WozModeHGRBuffers[1][WozModePage] + rowIndex * 40; // row - ...?
+        for(int byteIndex = 0; byteIndex < 40; byteIndex++) {
+
+            uint8_t byte = *rowSrc++;
+
+            /* For whatever reason, DHGR starts one clock late. */
+            uint8_t *rowDst = rowBuffer + WOZ_MODE_LEFT + byteIndex * 14 + 1;
+
+            for(int bitIndex = 0; bitIndex < 7; bitIndex++) {
+                *rowDst++ = (byte & 0x1) ? NTSCWhite : NTSCBlack;
+                byte = byte >> 1;
+            }
+        }
+
+        /* Odd is bytes from MAIN DHGR */
+        rowSrc = WozModeHGRBuffers[0][WozModePage] + rowIndex * 40; // row - ...?
+        for(int byteIndex = 0; byteIndex < 40; byteIndex++) {
+
+            uint8_t byte = *rowSrc++;
+
+            /* For whatever reason, DHGR starts one clock late. */
+            uint8_t *rowDst = rowBuffer + WOZ_MODE_LEFT + byteIndex * 14 + 1 + 7;
+
+            for(int bitIndex = 0; bitIndex < 7; bitIndex++) {
+                *rowDst++ = (byte & 0x1) ? NTSCWhite : NTSCBlack;
                 byte = byte >> 1;
             }
         }
@@ -1451,7 +1490,11 @@ void WozModeFillRowBuffer(int frameIndex, int rowNumber, size_t maxSamples, uint
             }
             break;
         case HIRES: 
-            WozModeFillRowBufferHGR(frameIndex, rowNumber, maxSamples, rowBuffer);
+            if(WozModeDHGR) {
+                WozModeFillRowBufferDHGR(frameIndex, rowNumber, maxSamples, rowBuffer);
+            } else {
+                WozModeFillRowBufferHGR(frameIndex, rowNumber, maxSamples, rowBuffer);
+            }
             break;
         case LORES: 
             WozModeFillRowBufferLGR(frameIndex, rowNumber, maxSamples, rowBuffer);
@@ -1459,12 +1502,13 @@ void WozModeFillRowBuffer(int frameIndex, int rowNumber, size_t maxSamples, uint
     }
 }
 
-unsigned char DHGRBuffer[560 * 192 / 8];
-
 int AlwaysColorburst()
 {
     return 1;
 }
+
+#if 0
+unsigned char DHGRBuffer[560 * 192 / 8];
 
 __attribute__((hot,flatten)) void DHGRModeFillRowBuffer(int frameIndex, int rowNumber, size_t maxSamples, uint8_t* rowBuffer)
 {
@@ -1485,6 +1529,7 @@ __attribute__((hot,flatten)) void DHGRModeFillRowBuffer(int frameIndex, int rowN
         }
     }
 }
+#endif
 
 
 //----------------------------------------------------------------------------
@@ -2814,14 +2859,12 @@ int main(void)
         const char *args[] = {
             "apple2e",
             // "-fast",
-            // "-diskII",
-            // "diskII.c600.c6ff.bin",
-            // // "1.DSK",
-            // // "LodeRunner.dsk",
-            // // "Chop.dsk",
-            // // "Plasmania.dsk",
+            "-diskII", "diskII.c600.c6ff.bin", "A2BestPix_Top1.DSK", "none",
+            // "1.DSK",
+            // "LodeRunner.dsk",
+            // "Chop.dsk",
+            // "Plasmania.dsk",
             // "xmas.dsk",
-            // "none",
             "apple2e.rom",
         };
         NTSCSwitchModeFuncs(WozModeFillRowBuffer, WozModeNeedsColorburst);

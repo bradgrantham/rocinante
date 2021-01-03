@@ -39,6 +39,7 @@ extern "C" {
 extern int WozModePage;
 extern int WozModeAux;
 extern int WozModeVid80;
+extern int WozModeDHGR;
 extern enum DisplayMode WozModeDisplayMode;
 extern int WozModeMixed;
 extern uint8_t WozModeHGRBuffers[2][2][7680];
@@ -331,6 +332,7 @@ void map_history_to_lines(const ModeHistory& history, unsigned long long current
         WozModeMixed = lastMode.mixed;
         WozModePage = lastMode.page;
         WozModeVid80 = lastMode.vid80;
+        WozModeDHGR = lastMode.dhgr;
     }
 }
 
