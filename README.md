@@ -33,9 +33,9 @@ I'm keeping a spreadsheet of [the status of hardware features](https://docs.goog
 
 I'm keeping rework notes for Rev1 in [rework.md](rework.md).
 
-# The Fundmental Idea
+# The Fundamental Idea
 
-There is no framebuffer, per se, in Rocinante.
+There is no framebuffer being directly scanned out in Rocinante.
 
 Instead, there are two scanline buffers, and the CPU fills the next scanline buffer while DMA is scanning out the current scanline buffer.
 
