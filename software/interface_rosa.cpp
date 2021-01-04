@@ -226,7 +226,7 @@ void poll_events()
     int haveEvent;
 
     do {
-        haveEvent = EventPoll(&ev);
+        haveEvent = RoEventPoll(&ev);
         
         haveEvent = KeyRepeatUpdate(&keyRepeat, haveEvent, &ev);
 

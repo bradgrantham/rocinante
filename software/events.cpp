@@ -64,7 +64,7 @@ static void enqueueOrSetEventsLost(int processId, const Event& ev)
     }
 }
 
-int EventPoll(Event* ev)
+int RoEventPoll(Event* ev)
 {
     /* Determine processId */
     int processId = 0; /* hack until process table exists */

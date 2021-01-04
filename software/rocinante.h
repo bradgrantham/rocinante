@@ -11,18 +11,25 @@ extern "C" {
 
 typedef enum Status {
     RO_SUCCESS = 0,
-    NO_VIDEO_SUBSYSTEM_SET = -1,        // The platform did not set the video subsystem
-    INVALID_VIDEO_MODE_NUMBER = -2,     // The index passed was not in the range of valid modes
-    INVALID_STRUCTURE_SIZE = -3,        // The "size" parameter did not match the size of the requested structure
-    INVALID_STRUCTURE_TYPE = -4,        // The "type" parameter did not match the size of the requested structure
-    VIDEO_MODE_DOES_NOT_MATCH = -5,     // The "type" parameter to VideoModeGetInfo did not match the requested mode
-    VIDEO_MODE_INFO_UNSUPPORTED = -6,   // The video subsystem does not support returning info on the requested mode
-    INVALID_WINDOW = -7,                // A window was not open or valid with the provided index
-    INVALID_PARAMETER_VALUE = -8,       // A passed parameter was outside the valid range
-    WINDOW_CREATION_FAILED = -9,        // Window could not be created because of memory allocation or possibly other reason
-    RESOURCE_EXHAUSTED = -10,           // There were no more objects of the requested type
-    SIZE_EXCEEDED = -11,                // Window could not be created because of memory allocation or possibly other reason
+
+    RO_USER_DECLINED = 1,               // The user declined a UI prompt (not an error)
+    RO_ITEMS_DISCARDED = 2,             // The user buffer was filled but more items were available
+
+    RO_NO_VIDEO_SUBSYSTEM_SET = -1,        // The platform did not set the video subsystem
+    RO_INVALID_VIDEO_MODE_NUMBER = -2,     // The index passed was not in the range of valid modes
+    RO_INVALID_STRUCTURE_SIZE = -3,        // The "size" parameter did not match the size of the requested structure
+    RO_INVALID_STRUCTURE_TYPE = -4,        // The "type" parameter did not match the size of the requested structure
+    RO_VIDEO_MODE_DOES_NOT_MATCH = -5,     // The "type" parameter to VideoModeGetInfo did not match the requested mode
+    RO_VIDEO_MODE_INFO_UNSUPPORTED = -6,   // The video subsystem does not support returning info on the requested mode
+    RO_INVALID_WINDOW = -7,                // A window was not open or valid with the provided index
+    RO_INVALID_PARAMETER_VALUE = -8,       // A passed parameter was outside the valid range
+    RO_WINDOW_CREATION_FAILED = -9,        // Window could not be created because of memory allocation or possibly other reason
+    RO_RESOURCE_EXHAUSTED = -10,           // There were no more objects of the requested type
+    RO_SIZE_EXCEEDED = -11,                // Window could not be created because of memory allocation or possibly other reason
+    RO_RESOURCE_NOT_FOUND = -12,           // Root resource e.g. "/" could not be found
 } Status;
+
+#define RO_FAILURE(status) ((status) < 0)
 
 /*! Set colors on the 3 RGB LEDs.
     \param which Index of the LED to set; 0, 1, or 2.

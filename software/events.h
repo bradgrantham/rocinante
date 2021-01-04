@@ -77,7 +77,7 @@ typedef struct Event
     } u;
 } Event;
 
-int EventPoll(Event *event); /* 0 if none, 1 if filled */
+int RoEventPoll(Event *event); /* 0 if none, 1 if filled */
 
 typedef struct KeyRepeatManager
 {

@@ -839,7 +839,7 @@ struct DISKIIboard : board_base
         uint8_t data = trackBytes[trackByteIndex];
 
         if(false) {
-            printf("read track %d byte %d (sector %ld byte %ld), yields %d (%02X)\n", nybblizedTrackIndex, trackByteIndex, trackByteIndex / DiskII::nybblizedSectorSize, trackByteIndex % DiskII::nybblizedSectorSize, data, data);
+            printf("read track %d byte %ld (sector %ld byte %ld), yields %d (%02X)\n", nybblizedTrackIndex, trackByteIndex, trackByteIndex / DiskII::nybblizedSectorSize, trackByteIndex % DiskII::nybblizedSectorSize, data, data);
         }
 
         trackByteIndex = (trackByteIndex + 1) % DiskII::nybblizedTrackSize;
@@ -969,7 +969,7 @@ struct DISKIIboard : board_base
 
         driveMagnetState[driveSelected] = newMagnetState;
 
-        if(debug & DEBUG_FLOPPY) printf("stepper %04X, phase %d, state %d, so stepper motor state now: %d, %d, %d, %d\n",
+        if(debug & DEBUG_FLOPPY) printf("stepper %04lX, phase %d, state %d, so stepper motor state now: %d, %d, %d, %d\n",
             addr, phase, state,
             newMagnetState[0] ? 1 : 0, newMagnetState[1] ? 1 : 0, newMagnetState[2] ? 1 : 0, newMagnetState[3] ? 1 : 0);
 
@@ -2400,6 +2400,7 @@ int apple2_main(int argc, const char **argv)
 
     MAINboard::get_paddle_func paddle = [](int num)->tuple<float, bool>{return APPLE2Einterface::get_paddle(num);};
 
+    (void)mute;
     MAINboard::audio_flush_func audio = [](uint8_t *buf, size_t size){ if(!run_fast) APPLE2Einterface::enqueue_audio_samples(buf, size); };
 
     mainboard = new MAINboard(clk, b, display, APPLE2Einterface::get_audio_sample_rate(), APPLE2Einterface::get_preferred_audio_buffer_size_samples(), audio, paddle);
@@ -2573,8 +2574,8 @@ int apple2_main(int argc, const char **argv)
                 exit_on_banking = true;
                 continue;
             } else if(strncmp(line, "debug", 5) == 0) {
-                sscanf(line + 6, "%u", &debug);
-                printf("debug set to %02X\n", debug);
+                sscanf(line + 6, "%lu", &debug);
+                printf("debug set to %02lX\n", debug);
                 continue;
             } else if(strcmp(line, "reset") == 0) {
                 printf("machine reset.\n");
