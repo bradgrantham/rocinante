@@ -153,6 +153,10 @@ const std::map<int, int> HIDkeyToInterfaceKey =
     {KEYCAP_RIGHTCONTROL, RIGHT_CONTROL},
     {KEYCAP_RIGHTALT, RIGHT_ALT},
     {KEYCAP_RIGHTGUI, RIGHT_SUPER},
+    {KEYCAP_LEFT, LEFT},
+    {KEYCAP_RIGHT, RIGHT},
+    {KEYCAP_UP, UP},
+    {KEYCAP_DOWN, DOWN},
 };
 
 void ProcessKey(int press, int key)
