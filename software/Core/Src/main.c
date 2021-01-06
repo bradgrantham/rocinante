@@ -2246,7 +2246,7 @@ int main(void)
         char *fileChosenInDir;
         static char fileChosen[512];
 
-        status = PromptUserToChooseFile("Choose an Apple ][ boot disk", "/floppies", CHOOSE_FILE_IGNORE_DOTFILES, ".dsk", &fileChosenInDir);
+        status = PromptUserToChooseFile("Choose an Apple ][ boot disk", "/floppies", CHOOSE_FILE_IGNORE_DOTFILES, NULL /* ".dsk" */, &fileChosenInDir);
         sprintf(fileChosen, "/floppies/%s", fileChosenInDir);
         if(status == RO_SUCCESS) {
             const char *args[] = {
