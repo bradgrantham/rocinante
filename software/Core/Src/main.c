@@ -121,20 +121,26 @@ int __io_getchar(void)
 
 volatile int USARTBusy = 0;
 
+static int serial_which = 0;
+static int serial_where = 0;
+static char serial_buffer[2][256];
+
+void console_flush()
+{
+    while(USARTBusy);
+    USARTBusy = 1;
+    HAL_UART_Transmit_IT(&huart2, (uint8_t *)&serial_buffer[serial_which], serial_where);
+    // HAL_UART_Transmit(&huart2, (uint8_t *)&serial_buffer[serial_which], serial_where, 100);
+    serial_which = (serial_which + 1) % 2;
+    serial_where = 0;
+}
+
+
 void __io_putchar( char c )
 {
-    static int which = 0;
-    static int where = 0;
-    static char buffer[2][256];
-
-    buffer[which][where++] = c;
-    if(/* !USARTBusy || */ (c == '\n') || (where >= sizeof(buffer[0]))) {
-        while(USARTBusy);
-        USARTBusy = 1;
-        HAL_UART_Transmit_IT(&huart2, (uint8_t *)&buffer[which], where);
-        // HAL_UART_Transmit(&huart2, (uint8_t *)&buffer[which], where, 100);
-        which = (which + 1) % 2;
-        where = 0;
+    serial_buffer[serial_which][serial_where++] = c;
+    if(/* !USARTBusy || */ (c == '\n') || (serial_where >= sizeof(serial_buffer[0]))) {
+        console_flush();
     }
 }  
 
@@ -170,6 +176,83 @@ void msgprintf(const char *fmt, ...)
         panic();
     }
     HAL_Delay(10);
+}
+
+enum { SDRAM_TIMEOUT = 0xFFFF };
+
+
+
+void SDRAMInit()
+{
+    int result;
+    static FMC_SDRAM_CommandTypeDef cmd;
+
+    cmd.CommandMode = FMC_SDRAM_CMD_CLK_ENABLE;
+    cmd.CommandTarget = FMC_SDRAM_CMD_TARGET_BANK1;
+    cmd.AutoRefreshNumber = 1;
+    cmd.ModeRegisterDefinition = 0;
+    result = HAL_SDRAM_SendCommand(&hsdram1, &cmd, SDRAM_TIMEOUT);
+    if(result != HAL_OK){
+        printf("HAL_SDRAM_SendCommand(CLK_ENABLE) error %d\n", result);
+        panic();
+    }
+
+    HAL_Delay(1);
+
+    cmd.CommandMode = FMC_SDRAM_CMD_PALL;
+    cmd.CommandTarget = FMC_SDRAM_CMD_TARGET_BANK1;
+    cmd.AutoRefreshNumber = 1;
+    cmd.ModeRegisterDefinition = 0;
+    result = HAL_SDRAM_SendCommand(&hsdram1, &cmd, SDRAM_TIMEOUT);
+    if(result != HAL_OK){
+        printf("HAL_SDRAM_SendCommand(CLK_PALL) error %d\n", result);
+        panic();
+    }
+
+    cmd.CommandMode = FMC_SDRAM_CMD_LOAD_MODE;
+    cmd.CommandTarget = FMC_SDRAM_CMD_TARGET_BANK1;
+    cmd.AutoRefreshNumber = 1;
+    // XXX figure this out from docs
+    cmd.ModeRegisterDefinition = 0x0220; // SDRAM_MODEREG_BURST_LENGTH_1 |
+         // SDRAM_MODEREG_BURST_TYPE_SEQUENTIAL |
+         // SDRAM_MODEREG_CAS_LATENCY_2 |
+         // SDRAM_MODEREG_OPERATING_MODE_STANDARD |
+         // SDRAM_MODEREG_WRITEBURST_MODE_SINGLE;
+    result = HAL_SDRAM_SendCommand(&hsdram1, &cmd, SDRAM_TIMEOUT);
+    if(result != HAL_OK){
+        printf("HAL_SDRAM_SendCommand(CLK_ENABLE) error %d\n", result);
+        panic();
+    }
+
+    cmd.CommandMode = FMC_SDRAM_CMD_AUTOREFRESH_MODE;
+    cmd.CommandTarget = FMC_SDRAM_CMD_TARGET_BANK1;
+    cmd.AutoRefreshNumber = 8;
+    cmd.ModeRegisterDefinition = 0;
+    result = HAL_SDRAM_SendCommand(&hsdram1, &cmd, SDRAM_TIMEOUT);
+    if(result != HAL_OK){
+        printf("HAL_SDRAM_SendCommand(AUTOREFRESH_MODE) error %d\n", result);
+        panic();
+    }
+
+    HAL_Delay(1);
+
+    cmd.CommandMode = FMC_SDRAM_CMD_AUTOREFRESH_MODE;
+    cmd.CommandTarget = FMC_SDRAM_CMD_TARGET_BANK1;
+    cmd.AutoRefreshNumber = 8;
+    cmd.ModeRegisterDefinition = 0;
+    result = HAL_SDRAM_SendCommand(&hsdram1, &cmd, SDRAM_TIMEOUT);
+    if(result != HAL_OK){
+        printf("HAL_SDRAM_SendCommand(AUTOREFRESH_MODE) error %d\n", result);
+        panic();
+    }
+
+    HAL_Delay(1);
+
+    result = HAL_SDRAM_ProgramRefreshRate(&hsdram1, 1250);
+    if(result != HAL_OK){
+        printf("HAL_SDRAM_ProgramRefreshRate error %d\n", result);
+        panic();
+    }
 }
 
 void USBH_HID_EventCallback(USBH_HandleTypeDef *phost)
@@ -1911,6 +1994,8 @@ int playAudio(int argc, const char **argv)
     where = RoAudioBlockToHalfBuffer();
     memset(audioBuffer + where, 128, halfBufferSamples);
 
+    free(monoTrack);
+
     fclose(fp);
 
     return 0;
@@ -2130,6 +2215,9 @@ Status PromptUserToChooseFile(const char *title, const char *dirName, uint32_t f
     return status;
 }
 
+enum { SDRAM_TEST_STEP_SIZE = 4096 };
+enum { SDRAM_START = 0xC0000000 };
+
 /* USER CODE END 0 */
 
 /**
@@ -2175,6 +2263,8 @@ int main(void)
   MX_FATFS_Init();
   MX_DAC1_Init();
   /* USER CODE BEGIN 2 */
+
+  SDRAMInit();
   
     if(0){
         GPIO_InitTypeDef GPIO_InitStruct = {0};
@@ -2190,6 +2280,96 @@ int main(void)
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
+
+  if(1) {
+      uint16_t *sdram16 = (uint16_t*)SDRAM_START;
+
+      for(int i = 0; i < 16; i++) {
+          printf("SDRAM U16 write %d...\n", i);
+          uint16_t value = i & 0xFFFF;
+          sdram16[i] = value;
+          HAL_Delay(20);
+      }
+      for(int i = 0; i < 16; i++) {
+          printf("SDRAM U16 read %d...\n", i);
+          uint16_t value = i & 0xFFFF;
+          uint16_t result = sdram16[i];
+          if(result != value) {
+              printf("failed.  0x%04X, expected 0x%04X\n", result, value);
+          } else {
+              printf("read success!\n");
+          }
+          HAL_Delay(20);
+      }
+  }
+
+
+  if(0) {
+      unsigned char* sdram = (unsigned char *)SDRAM_START;
+
+      for(int i = 0; i < 1024; i++) {
+          printf("SDRAM write %d...\n", i);
+          uint8_t value = 0xFF; // i & 0xFF;
+          sdram[i] = value;
+          HAL_Delay(20);
+      }
+      for(int i = 0; i < 1024; i++) {
+          printf("SDRAM read %d...\n", i);
+          uint8_t value = i & 0xFF;
+          uint8_t result = sdram[i];
+          if(result != value) {
+              printf("failed.  return value is %02X\n", result);
+          } else {
+              printf("read success!\n");
+          }
+          HAL_Delay(20);
+      }
+
+      for(size_t a = 0; a < 16 * 1024 * 1024; a++) {
+          printf("0x%08X...\n", SDRAM_START + a); HAL_Delay(100);
+
+          if(a % SDRAM_TEST_STEP_SIZE == 0) {
+              printf("memory test 0x%08X - 0x%08X...\n", SDRAM_START + a, SDRAM_START + a + (SDRAM_TEST_STEP_SIZE - 1));
+              console_flush();
+              HAL_Delay(1000);
+          }
+          sdram[a] = 0x0;
+          if(sdram[a] != 0x0) {
+              printf("0x%08X failed setting to 0\n", SDRAM_START + a);
+              panic();
+          }
+          sdram[a] = a & 0xFF;
+          if(sdram[a] != (a & 0xFF)) {
+              printf("0x%08X failed setting to %d\n", SDRAM_START + a, a & 0xFF);
+              panic();
+          }
+          sdram[a] = 0xFF;
+          if(sdram[a] != 0xFF) {
+              printf("0x%08X failed setting to FF\n", SDRAM_START + a);
+              panic();
+          }
+          if(a % SDRAM_TEST_STEP_SIZE == (SDRAM_TEST_STEP_SIZE - 1)) {
+              printf("successful\n");
+              HAL_Delay(100);
+          }
+      }
+      printf("sdram fill test...\n");
+              HAL_Delay(100);
+      uint32_t* sdram32 = (uint32_t*)sdram;
+      for(int i = 0; i < 16 * 1024 * 1024 / 4; i++) {
+          uint32_t val = i | (i << 24);
+          sdram32[i] = val;
+      }
+      for(int i = 0; i < 16 * 1024 * 1024 / 4; i++) {
+          uint32_t val = i | (i << 24);
+          if(sdram32[i] != val) {
+              printf("%p (%08X; %d) failed setting to 0x%lX\n", sdram32 + i, i, i, val);
+              panic();
+          }
+      }
+      printf("successful\n");
+              HAL_Delay(100);
+  }
 
         FRESULT result = f_mount(&gFATVolume, "0:", 1);
         if(result != FR_OK) {
@@ -2233,7 +2413,8 @@ int main(void)
     if(0) {
         const char *args[] = {
             "play",
-            "inside-out.u8",
+            // "inside-out.u8",
+            "deeper_understanding.u8",
         };
         playAudio(sizeof(args) / sizeof(args[0]), args);
     }
@@ -2670,13 +2851,13 @@ static void MX_FMC_Init(void)
   hsdram1.Init.ReadBurst = FMC_SDRAM_RBURST_DISABLE;
   hsdram1.Init.ReadPipeDelay = FMC_SDRAM_RPIPE_DELAY_2;
   /* SdramTiming */
-  SdramTiming.LoadToActiveDelay = 16;
-  SdramTiming.ExitSelfRefreshDelay = 16;
-  SdramTiming.SelfRefreshTime = 16;
-  SdramTiming.RowCycleDelay = 16;
-  SdramTiming.WriteRecoveryTime = 16;
-  SdramTiming.RPDelay = 16;
-  SdramTiming.RCDDelay = 16;
+  SdramTiming.LoadToActiveDelay = 2; // ???
+  SdramTiming.ExitSelfRefreshDelay = 6; // Txsr, in ns
+  SdramTiming.SelfRefreshTime = 5; // Tref, in ns ??? 
+  SdramTiming.RowCycleDelay = 5; // Trc, in ns 
+  SdramTiming.WriteRecoveryTime = 2; // Twr, in clocks
+  SdramTiming.RPDelay = 2; // Trp, in ns
+  SdramTiming.RCDDelay = 2; // Trcd, in ns
 
   if (HAL_SDRAM_Init(&hsdram1, &SdramTiming) != HAL_OK)
   {
