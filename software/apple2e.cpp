@@ -1093,7 +1093,7 @@ struct Mockingboard : board_base
 };
 
 const int waveform_length = 44100 / 1000 / 2; // half of a wave at 4000 Hz
-const float waveform_max_amplitude = .35f;
+const float waveform_max_amplitude = 0.8f; // .35f;
 static uint8_t waveform[waveform_length];
 
 static void initialize_audio_waveform() __attribute__((constructor));
@@ -2500,7 +2500,8 @@ int apple2_main(int argc, const char **argv)
                     }
                 }
                 uint32_t nowTick = HAL_GetTick();
-                if(nowTick >= prevTick + 16) {
+#warning Setting this to + 16 made USB keyboard stop working.  
+                if(nowTick >= prevTick) {
                     main_iterate();
                     prevTick = nowTick;
                 }
