@@ -426,6 +426,7 @@ void write3LEDString(uint8_t colors[3][3])
 
     // Wait for SPI to finish transmitting the previous color
     // while (hspi4.State != HAL_SPI_STATE_READY);
+    HAL_Delay(1); // XXX if I don't do this the LED write never happens??
     while(LEDBusy);
 
     *p++ = 0;
@@ -1744,11 +1745,11 @@ void LEDTestIterate()
         float v = 1.0f;
         float r, g, b;
         HSVToRGB3f(h, s, v, &r, &g, &b);
-        // RoLEDSet(1, r * 255, g * 255, b * 255);
+        if(1) RoLEDSet(1, r * 255, g * 255, b * 255);
 
         int phase = (int)now % 2;
         float value = phase ? (now - (int)now) : (1 - (now - (int)now));
-        if(0)RoLEDSet(2, value * 255, value * 255, value * 255);
+        if(1)RoLEDSet(2, value * 255, value * 255, value * 255);
 
         writeLEDColors = 1;
     }
@@ -1764,10 +1765,10 @@ int main_iterate(void)
 
     MX_USB_HOST_Process();
 
-    LEDTestIterate();
+    // LEDTestIterate();
 
     if(writeLEDColors) {
-        // write3LEDString(LEDColors);
+        write3LEDString(LEDColors);
         writeLEDColors = 0;
     }
 
@@ -1941,7 +1942,6 @@ int playAudio(int argc, const char **argv)
     size_t where;
     size_t samplesRead = 0;
     int quit = 0;
-    float angle = 0;
     do {
         // Wait for audio to get at least half a buffer past us
         samplesRead = fread(monoTrack, 1, halfBufferMonoSamples, fp);
@@ -1950,14 +1950,10 @@ int playAudio(int argc, const char **argv)
             return 1;
         }
         where = RoAudioBlockToHalfBuffer();
-        float a = sinf(angle) * .5 + .5;
         for(int i = 0; i < samplesRead; i++) {
             int v = monoTrack[i];
-            audioBuffer[where + i * 2 + 0] = 128 + (v - 128) * a;
-            audioBuffer[where + i * 2 + 1] = 128 + (v - 128) * (1 - a);
-        }
-        if(0)  {
-            angle += 3.14159 * 2 / 100;
+            audioBuffer[where + i * 2 + 0] = v; // 128 + (v - 128) * a;
+            audioBuffer[where + i * 2 + 1] = v; // 128 + (v - 128) * (1 - a);
         }
 
         Event ev;
@@ -2464,13 +2460,18 @@ REM 5 GOTO 5
 REM 6 END
 RUN
 )";
+#if 0
             programString = R"(
 CALL -151
 70: 2C 50 C0 2C 52 C0 20 70 FC A9 FF 91 2A 88 10 FB A9 16 85 25 20 22 FC A0 27 68 F0 05 0A F0 04 90 02 49 1D 48 30 09 B1 28 29 07 AA B5 A8 91 28 88 10 E7 C6 25 10 DE 30 CE 00 BB 00 AA 00 99 00 DD
 70G
 )";
-            if(0)for(size_t s = 0; s < strlen(programString); s++)
-                enqueue_ascii(programString[s]);
+#endif
+            if(0) {
+                for(size_t s = 0; s < strlen(programString); s++) {
+                    enqueue_ascii(programString[s]);
+                }
+            }
 
             apple2_main(sizeof(args) / sizeof(args[0]), args); /* doesn't return */
 
@@ -2480,27 +2481,53 @@ CALL -151
         }
     }
 
+    int user1 = 0;
+    int user2 = 0;
+    int user3 = 0;
+
     while (1) {
 
+#if 1
     /* USER CODE END WHILE */
     MX_USB_HOST_Process();
 
     /* USER CODE BEGIN 3 */
         // ----- USER button test
+#if 0
         if(HAL_GPIO_ReadPin(USER1_GPIO_Port, USER1_Pin)) {
-            // printf("user 1\n");
+            if(!user1) {
+                printf("user 1\n");
+            }
+            user1 = 1;
+        } else {
+            user1 = 0;
         }
+#endif
         if(HAL_GPIO_ReadPin(USER2_GPIO_Port, USER2_Pin)) {
-            // printf("user 2\n");
+            if(!user2) {
+                printf("user 2\n");
+            }
+            user2 = 1;
+        } else {
+            user2 = 0;
         }
         if(HAL_GPIO_ReadPin(USER3_GPIO_Port, USER3_Pin)) {
-            // printf("user 3\n");
+            if(!user3) {
+                printf("user 3\n");
+            }
+            printf("user 3\n");
+            user3 = 1;
+        } else {
+            user3 = 0;
         }
 
-        // ----- DEBUG LED test
-        // HAL_GPIO_WritePin(DEBUG_LED_GPIO_Port, DEBUG_LED_Pin, lightLED ? GPIO_PIN_SET : GPIO_PIN_RESET);
-
+#endif
         LEDTestIterate();
+        if(writeLEDColors) {
+            write3LEDString(LEDColors);
+            writeLEDColors = 0;
+        }
+
     }
 
     return 0;
@@ -2851,13 +2878,13 @@ static void MX_FMC_Init(void)
   hsdram1.Init.ReadBurst = FMC_SDRAM_RBURST_DISABLE;
   hsdram1.Init.ReadPipeDelay = FMC_SDRAM_RPIPE_DELAY_2;
   /* SdramTiming */
-  SdramTiming.LoadToActiveDelay = 2; // ???
-  SdramTiming.ExitSelfRefreshDelay = 6; // Txsr, in ns
-  SdramTiming.SelfRefreshTime = 5; // Tref, in ns ??? 
-  SdramTiming.RowCycleDelay = 5; // Trc, in ns 
-  SdramTiming.WriteRecoveryTime = 2; // Twr, in clocks
-  SdramTiming.RPDelay = 2; // Trp, in ns
-  SdramTiming.RCDDelay = 2; // Trcd, in ns
+  SdramTiming.LoadToActiveDelay = 2;
+  SdramTiming.ExitSelfRefreshDelay = 6;
+  SdramTiming.SelfRefreshTime = 5;
+  SdramTiming.RowCycleDelay = 5;
+  SdramTiming.WriteRecoveryTime = 3;
+  SdramTiming.RPDelay = 2;
+  SdramTiming.RCDDelay = 2;
 
   if (HAL_SDRAM_Init(&hsdram1, &SdramTiming) != HAL_OK)
   {
@@ -2923,22 +2950,6 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_MEDIUM;
   HAL_GPIO_Init(GPIOI, &GPIO_InitStruct);
-
-  /*Configure GPIO pin : PA15 */
-  GPIO_InitStruct.Pin = GPIO_PIN_15;
-  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  GPIO_InitStruct.Alternate = GPIO_AF1_TIM2;
-  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
-
-  /*Configure GPIO pin : PB6 */
-  GPIO_InitStruct.Pin = GPIO_PIN_6;
-  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  GPIO_InitStruct.Alternate = GPIO_AF7_USART1;
-  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
 }
 
