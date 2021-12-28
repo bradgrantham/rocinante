@@ -67,6 +67,8 @@ DMA_HandleTypeDef hdma_tim1_ch2;
 
 UART_HandleTypeDef huart2;
 
+SDRAM_HandleTypeDef hsdram1;
+
 /* USER CODE BEGIN PV */
 
 FATFS gFATVolume;
@@ -84,6 +86,7 @@ static void MX_SDMMC2_SD_Init(void);
 static void MX_DAC1_Init(void);
 static void MX_TIM4_Init(void);
 static void MX_TIM5_Init(void);
+static void MX_FMC_Init(void);
 void MX_USB_HOST_Process(void);
 
 /* USER CODE BEGIN PFP */
@@ -185,7 +188,6 @@ enum { SDRAM_TIMEOUT = 0xFFFF };
 
 void SDRAMInit()
 {
-#if 0
     int result;
     static FMC_SDRAM_CommandTypeDef cmd;
 
@@ -255,7 +257,6 @@ void SDRAMInit()
         printf("HAL_SDRAM_ProgramRefreshRate error %d\n", result);
         panic();
     }
-#endif
 }
 
 void USBH_HID_EventCallback(USBH_HandleTypeDef *phost)
@@ -2702,7 +2703,6 @@ const uint16_t pattern[640 * 480] = {
 
 /* USER CODE END 0 */
 
-
 /**
   * @brief  The application entry point.
   * @retval int
@@ -2722,8 +2722,8 @@ int main(void)
   HAL_Init();
 
   /* USER CODE BEGIN Init */
-    SCB->CACR |= SCB_CACR_FORCEWT_Msk;
-    SCB_EnableDCache();
+    // SCB->CACR |= SCB_CACR_FORCEWT_Msk;
+    // SCB_EnableDCache();
 
   /* USER CODE END Init */
 
@@ -2746,6 +2746,7 @@ int main(void)
   MX_DAC1_Init();
   MX_TIM4_Init();
   MX_TIM5_Init();
+  MX_FMC_Init();
   /* USER CODE BEGIN 2 */
 
   SDRAMInit();
@@ -2765,46 +2766,43 @@ int main(void)
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
 
-  if(0) {
+  if(1) {
       uint16_t *sdram16 = (uint16_t*)SDRAM_START;
 
       for(int i = 0; i < 16; i++) {
           printf("SDRAM U16 write %d...\n", i);
-          uint16_t value = i & 0xFFFF;
-          sdram16[i] = value;
+          uint16_t expected = i & 0xFFFF;
+          sdram16[i] = expected;
           HAL_Delay(20);
       }
       for(int i = 0; i < 16; i++) {
-          printf("SDRAM U16 read %d...\n", i);
-          uint16_t value = i & 0xFFFF;
+          uint16_t expected = i & 0xFFFF;
           uint16_t result = sdram16[i];
-          if(result != value) {
-              printf("failed.  0x%04X, expected 0x%04X\n", result, value);
+          if(result == expected) {
+              printf("SDRAM U16 read %5d success! (expected and read 0x%04X)\n", i, result);
           } else {
-              printf("read success!\n");
+              printf("SDRAM U16 read %5d failed.  Expected 0x%04X, got 0x%04X\n", i, expected, result);
           }
           HAL_Delay(20);
       }
   }
 
-
-  if(0) {
+  if(1) {
       unsigned char* sdram = (unsigned char *)SDRAM_START;
 
       for(int i = 0; i < 1024; i++) {
           printf("SDRAM write %d...\n", i);
-          uint8_t value = 0xFF; // i & 0xFF;
-          sdram[i] = value;
+          uint8_t expected = i & 0xFF;
+          sdram[i] = expected;
           HAL_Delay(20);
       }
       for(int i = 0; i < 1024; i++) {
-          printf("SDRAM read %d...\n", i);
-          uint8_t value = i & 0xFF;
+          uint8_t expected = i & 0xFF;
           uint8_t result = sdram[i];
-          if(result != value) {
-              printf("failed.  return value is %02X\n", result);
+          if(result == expected) {
+              printf("SDRAM read %5d succeeded!  (Expected and read %02X)\n", i, result);
           } else {
-              printf("read success!\n");
+              printf("SDRAM read %5d failed.  Expected %02X, read is %02X\n", i, expected, result);
           }
           HAL_Delay(20);
       }
@@ -3162,7 +3160,9 @@ void SystemClock_Config(void)
     Error_Handler();
   }
   PeriphClkInitStruct.PeriphClockSelection = RCC_PERIPHCLK_USART2|RCC_PERIPHCLK_SPI4
-                              |RCC_PERIPHCLK_SDMMC|RCC_PERIPHCLK_USB;
+                              |RCC_PERIPHCLK_SDMMC|RCC_PERIPHCLK_USB
+                              |RCC_PERIPHCLK_FMC;
+  PeriphClkInitStruct.FmcClockSelection = RCC_FMCCLKSOURCE_D1HCLK;
   PeriphClkInitStruct.SdmmcClockSelection = RCC_SDMMCCLKSOURCE_PLL;
   PeriphClkInitStruct.Spi45ClockSelection = RCC_SPI45CLKSOURCE_D2PCLK1;
   PeriphClkInitStruct.Usart234578ClockSelection = RCC_USART234578CLKSOURCE_D2PCLK1;
@@ -3372,7 +3372,7 @@ static void MX_TIM4_Init(void)
   htim4.Instance = TIM4;
   htim4.Init.Prescaler = 9;
   htim4.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim4.Init.Period = 799; // 800;
+  htim4.Init.Period = 800;
   htim4.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim4.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_Base_Init(&htim4) != HAL_OK)
@@ -3395,8 +3395,8 @@ static void MX_TIM4_Init(void)
     Error_Handler();
   }
   sConfigOC.OCMode = TIM_OCMODE_PWM1;
-  sConfigOC.Pulse = 800 - 704; // XXX 704;
-  sConfigOC.OCPolarity = TIM_OCPOLARITY_LOW; // XXX TIM_OCPOLARITY_HIGH;
+  sConfigOC.Pulse = 704;
+  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
   sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
   if (HAL_TIM_PWM_ConfigChannel(&htim4, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
   {
@@ -3431,7 +3431,7 @@ static void MX_TIM5_Init(void)
   htim5.Instance = TIM5;
   htim5.Init.Prescaler = 9;
   htim5.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim5.Init.Period = 419999; // 420000;
+  htim5.Init.Period = 420000;
   htim5.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim5.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_Base_Init(&htim5) != HAL_OK)
@@ -3454,8 +3454,8 @@ static void MX_TIM5_Init(void)
     Error_Handler();
   }
   sConfigOC.OCMode = TIM_OCMODE_PWM1;
-  sConfigOC.Pulse = 420000 - 418950; // XXX 418950;
-  sConfigOC.OCPolarity = TIM_OCPOLARITY_LOW; // XXX TIM_OCPOLARITY_HIGH;
+  sConfigOC.Pulse = 418950;
+  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
   sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
   if (HAL_TIM_PWM_ConfigChannel(&htim5, &sConfigOC, TIM_CHANNEL_2) != HAL_OK)
   {
@@ -3536,6 +3536,53 @@ static void MX_DMA_Init(void)
 
 }
 
+/* FMC initialization function */
+static void MX_FMC_Init(void)
+{
+
+  /* USER CODE BEGIN FMC_Init 0 */
+
+  /* USER CODE END FMC_Init 0 */
+
+  FMC_SDRAM_TimingTypeDef SdramTiming = {0};
+
+  /* USER CODE BEGIN FMC_Init 1 */
+
+  /* USER CODE END FMC_Init 1 */
+
+  /** Perform the SDRAM1 memory initialization sequence
+  */
+  hsdram1.Instance = FMC_SDRAM_DEVICE;
+  /* hsdram1.Init */
+  hsdram1.Init.SDBank = FMC_SDRAM_BANK1;
+  hsdram1.Init.ColumnBitsNumber = FMC_SDRAM_COLUMN_BITS_NUM_9;
+  hsdram1.Init.RowBitsNumber = FMC_SDRAM_ROW_BITS_NUM_12;
+  hsdram1.Init.MemoryDataWidth = FMC_SDRAM_MEM_BUS_WIDTH_16;
+  hsdram1.Init.InternalBankNumber = FMC_SDRAM_INTERN_BANKS_NUM_4;
+  hsdram1.Init.CASLatency = FMC_SDRAM_CAS_LATENCY_3;
+  hsdram1.Init.WriteProtection = FMC_SDRAM_WRITE_PROTECTION_DISABLE;
+  hsdram1.Init.SDClockPeriod = FMC_SDRAM_CLOCK_PERIOD_3;
+  hsdram1.Init.ReadBurst = FMC_SDRAM_RBURST_DISABLE;
+  hsdram1.Init.ReadPipeDelay = FMC_SDRAM_RPIPE_DELAY_2;
+  /* SdramTiming */
+  SdramTiming.LoadToActiveDelay = 2;
+  SdramTiming.ExitSelfRefreshDelay = 6;
+  SdramTiming.SelfRefreshTime = 5;
+  SdramTiming.RowCycleDelay = 5;
+  SdramTiming.WriteRecoveryTime = 3;
+  SdramTiming.RPDelay = 2;
+  SdramTiming.RCDDelay = 2;
+
+  if (HAL_SDRAM_Init(&hsdram1, &SdramTiming) != HAL_OK)
+  {
+    Error_Handler( );
+  }
+
+  /* USER CODE BEGIN FMC_Init 2 */
+
+  /* USER CODE END FMC_Init 2 */
+}
+
 /**
   * @brief GPIO Initialization Function
   * @param None
@@ -3548,11 +3595,12 @@ static void MX_GPIO_Init(void)
   /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOE_CLK_ENABLE();
   __HAL_RCC_GPIOC_CLK_ENABLE();
+  __HAL_RCC_GPIOF_CLK_ENABLE();
   __HAL_RCC_GPIOH_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
+  __HAL_RCC_GPIOG_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
   __HAL_RCC_GPIOD_CLK_ENABLE();
-  __HAL_RCC_GPIOG_CLK_ENABLE();
   __HAL_RCC_GPIOI_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
