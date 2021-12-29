@@ -184,8 +184,6 @@ void msgprintf(const char *fmt, ...)
 
 enum { SDRAM_TIMEOUT = 0xFFFF };
 
-
-
 void SDRAMInit()
 {
     int result;
@@ -216,10 +214,9 @@ void SDRAMInit()
     cmd.CommandMode = FMC_SDRAM_CMD_LOAD_MODE;
     cmd.CommandTarget = FMC_SDRAM_CMD_TARGET_BANK1;
     cmd.AutoRefreshNumber = 1;
-    // XXX figure this out from docs
-    cmd.ModeRegisterDefinition = 0x0220; // SDRAM_MODEREG_BURST_LENGTH_1 |
+    cmd.ModeRegisterDefinition = 0x0230; // SDRAM_MODEREG_BURST_LENGTH_1 |
          // SDRAM_MODEREG_BURST_TYPE_SEQUENTIAL |
-         // SDRAM_MODEREG_CAS_LATENCY_2 |
+         // SDRAM_MODEREG_CAS_LATENCY_3 |
          // SDRAM_MODEREG_OPERATING_MODE_STANDARD |
          // SDRAM_MODEREG_WRITEBURST_MODE_SINGLE;
     result = HAL_SDRAM_SendCommand(&hsdram1, &cmd, SDRAM_TIMEOUT);
@@ -2709,48 +2706,48 @@ const uint16_t pattern[640 * 480] = {
   */
 int main(void)
 {
-  /* USER CODE BEGIN 1 */
+    /* USER CODE BEGIN 1 */
 
-  /* USER CODE END 1 */
+    /* USER CODE END 1 */
 
-  /* Enable I-Cache---------------------------------------------------------*/
-  SCB_EnableICache();
+    /* Enable I-Cache---------------------------------------------------------*/
+    SCB_EnableICache();
 
-  /* MCU Configuration--------------------------------------------------------*/
+    /* MCU Configuration--------------------------------------------------------*/
 
-  /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
-  HAL_Init();
+    /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
+    HAL_Init();
 
-  /* USER CODE BEGIN Init */
+    /* USER CODE BEGIN Init */
     // SCB->CACR |= SCB_CACR_FORCEWT_Msk;
     // SCB_EnableDCache();
 
-  /* USER CODE END Init */
+    /* USER CODE END Init */
 
-  /* Configure the system clock */
-  SystemClock_Config();
+    /* Configure the system clock */
+    SystemClock_Config();
 
-  /* USER CODE BEGIN SysInit */
+    /* USER CODE BEGIN SysInit */
 
-  /* USER CODE END SysInit */
+    /* USER CODE END SysInit */
 
-  /* Initialize all configured peripherals */
-  MX_GPIO_Init();
-  MX_DMA_Init();
-  MX_USART2_UART_Init();
-  MX_SPI4_Init();
-  MX_USB_HOST_Init();
-  MX_TIM1_Init();
-  MX_SDMMC2_SD_Init();
-  MX_FATFS_Init();
-  MX_DAC1_Init();
-  MX_TIM4_Init();
-  MX_TIM5_Init();
-  MX_FMC_Init();
-  /* USER CODE BEGIN 2 */
+    /* Initialize all configured peripherals */
+    MX_GPIO_Init();
+    MX_DMA_Init();
+    MX_USART2_UART_Init();
+    MX_SPI4_Init();
+    MX_USB_HOST_Init();
+    MX_TIM1_Init();
+    MX_SDMMC2_SD_Init();
+    MX_FATFS_Init();
+    MX_DAC1_Init();
+    MX_TIM4_Init();
+    MX_TIM5_Init();
+    MX_FMC_Init();
+    /* USER CODE BEGIN 2 */
 
-  SDRAMInit();
-  
+    SDRAMInit();
+
     if(0){
         GPIO_InitTypeDef GPIO_InitStruct = {0};
         GPIO_InitStruct.Pin = USER1_Pin;
@@ -2761,107 +2758,120 @@ int main(void)
 
     printf("Rocinante Firmware -------------------------------------\n");
 
-  /* USER CODE END 2 */
+    /* USER CODE END 2 */
 
-  /* Infinite loop */
-  /* USER CODE BEGIN WHILE */
+    /* Infinite loop */
+    /* USER CODE BEGIN WHILE */
 
-  if(1) {
-      uint16_t *sdram16 = (uint16_t*)SDRAM_START;
+    if(1) {
+        uint16_t *sdram16 = (uint16_t*)SDRAM_START;
 
-      for(int i = 0; i < 16; i++) {
-          printf("SDRAM U16 write %d...\n", i);
-          uint16_t expected = i & 0xFFFF;
-          sdram16[i] = expected;
-          HAL_Delay(20);
-      }
-      for(int i = 0; i < 16; i++) {
-          uint16_t expected = i & 0xFFFF;
-          uint16_t result = sdram16[i];
-          if(result == expected) {
-              printf("SDRAM U16 read %5d success! (expected and read 0x%04X)\n", i, result);
-          } else {
-              printf("SDRAM U16 read %5d failed.  Expected 0x%04X, got 0x%04X\n", i, expected, result);
-          }
-          HAL_Delay(20);
-      }
-  }
-
-  if(1) {
-      unsigned char* sdram = (unsigned char *)SDRAM_START;
-
-      for(int i = 0; i < 1024; i++) {
-          printf("SDRAM write %d...\n", i);
-          uint8_t expected = i & 0xFF;
-          sdram[i] = expected;
-          HAL_Delay(20);
-      }
-      for(int i = 0; i < 1024; i++) {
-          uint8_t expected = i & 0xFF;
-          uint8_t result = sdram[i];
-          if(result == expected) {
-              printf("SDRAM read %5d succeeded!  (Expected and read %02X)\n", i, result);
-          } else {
-              printf("SDRAM read %5d failed.  Expected %02X, read is %02X\n", i, expected, result);
-          }
-          HAL_Delay(20);
-      }
-
-      for(size_t a = 0; a < 16 * 1024 * 1024; a++) {
-          printf("0x%08X...\n", SDRAM_START + a); HAL_Delay(100);
-
-          if(a % SDRAM_TEST_STEP_SIZE == 0) {
-              printf("memory test 0x%08X - 0x%08X...\n", SDRAM_START + a, SDRAM_START + a + (SDRAM_TEST_STEP_SIZE - 1));
-              console_flush();
-              HAL_Delay(1000);
-          }
-          sdram[a] = 0x0;
-          if(sdram[a] != 0x0) {
-              printf("0x%08X failed setting to 0\n", SDRAM_START + a);
-              panic();
-          }
-          sdram[a] = a & 0xFF;
-          if(sdram[a] != (a & 0xFF)) {
-              printf("0x%08X failed setting to %d\n", SDRAM_START + a, a & 0xFF);
-              panic();
-          }
-          sdram[a] = 0xFF;
-          if(sdram[a] != 0xFF) {
-              printf("0x%08X failed setting to FF\n", SDRAM_START + a);
-              panic();
-          }
-          if(a % SDRAM_TEST_STEP_SIZE == (SDRAM_TEST_STEP_SIZE - 1)) {
-              printf("successful\n");
-              HAL_Delay(100);
-          }
-      }
-      printf("sdram fill test...\n");
-              HAL_Delay(100);
-      uint32_t* sdram32 = (uint32_t*)sdram;
-      for(int i = 0; i < 16 * 1024 * 1024 / 4; i++) {
-          uint32_t val = i | (i << 24);
-          sdram32[i] = val;
-      }
-      for(int i = 0; i < 16 * 1024 * 1024 / 4; i++) {
-          uint32_t val = i | (i << 24);
-          if(sdram32[i] != val) {
-              printf("%p (%08X; %d) failed setting to 0x%lX\n", sdram32 + i, i, i, val);
-              panic();
-          }
-      }
-      printf("successful\n");
-              HAL_Delay(100);
-  }
-
-        FRESULT result = f_mount(&gFATVolume, "0:", 1);
-        if(result != FR_OK) {
-            printf("ERROR: FATFS mount result is %d\n", result);
-            panic();
-        } else {
-            printf("Mounted FATFS from SD card successfully.\n");
+        uint16_t begin = 0;
+        uint16_t end = 16; // C++ end, one past actual end
+        printf("SDRAM U16 write %u through %u\n", begin, end);
+        for(int i = begin; i < end; i++) {
+            uint16_t expected = ((i & 0xFF) << 8) | (i & 0xFF);
+            sdram16[i] = expected;
         }
-        // printf("# ls 0:\n");
-        // doCommandLS(0, NULL);
+        int succeeded = 1;
+        for(int i = begin; i < end; i++) {
+            uint16_t expected = ((i & 0xFF) << 8) | (i & 0xFF);
+            uint16_t result = sdram16[i];
+            if(result != expected) {
+                printf("SDRAM U16 read %5d failed.  Expected 0x%04X, got 0x%04X\n", i, expected, result);
+                succeeded = 0;
+            }
+        }
+        if(succeeded) {
+            printf("SDRAM U16 test from %u to %u succeeded!\n", begin, end);
+        } else {
+            printf("SDRAM U16 test from %u to %u failed.\n", begin, end);
+            panic();
+        }
+    }
+
+    if(0) {
+        unsigned char* sdram = (unsigned char *)SDRAM_START;
+
+        printf("SDRAM write test...\n");
+        uint32_t begin = 0;
+        uint32_t end = 1023; // C++ end, one past actual end
+        for(int i = begin; i < end; i++) {
+            uint8_t expected = i & 0xFF;
+            sdram[i] = expected;
+        }
+        for(int i = 0; i < 15; i++) {
+            printf("letting SDRAM decay, %d seconds to go...\n", 15 - i);
+            HAL_Delay(1000);
+        }
+        int succeeded = 1;
+        for(int i = begin; i < end; i++) {
+            uint8_t expected = i & 0xFF;
+            uint8_t result = sdram[i];
+            if(result != expected) {
+                printf("SDRAM read %5d failed.  Expected %02X, read is %02X\n", i, expected, result);
+                succeeded = 0;
+                HAL_Delay(10);
+            }
+        }
+        if(succeeded) {
+            printf("SDRAM U16 test from %lu to %lu succeeded!\n", begin, end);
+        } else {
+            printf("SDRAM U16 test from %lu to %lu failed.\n", begin, end);
+            panic();
+        }
+    }
+    if(1) {
+        unsigned char* sdram = (unsigned char *)SDRAM_START;
+
+        for(size_t a = 0; a < 16 * 1024 * 1024; a++) {
+            if(a % SDRAM_TEST_STEP_SIZE == 0) {
+                printf("memory test 0x%08X - 0x%08X...\n", SDRAM_START + a, SDRAM_START + a + (SDRAM_TEST_STEP_SIZE - 1));
+                HAL_Delay(10);
+            }
+            sdram[a] = 0x0;
+            if(sdram[a] != 0x0) {
+                printf("0x%08X failed setting to 0\n", SDRAM_START + a);
+                panic();
+            }
+            sdram[a] = a & 0xFF;
+            if(sdram[a] != (a & 0xFF)) {
+                printf("0x%08X failed setting to %d\n", SDRAM_START + a, a & 0xFF);
+                panic();
+            }
+            sdram[a] = 0xFF;
+            if(sdram[a] != 0xFF) {
+                printf("0x%08X failed setting to FF\n", SDRAM_START + a);
+                panic();
+            }
+        }
+        printf("sdram fill test...\n");
+        HAL_Delay(100);
+        uint32_t* sdram32 = (uint32_t*)sdram;
+        for(int i = 0; i < 16 * 1024 * 1024 / 4; i++) {
+            uint32_t val = i | (i << 24);
+            sdram32[i] = val;
+        }
+        for(int i = 0; i < 16 * 1024 * 1024 / 4; i++) {
+            uint32_t val = i | (i << 24);
+            if(sdram32[i] != val) {
+                printf("%p (%08X; %d) failed setting to 0x%lX\n", sdram32 + i, i, i, val);
+                panic();
+            }
+        }
+        printf("successful\n");
+        HAL_Delay(100);
+    }
+
+    FRESULT result = f_mount(&gFATVolume, "0:", 1);
+    if(result != FR_OK) {
+        printf("ERROR: FATFS mount result is %d\n", result);
+        panic();
+    } else {
+        printf("Mounted FATFS from SD card successfully.\n");
+    }
+    // printf("# ls 0:\n");
+    // doCommandLS(0, NULL);
 
     HAL_GPIO_WritePin(RGBLED_SPI_GPIO_Port, RGBLED_SPI_Pin, GPIO_PIN_RESET);
 
@@ -3057,10 +3067,10 @@ CALL -151
     while (1) {
 
 #if 1
-    /* USER CODE END WHILE */
-    MX_USB_HOST_Process();
+        /* USER CODE END WHILE */
+        MX_USB_HOST_Process();
 
-    /* USER CODE BEGIN 3 */
+        /* USER CODE BEGIN 3 */
         // ----- USER button test
 #if 0
         if(HAL_GPIO_ReadPin(USER1_GPIO_Port, USER1_Pin)) {
@@ -3101,7 +3111,7 @@ CALL -151
 
     return 0;
 
-  /* USER CODE END 3 */
+    /* USER CODE END 3 */
 }
 
 /**
@@ -3562,14 +3572,14 @@ static void MX_FMC_Init(void)
   hsdram1.Init.CASLatency = FMC_SDRAM_CAS_LATENCY_3;
   hsdram1.Init.WriteProtection = FMC_SDRAM_WRITE_PROTECTION_DISABLE;
   hsdram1.Init.SDClockPeriod = FMC_SDRAM_CLOCK_PERIOD_3;
-  hsdram1.Init.ReadBurst = FMC_SDRAM_RBURST_DISABLE;
+  hsdram1.Init.ReadBurst = FMC_SDRAM_RBURST_ENABLE;
   hsdram1.Init.ReadPipeDelay = FMC_SDRAM_RPIPE_DELAY_2;
   /* SdramTiming */
   SdramTiming.LoadToActiveDelay = 2;
   SdramTiming.ExitSelfRefreshDelay = 6;
   SdramTiming.SelfRefreshTime = 5;
   SdramTiming.RowCycleDelay = 5;
-  SdramTiming.WriteRecoveryTime = 3;
+  SdramTiming.WriteRecoveryTime = 5;
   SdramTiming.RPDelay = 2;
   SdramTiming.RCDDelay = 2;
 
