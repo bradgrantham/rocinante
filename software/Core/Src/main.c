@@ -214,7 +214,7 @@ void SDRAMInit()
     cmd.CommandMode = FMC_SDRAM_CMD_LOAD_MODE;
     cmd.CommandTarget = FMC_SDRAM_CMD_TARGET_BANK1;
     cmd.AutoRefreshNumber = 1;
-    cmd.ModeRegisterDefinition = 0x0230; // SDRAM_MODEREG_BURST_LENGTH_1 |
+    cmd.ModeRegisterDefinition = 0x0233; // SDRAM_MODEREG_BURST_LENGTH_8 |
          // SDRAM_MODEREG_BURST_TYPE_SEQUENTIAL |
          // SDRAM_MODEREG_CAS_LATENCY_3 |
          // SDRAM_MODEREG_OPERATING_MODE_STANDARD |
@@ -2922,6 +2922,9 @@ int main(void)
 
     // int v = 0;
 
+    uint16_t* SDRAM_image = (uint16_t *)SDRAM_START;
+    memcpy(SDRAM_image, pattern, sizeof(pattern));
+
     while(1) {
         while(__HAL_TIM_GetCounter(&htim5) < ((VGA_VSYNC_BACK_PORCH + VGA_TOP_BORDER_ROWS + VGA_VISIBLE_ROWS) * 800)); // wait until vertical sync front porch 
         while(__HAL_TIM_GetCounter(&htim5) > 0); // wait for end of vertical sync and timer restart
@@ -2929,7 +2932,7 @@ int main(void)
         while(__HAL_TIM_GetCounter(&htim5) < ((VGA_VSYNC_BACK_PORCH + VGA_TOP_BORDER_ROWS + VGA_VISIBLE_ROWS) * 800)) { // through visible lines
             uint32_t line = __HAL_TIM_GetCounter(&htim5) / 800 - (VGA_VSYNC_BACK_PORCH + VGA_TOP_BORDER_ROWS);
             while(__HAL_TIM_GetCounter(&htim4) < (VGA_HSYNC_BACK_PORCH + VGA_LEFT_BORDER_COLUMNS + VGA_VISIBLE_COLUMNS + VGA_RIGHT_BORDER_COLUMNS)); // wait until hsync
-            const uint16_t *pattern_pixel = pattern + line * 640;
+            const uint16_t *pattern_pixel = SDRAM_image + line * 640;
             while(__HAL_TIM_GetCounter(&htim4) > VGA_HSYNC_BACK_PORCH); // wait for end of horizontal sync and timer to restart
             while(__HAL_TIM_GetCounter(&htim4) < (VGA_HSYNC_BACK_PORCH + VGA_LEFT_BORDER_COLUMNS)); // wait for visible region of line
             uint16_t prevPixel = 0;
@@ -3555,7 +3558,7 @@ static void MX_FMC_Init(void)
   hsdram1.Init.InternalBankNumber = FMC_SDRAM_INTERN_BANKS_NUM_4;
   hsdram1.Init.CASLatency = FMC_SDRAM_CAS_LATENCY_3;
   hsdram1.Init.WriteProtection = FMC_SDRAM_WRITE_PROTECTION_DISABLE;
-  hsdram1.Init.SDClockPeriod = FMC_SDRAM_CLOCK_PERIOD_3;
+  hsdram1.Init.SDClockPeriod = FMC_SDRAM_CLOCK_PERIOD_2;
   hsdram1.Init.ReadBurst = FMC_SDRAM_RBURST_ENABLE;
   hsdram1.Init.ReadPipeDelay = FMC_SDRAM_RPIPE_DELAY_2;
   /* SdramTiming */
