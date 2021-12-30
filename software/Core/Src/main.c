@@ -2735,6 +2735,8 @@ void testVGAScanout()
     uint16_t* SDRAM_image = (uint16_t *)SDRAM_START;
     memcpy(SDRAM_image, pattern, sizeof(pattern));
 
+    static uint16_t scanline[640];
+
     __disable_irq(); // XXX rock solid if IRQs disabled
     while(1) {
         while(__HAL_TIM_GetCounter(&htim5) < ((VGA_VSYNC_BACK_PORCH + VGA_TOP_BORDER_ROWS + VGA_VISIBLE_ROWS) * 800)); // wait until vertical sync front porch 
@@ -2743,13 +2745,34 @@ void testVGAScanout()
         while(__HAL_TIM_GetCounter(&htim5) < ((VGA_VSYNC_BACK_PORCH + VGA_TOP_BORDER_ROWS + VGA_VISIBLE_ROWS) * 800)) { // through visible lines
             uint32_t line = __HAL_TIM_GetCounter(&htim5) / 800 - (VGA_VSYNC_BACK_PORCH + VGA_TOP_BORDER_ROWS);
             while(__HAL_TIM_GetCounter(&htim4) < (VGA_HSYNC_BACK_PORCH + VGA_LEFT_BORDER_COLUMNS + VGA_VISIBLE_COLUMNS + VGA_RIGHT_BORDER_COLUMNS)); // wait until hsync
-            // const uint16_t *pattern_pixel = pattern + line * 640;
-            const uint16_t *pattern_pixel = SDRAM_image + line * 640;
+            if(line < VGA_VISIBLE_ROWS) {
+                // memcpy(scanline, pattern + line * 640, sizeof(scanline));
+                uint32_t* src = pattern + line * 640;
+                uint32_t* dst = scanline;
+#pragma GCC unroll 8
+                for(size_t i = 0; i < sizeof(scanline) / sizeof(*dst); i += 4 /* i++ */) {
+                    uint32_t t0 = src[0];
+                    uint32_t t1 = src[1];
+                    uint32_t t2 = src[2];
+                    uint32_t t3 = src[3];
+                    dst[0] = t0;
+                    dst[1] = t1;
+                    dst[2] = t2;
+                    dst[3] = t3;
+                    src += 4;
+                    dst += 4;
+                    // *dst++ = *src++;
+                }
+            }
+            GPIOC->ODR = 0xFFFF;
+            GPIOC->ODR = 0xFFFF;
+            GPIOC->ODR = 0;
+            // const uint16_t *pattern_pixel = SDRAM_image + line * 640;
+            const uint16_t *pattern_pixel = scanline;
             while(__HAL_TIM_GetCounter(&htim4) > VGA_HSYNC_BACK_PORCH); // wait for end of horizontal sync and timer to restart
             while(__HAL_TIM_GetCounter(&htim4) < (VGA_HSYNC_BACK_PORCH + VGA_LEFT_BORDER_COLUMNS)); // wait for visible region of line
             uint16_t prevPixel = VGA_HSYNC_BACK_PORCH + VGA_LEFT_BORDER_COLUMNS;
             uint16_t pixel;
-            GPIOC->ODR = *pattern_pixel; // prime cache?
 #pragma GCC unroll 16
             while((pixel = __HAL_TIM_GetCounter(&htim4)) < (VGA_VISIBLE_COLUMNS + VGA_HSYNC_BACK_PORCH + VGA_LEFT_BORDER_COLUMNS)) { // through visible pixels
                 pattern_pixel += (pixel - prevPixel);
