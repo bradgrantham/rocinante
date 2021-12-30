@@ -2719,6 +2719,8 @@ void memcpy_fast_16byte_multiple(void* dst_, const void* src_, size_t size)
     }
 }
 
+#define VGA_CLOCK_DIVIDER       10
+
 #define VGA_VSYNC_BACK_PORCH    25
 #define VGA_TOP_BORDER_ROWS     8
 #define VGA_VISIBLE_ROWS        480
@@ -3424,7 +3426,7 @@ static void MX_TIM4_Init(void)
 
   /* USER CODE END TIM4_Init 1 */
   htim4.Instance = TIM4;
-  htim4.Init.Prescaler = 10;
+  htim4.Init.Prescaler = VGA_CLOCK_DIVIDER;
   htim4.Init.CounterMode = TIM_COUNTERMODE_UP;
   htim4.Init.Period = 799; // 800; 
   htim4.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
@@ -3483,7 +3485,7 @@ static void MX_TIM5_Init(void)
 
   /* USER CODE END TIM5_Init 1 */
   htim5.Instance = TIM5;
-  htim5.Init.Prescaler = 10;
+  htim5.Init.Prescaler = VGA_CLOCK_DIVIDER;
   htim5.Init.CounterMode = TIM_COUNTERMODE_UP;
   htim5.Init.Period = (VGA_TOTAL_COLUMNS * VGA_TOTAL_ROWS) - 1;
   htim5.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
