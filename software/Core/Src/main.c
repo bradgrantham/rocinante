@@ -2796,10 +2796,10 @@ enum { SDRAM_START = 0x70000000 };
 
 static void VGA_TIM1_Init(void)
 {
-
-  TIM_MasterConfigTypeDef sMasterConfig = {0};
-  TIM_IC_InitTypeDef sConfigIC = {0};
   TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+  TIM_OC_InitTypeDef sConfigOC = {0};
+  TIM_BreakDeadTimeConfigTypeDef sBreakDeadTimeConfig = {0};
 
   htim1.Instance = TIM1;
   htim1.Init.Prescaler = 0;
@@ -2808,12 +2808,16 @@ static void VGA_TIM1_Init(void)
   htim1.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim1.Init.RepetitionCounter = 0;
   htim1.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
-  if (HAL_TIM_IC_Init(&htim1) != HAL_OK)
+  if (HAL_TIM_Base_Init(&htim1) != HAL_OK)
   {
     Error_Handler();
   }
   sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
   if (HAL_TIM_ConfigClockSource(&htim1, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_TIM_PWM_Init(&htim1) != HAL_OK)
   {
     Error_Handler();
   }
@@ -2824,16 +2828,37 @@ static void VGA_TIM1_Init(void)
   {
     Error_Handler();
   }
+  sConfigOC.OCMode = TIM_OCMODE_PWM1;
+  sConfigOC.Pulse = 2;
+  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
+  sConfigOC.OCNPolarity = TIM_OCNPOLARITY_HIGH;
+  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
+  sConfigOC.OCIdleState = TIM_OCIDLESTATE_RESET;
+  sConfigOC.OCNIdleState = TIM_OCNIDLESTATE_RESET;
+  if (HAL_TIM_PWM_ConfigChannel(&htim1, &sConfigOC, TIM_CHANNEL_2) != HAL_OK)
+  {
+    Error_Handler();
+  }
 #if 0
-  sConfigIC.ICPolarity = TIM_INPUTCHANNELPOLARITY_RISING;
-  sConfigIC.ICSelection = TIM_ICSELECTION_DIRECTTI;
-  sConfigIC.ICPrescaler = TIM_ICPSC_DIV1;
-  sConfigIC.ICFilter = 0;
-  if (HAL_TIM_IC_ConfigChannel(&htim1, &sConfigIC, TIM_CHANNEL_2) != HAL_OK)
+  __HAL_TIM_DISABLE_OCxPRELOAD(&htim1, TIM_CHANNEL_2);
+  sBreakDeadTimeConfig.OffStateRunMode = TIM_OSSR_DISABLE;
+  sBreakDeadTimeConfig.OffStateIDLEMode = TIM_OSSI_DISABLE;
+  sBreakDeadTimeConfig.LockLevel = TIM_LOCKLEVEL_OFF;
+  sBreakDeadTimeConfig.DeadTime = 0;
+  sBreakDeadTimeConfig.BreakState = TIM_BREAK_DISABLE;
+  sBreakDeadTimeConfig.BreakPolarity = TIM_BREAKPOLARITY_HIGH;
+  sBreakDeadTimeConfig.BreakFilter = 0;
+  sBreakDeadTimeConfig.Break2State = TIM_BREAK2_DISABLE;
+  sBreakDeadTimeConfig.Break2Polarity = TIM_BREAK2POLARITY_HIGH;
+  sBreakDeadTimeConfig.Break2Filter = 0;
+  sBreakDeadTimeConfig.AutomaticOutput = TIM_AUTOMATICOUTPUT_DISABLE;
+  if (HAL_TIMEx_ConfigBreakDeadTime(&htim1, &sBreakDeadTimeConfig) != HAL_OK)
   {
     Error_Handler();
   }
 #endif
+  __HAL_RCC_TIM1_CLK_ENABLE();
+
 }
 
 void startVGAScanout()
@@ -2844,20 +2869,22 @@ void startVGAScanout()
     VGARowNumber = 0; // the previous row that was filled in
 
     for(int i = 0; i < VGA_VISIBLE_COLUMNS; i++) {
-        VGARowDoubleBuffer[VGA_HSYNC_BACK_PORCH + VGA_LEFT_BORDER_COLUMNS + i]  = 0x0700;
-        VGARowDoubleBuffer[VGA_HSYNC_BACK_PORCH + VGA_LEFT_BORDER_COLUMNS + VGA_TOTAL_COLUMNS + i]  = 0x600C;
+        VGARowDoubleBuffer[VGA_HSYNC_BACK_PORCH + VGA_LEFT_BORDER_COLUMNS + i]  = 0x07E0;
+        VGARowDoubleBuffer[VGA_HSYNC_BACK_PORCH + VGA_LEFT_BORDER_COLUMNS + VGA_TOTAL_COLUMNS + i]  = 0xF81F;
     }
 
     // Set DMA request on capture-compare channel 1
     DMA2_Stream1->NDTR = VGA_TOTAL_COLUMNS * 2;
     DMA2_Stream1->M0AR = (uint32_t)VGARowDoubleBuffer;  // Destination address
+    DMA2_Stream1->PAR = (uint32_t)&GPIOC->ODR;  // Destination address
     DMA2_Stream1->CR |= DMA_MDATAALIGN_HALFWORD;  // Memory data size
     DMA2_Stream1->CR |= DMA_PDATAALIGN_HALFWORD;  // Peripheral size
-    DMA2_Stream1->PAR = (uint32_t)&GPIOC->ODR;  // Destination address
     DMA2_Stream1->FCR = DMA_FIFOMODE_ENABLE |   // Enable FIFO to improve stutter
         DMA_FIFO_THRESHOLD_FULL;        
     DMA2_Stream1->CR |= DMA_SxCR_TCIE;    /* enable transfer complete interrupt */
     DMA2_Stream1->CR |= DMA_SxCR_HTIE;    /* enable half transfer interrupt */
+
+    VGA_TIM1_Init();
 
     status1 = HAL_TIM_PWM_Start(&htim4, TIM_CHANNEL_1);
     status2 = HAL_TIM_PWM_Start(&htim5, TIM_CHANNEL_2);
@@ -2874,14 +2901,12 @@ void startVGAScanout()
 
     DMA2_Stream1->CR |= DMA_SxCR_EN;    /* enable DMA */
 
-    VGA_TIM1_Init();
-
     TIM1->DIER |= TIM_DIER_CC2DE;
-    status = HAL_TIM_IC_Start(&htim1, TIM_CHANNEL_2);
-    if(status != HAL_OK){
-        printf("VGA DMA error %08d, error code %08lX, line %d\n", status, hdma_tim1_ch2.ErrorCode, why);
-        panic();
-    }
+    // status = HAL_TIM_IC_Start(&htim1, TIM_CHANNEL_2);
+    // if(status != HAL_OK){
+        // printf("VGA DMA error %08d, error code %08lX, line %d\n", status, hdma_tim1_ch2.ErrorCode, why);
+        // panic();
+    // }
 
     // GPIO_0 .059V blue
     // GPIO_1 .114V blue
@@ -2909,45 +2934,45 @@ void startVGAScanout()
   */
 int main(void)
 {
-    /* USER CODE BEGIN 1 */
+  /* USER CODE BEGIN 1 */
 
-    /* USER CODE END 1 */
+  /* USER CODE END 1 */
 
-    /* Enable I-Cache---------------------------------------------------------*/
-    SCB_EnableICache();
+  /* Enable I-Cache---------------------------------------------------------*/
+  SCB_EnableICache();
 
-    /* MCU Configuration--------------------------------------------------------*/
+  /* MCU Configuration--------------------------------------------------------*/
 
-    /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
-    HAL_Init();
+  /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
+  HAL_Init();
 
-    /* USER CODE BEGIN Init */
+  /* USER CODE BEGIN Init */
     SCB->CACR |= SCB_CACR_FORCEWT_Msk;
     SCB_EnableDCache();
 
-    /* USER CODE END Init */
+  /* USER CODE END Init */
 
-    /* Configure the system clock */
-    SystemClock_Config();
+  /* Configure the system clock */
+  SystemClock_Config();
 
-    /* USER CODE BEGIN SysInit */
+  /* USER CODE BEGIN SysInit */
 
-    /* USER CODE END SysInit */
+  /* USER CODE END SysInit */
 
-    /* Initialize all configured peripherals */
-    MX_GPIO_Init();
-    MX_DMA_Init();
-    MX_USART2_UART_Init();
-    MX_SPI4_Init();
-    MX_USB_HOST_Init();
-    MX_TIM1_Init();
-    MX_SDMMC2_SD_Init();
-    MX_FATFS_Init();
-    MX_DAC1_Init();
-    MX_TIM4_Init();
-    MX_TIM5_Init();
-    MX_FMC_Init();
-    /* USER CODE BEGIN 2 */
+  /* Initialize all configured peripherals */
+  MX_GPIO_Init();
+  MX_DMA_Init();
+  MX_USART2_UART_Init();
+  MX_SPI4_Init();
+  MX_USB_HOST_Init();
+  MX_TIM1_Init();
+  MX_SDMMC2_SD_Init();
+  MX_FATFS_Init();
+  MX_DAC1_Init();
+  MX_TIM4_Init();
+  MX_TIM5_Init();
+  MX_FMC_Init();
+  /* USER CODE BEGIN 2 */
 
     SDRAMInit();
 
@@ -2961,10 +2986,10 @@ int main(void)
 
     printf("Rocinante Firmware -------------------------------------\n");
 
-    /* USER CODE END 2 */
+  /* USER CODE END 2 */
 
-    /* Infinite loop */
-    /* USER CODE BEGIN WHILE */
+  /* Infinite loop */
+  /* USER CODE BEGIN WHILE */
 
     if(0) {
         uint16_t *sdram16 = (uint16_t*)SDRAM_START;
@@ -3191,10 +3216,10 @@ CALL -151
     while (1) {
 
 #if 1
-        /* USER CODE END WHILE */
-        MX_USB_HOST_Process();
+    /* USER CODE END WHILE */
+    MX_USB_HOST_Process();
 
-        /* USER CODE BEGIN 3 */
+    /* USER CODE BEGIN 3 */
         // ----- USER button test
 #if 0
         if(HAL_GPIO_ReadPin(USER1_GPIO_Port, USER1_Pin)) {
@@ -3235,7 +3260,7 @@ CALL -151
 
     return 0;
 
-    /* USER CODE END 3 */
+  /* USER CODE END 3 */
 }
 
 /**
