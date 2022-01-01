@@ -2829,7 +2829,6 @@ static void VGA_TIM1_Init(void)
   TIM_ClockConfigTypeDef sClockSourceConfig = {0};
   TIM_MasterConfigTypeDef sMasterConfig = {0};
   TIM_OC_InitTypeDef sConfigOC = {0};
-  TIM_BreakDeadTimeConfigTypeDef sBreakDeadTimeConfig = {0};
 
   htim1.Instance = TIM1;
   htim1.Init.Prescaler = 0;
@@ -2869,24 +2868,6 @@ static void VGA_TIM1_Init(void)
   {
     Error_Handler();
   }
-#if 0
-  __HAL_TIM_DISABLE_OCxPRELOAD(&htim1, TIM_CHANNEL_2);
-  sBreakDeadTimeConfig.OffStateRunMode = TIM_OSSR_DISABLE;
-  sBreakDeadTimeConfig.OffStateIDLEMode = TIM_OSSI_DISABLE;
-  sBreakDeadTimeConfig.LockLevel = TIM_LOCKLEVEL_OFF;
-  sBreakDeadTimeConfig.DeadTime = 0;
-  sBreakDeadTimeConfig.BreakState = TIM_BREAK_DISABLE;
-  sBreakDeadTimeConfig.BreakPolarity = TIM_BREAKPOLARITY_HIGH;
-  sBreakDeadTimeConfig.BreakFilter = 0;
-  sBreakDeadTimeConfig.Break2State = TIM_BREAK2_DISABLE;
-  sBreakDeadTimeConfig.Break2Polarity = TIM_BREAK2POLARITY_HIGH;
-  sBreakDeadTimeConfig.Break2Filter = 0;
-  sBreakDeadTimeConfig.AutomaticOutput = TIM_AUTOMATICOUTPUT_DISABLE;
-  if (HAL_TIMEx_ConfigBreakDeadTime(&htim1, &sBreakDeadTimeConfig) != HAL_OK)
-  {
-    Error_Handler();
-  }
-#endif
   __HAL_RCC_TIM1_CLK_ENABLE();
 
 }
@@ -3298,19 +3279,21 @@ int main(void)
         printf("VGA Scanout Started\n"); HAL_Delay(100);
 
         while(1) {
-            int cx = 20 + rand() % (VGA_VISIBLE_COLUMNS - 40);
-            int cy = 20 + rand() % (VGA_VISIBLE_ROWS - 40);
-            int cr = 5 + rand() % 15;
-            int c = rand() % 65536;
-            // printf("%d %d %d\n", cx, cy , cr); HAL_Delay(10);
-            // DrawFilledCircle(cx, cy, cr, c);
+            if(HAL_GPIO_ReadPin(USER2_GPIO_Port, USER2_Pin)) {
+                int cx = 20 + rand() % (VGA_VISIBLE_COLUMNS - 40);
+                int cy = 20 + rand() % (VGA_VISIBLE_ROWS - 40);
+                int cr = 5 + rand() % 15;
+                int c = rand() % 65536;
+                // printf("%d %d %d\n", cx, cy , cr); HAL_Delay(10);
+                DrawFilledCircle(cx, cy, cr, c);
 
-            int x0 = 10 + rand() % (VGA_VISIBLE_COLUMNS - 20);
-            int y0 = 10 + rand() % (VGA_VISIBLE_ROWS - 20);
-            int x1 = 10 + rand() % (VGA_VISIBLE_COLUMNS - 20);
-            int y1 = 10 + rand() % (VGA_VISIBLE_ROWS - 20);
-            c = rand() % 65536;
-            // DrawLine(x0, y0, x1, y1, c);
+                int x0 = 10 + rand() % (VGA_VISIBLE_COLUMNS - 20);
+                int y0 = 10 + rand() % (VGA_VISIBLE_ROWS - 20);
+                int x1 = 10 + rand() % (VGA_VISIBLE_COLUMNS - 20);
+                int y1 = 10 + rand() % (VGA_VISIBLE_ROWS - 20);
+                c = rand() % 65536;
+                DrawLine(x0, y0, x1, y1, c);
+            }
         }
     } else {
         startNTSCScanout();
