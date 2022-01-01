@@ -598,7 +598,7 @@ INLINE int voltageToDACValueFixed16NoBounds(int voltage)
 //----------------------------------------------------------------------------
 // VGA timing 
 
-#define VGA_CLOCK_DIVIDER_MINUS_1       10
+#define VGA_CLOCK_DIVIDER       11
 
 #define VGA_VSYNC_BACK_PORCH    25
 #define VGA_TOP_BORDER_ROWS     8
@@ -609,12 +609,13 @@ INLINE int voltageToDACValueFixed16NoBounds(int voltage)
 #define VGA_TOTAL_ROWS          (VGA_VSYNC_BACK_PORCH + VGA_TOP_BORDER_ROWS + VGA_VISIBLE_ROWS + VGA_BOTTOM_BORDER_ROWS + VGA_VSYNC_FRONT_PORCH + VGA_VSYNC_ROWS)
 
 #define VGA_HSYNC_BACK_PORCH            40
-#define VGA_LEFT_BORDER_COLUMNS         12
+#define VGA_LEFT_BORDER_COLUMNS         8
 #define VGA_VISIBLE_COLUMNS             640
-#define VGA_RIGHT_BORDER_COLUMNS        4
-#define VGA_HSYNC_FRONT_PORCH           40
+#define VGA_RIGHT_BORDER_COLUMNS        8
+#define VGA_HSYNC_FRONT_PORCH           8
 #define VGA_HSYNC_CLOCKS                96
 #define VGA_TOTAL_COLUMNS               (VGA_HSYNC_BACK_PORCH + VGA_LEFT_BORDER_COLUMNS + VGA_VISIBLE_COLUMNS + VGA_RIGHT_BORDER_COLUMNS + VGA_HSYNC_FRONT_PORCH + VGA_HSYNC_CLOCKS)
+#define VGA_DMA_COLUMNS                 VGA_TOTAL_COLUMNS
 
 
 //----------------------------------------------------------------------------
@@ -1576,9 +1577,9 @@ const uint16_t pattern[640 * 480] = {
 void VGAFillRowBuffer(int frameNumber, int lineNumber, uint16_t *rowBuffer)
 {
     if(lineNumber < (VGA_VSYNC_BACK_PORCH + VGA_TOP_BORDER_ROWS)) {
-        memset(rowBuffer, 0, VGA_TOTAL_COLUMNS * sizeof(pattern[0]));
+        memset(rowBuffer, 0, VGA_DMA_COLUMNS * sizeof(pattern[0]));
     } else if(lineNumber >= (VGA_VSYNC_BACK_PORCH + VGA_TOP_BORDER_ROWS + VGA_VISIBLE_ROWS)) {
-        memset(rowBuffer, 0, VGA_TOTAL_COLUMNS * sizeof(pattern[0]));
+        memset(rowBuffer, 0, VGA_DMA_COLUMNS * sizeof(pattern[0]));
     } else {
         int visibleLineNumber = lineNumber - (VGA_VSYNC_BACK_PORCH + VGA_TOP_BORDER_ROWS);
         memcpy_fast_16byte_multiple(rowBuffer + VGA_HSYNC_BACK_PORCH + VGA_LEFT_BORDER_COLUMNS, pattern + VGA_VISIBLE_COLUMNS * visibleLineNumber, VGA_VISIBLE_COLUMNS * sizeof(pattern[0]));
@@ -1629,12 +1630,13 @@ void NTSCRowHandler(void)
     }
 }
 
-uint16_t /*  __attribute__((section (".ram_d1"))) */ VGARowDoubleBuffer[VGA_TOTAL_COLUMNS * 2];
+uint16_t /*  __attribute__((section (".ram_d1"))) */ VGARowDoubleBuffer[VGA_DMA_COLUMNS * 2];
 int VGARowNumber = 0;
 int VGAFrameNumber = 0;
 
 void VGARowHandler()
 {
+    HAL_GPIO_WritePin(DEBUG_LED_GPIO_Port, DEBUG_LED_Pin, GPIO_PIN_SET);
     VGARowNumber = (VGARowNumber + 1) % VGA_TOTAL_ROWS;
     if(VGARowNumber == 0) {
         VGAFrameNumber ++;
@@ -1646,7 +1648,7 @@ void VGARowHandler()
         rowDest = VGARowDoubleBuffer + 0;
     } else if(DMA2->LISR & DMA_FLAG_TCIF1_5) {
         DMA2->LIFCR |= DMA_LIFCR_CTCIF1;
-        rowDest = VGARowDoubleBuffer + VGA_TOTAL_COLUMNS;
+        rowDest = VGARowDoubleBuffer + VGA_DMA_COLUMNS;
     } else {
         panic();
     }
@@ -2804,7 +2806,7 @@ static void VGA_TIM1_Init(void)
   htim1.Instance = TIM1;
   htim1.Init.Prescaler = 0;
   htim1.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim1.Init.Period = VGA_CLOCK_DIVIDER_MINUS_1;
+  htim1.Init.Period = VGA_CLOCK_DIVIDER - 1;
   htim1.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim1.Init.RepetitionCounter = 0;
   htim1.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
@@ -2832,7 +2834,7 @@ static void VGA_TIM1_Init(void)
   sConfigOC.Pulse = 2;
   sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
   sConfigOC.OCNPolarity = TIM_OCNPOLARITY_HIGH;
-  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
+  sConfigOC.OCFastMode = TIM_OCFAST_ENABLE;
   sConfigOC.OCIdleState = TIM_OCIDLESTATE_RESET;
   sConfigOC.OCNIdleState = TIM_OCNIDLESTATE_RESET;
   if (HAL_TIM_PWM_ConfigChannel(&htim1, &sConfigOC, TIM_CHANNEL_2) != HAL_OK)
@@ -2866,21 +2868,23 @@ void startVGAScanout()
     HAL_StatusTypeDef status;
     HAL_StatusTypeDef status1, status2;
 
-    VGARowNumber = 0; // the previous row that was filled in
+    VGARowNumber = -1; // the previous row that was filled in
+    currentDisplayMode = DISPLAY_MODE_VGA;
 
     for(int i = 0; i < VGA_VISIBLE_COLUMNS; i++) {
         VGARowDoubleBuffer[VGA_HSYNC_BACK_PORCH + VGA_LEFT_BORDER_COLUMNS + i]  = 0x07E0;
-        VGARowDoubleBuffer[VGA_HSYNC_BACK_PORCH + VGA_LEFT_BORDER_COLUMNS + VGA_TOTAL_COLUMNS + i]  = 0xF81F;
+        VGARowDoubleBuffer[VGA_DMA_COLUMNS + VGA_HSYNC_BACK_PORCH + VGA_LEFT_BORDER_COLUMNS + i]  = 0xF81F;
     }
 
     // Set DMA request on capture-compare channel 1
-    DMA2_Stream1->NDTR = VGA_TOTAL_COLUMNS * 2;
+    DMA2_Stream1->NDTR = VGA_DMA_COLUMNS * 2;
     DMA2_Stream1->M0AR = (uint32_t)VGARowDoubleBuffer;  // Destination address
     DMA2_Stream1->PAR = (uint32_t)&GPIOC->ODR;  // Destination address
     DMA2_Stream1->CR |= DMA_MDATAALIGN_HALFWORD;  // Memory data size
     DMA2_Stream1->CR |= DMA_PDATAALIGN_HALFWORD;  // Peripheral size
+    DMA2_Stream1->CR |= DMA_PRIORITY_HIGH;  // Peripheral size
     DMA2_Stream1->FCR = DMA_FIFOMODE_ENABLE |   // Enable FIFO to improve stutter
-        DMA_FIFO_THRESHOLD_FULL;        
+        DMA_FIFO_THRESHOLD_HALFFULL;        
     DMA2_Stream1->CR |= DMA_SxCR_TCIE;    /* enable transfer complete interrupt */
     DMA2_Stream1->CR |= DMA_SxCR_HTIE;    /* enable half transfer interrupt */
 
@@ -2899,14 +2903,91 @@ void startVGAScanout()
         panic();
     }
 
+    uint32_t maxtim4 = 0;
+    uint32_t oldv = 0, v;
+    while((v = __HAL_TIM_GetCounter(&htim4)) >= oldv) {
+        if(v > maxtim4) {
+            maxtim4 = v;
+        }
+        oldv = v;
+    }
+    printf("max tim4 seen: %lu\n", maxtim4); HAL_Delay(100);
+
+    uint32_t maxtim5 = 0;
+    oldv = 0;
+    while((v = __HAL_TIM_GetCounter(&htim5)) >= oldv) {
+        if(v > maxtim5) {
+            maxtim5 = v;
+        }
+        oldv = v;
+    }
+    printf("max tim5 seen: %lu\n", maxtim5); HAL_Delay(100);
+
     DMA2_Stream1->CR |= DMA_SxCR_EN;    /* enable DMA */
 
     TIM1->DIER |= TIM_DIER_CC2DE;
-    // status = HAL_TIM_IC_Start(&htim1, TIM_CHANNEL_2);
-    // if(status != HAL_OK){
-        // printf("VGA DMA error %08d, error code %08lX, line %d\n", status, hdma_tim1_ch2.ErrorCode, why);
-        // panic();
-    // }
+    status = HAL_TIM_IC_Start(&htim1, TIM_CHANNEL_2);
+    if(status != HAL_OK){
+        printf("VGA DMA error %08d, error code %08lX, line %d\n", status, hdma_tim1_ch2.ErrorCode, why);
+        panic();
+    }
+    // TIM1->DIER &= ~TIM_DIER_CC2DE;
+    // while(__HAL_TIM_GetCounter(&htim5) > 0); // wait for end of first vertical sync and timer restart
+    // TIM1->DIER |= TIM_DIER_CC2DE;
+
+    if(0) {
+        uint16_t* SDRAM_image = (uint16_t *)SDRAM_START;
+        memcpy(SDRAM_image, pattern, sizeof(pattern));
+
+        static uint16_t scanline[640];
+
+
+        // __disable_irq(); // XXX rock solid if IRQs disabled
+
+        while(__HAL_TIM_GetCounter(&htim5) < ((VGA_VSYNC_BACK_PORCH + VGA_TOP_BORDER_ROWS + VGA_VISIBLE_ROWS) * VGA_TOTAL_COLUMNS)); // wait until first vertical sync front porch 
+
+        while(__HAL_TIM_GetCounter(&htim5) > 0); // wait for end of first vertical sync and timer restart
+
+        while(1) {
+            while(__HAL_TIM_GetCounter(&htim5) < ((VGA_VSYNC_BACK_PORCH + VGA_TOP_BORDER_ROWS) * VGA_TOTAL_COLUMNS)); // wait for last line of top margin
+
+            // while in visible lines
+            while(__HAL_TIM_GetCounter(&htim5) < ((VGA_VSYNC_BACK_PORCH + VGA_TOP_BORDER_ROWS + VGA_VISIBLE_ROWS) * VGA_TOTAL_COLUMNS)) {
+                uint32_t line = __HAL_TIM_GetCounter(&htim5) / VGA_TOTAL_COLUMNS - (VGA_VSYNC_BACK_PORCH + VGA_TOP_BORDER_ROWS);
+
+                while(__HAL_TIM_GetCounter(&htim4) < (VGA_HSYNC_BACK_PORCH + VGA_LEFT_BORDER_COLUMNS + VGA_VISIBLE_COLUMNS + VGA_RIGHT_BORDER_COLUMNS)); // wait until hsync
+
+                if(line < VGA_VISIBLE_ROWS) {
+                    // memcpy(scanline, pattern + line * 640, sizeof(scanline));
+                    memcpy_fast_16byte_multiple(scanline, pattern + line * 640, sizeof(scanline));
+                }
+
+                // GPIOC->ODR = 0xFFFF; // little pulse to show us where we are on screen
+                // GPIOC->ODR = 0xFFFF;
+                // GPIOC->ODR = 0;
+
+                const uint16_t *pattern_pixel = scanline;
+
+                while(__HAL_TIM_GetCounter(&htim4) > VGA_HSYNC_BACK_PORCH); // wait for end of horizontal sync and timer to restart
+
+                uint32_t pixel = VGA_HSYNC_BACK_PORCH + VGA_LEFT_BORDER_COLUMNS;
+                uint32_t prevPixel = pixel;
+
+                // wait for visible region of line
+                while(__HAL_TIM_GetCounter(&htim4) < (VGA_HSYNC_BACK_PORCH + VGA_LEFT_BORDER_COLUMNS));
+
+#pragma GCC unroll 16
+                do {
+                    pattern_pixel += (pixel - prevPixel);
+                    GPIOC->ODR = *pattern_pixel;
+                    prevPixel = pixel;
+                    pixel = __HAL_TIM_GetCounter(&htim4);
+                } while(pixel < (VGA_VISIBLE_COLUMNS + VGA_HSYNC_BACK_PORCH + VGA_LEFT_BORDER_COLUMNS)); // through visible pixels
+
+                GPIOC->ODR = (GPIOC->ODR & 0xFFFF0000);
+            }
+        }
+    }
 
     // GPIO_0 .059V blue
     // GPIO_1 .114V blue
@@ -3126,9 +3207,12 @@ int main(void)
 
     if(1) {
         startVGAScanout();
+        printf("VGA Scanout Started\n"); HAL_Delay(100);
+        while(1);
     } else {
         startNTSCScanout();
     }
+
 
     if(0) TextModeTest();
 
@@ -3529,9 +3613,9 @@ static void MX_TIM4_Init(void)
 
   /* USER CODE END TIM4_Init 1 */
   htim4.Instance = TIM4;
-  htim4.Init.Prescaler = VGA_CLOCK_DIVIDER_MINUS_1;
+  htim4.Init.Prescaler = VGA_CLOCK_DIVIDER - 1;
   htim4.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim4.Init.Period = VGA_TOTAL_ROWS - 1;
+  htim4.Init.Period = VGA_TOTAL_COLUMNS - 1;
   htim4.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim4.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_Base_Init(&htim4) != HAL_OK)
@@ -3588,7 +3672,7 @@ static void MX_TIM5_Init(void)
 
   /* USER CODE END TIM5_Init 1 */
   htim5.Instance = TIM5;
-  htim5.Init.Prescaler = VGA_CLOCK_DIVIDER_MINUS_1;
+  htim5.Init.Prescaler = VGA_CLOCK_DIVIDER - 1;
   htim5.Init.CounterMode = TIM_COUNTERMODE_UP;
   htim5.Init.Period = (VGA_TOTAL_COLUMNS * VGA_TOTAL_ROWS) - 1;
   htim5.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
