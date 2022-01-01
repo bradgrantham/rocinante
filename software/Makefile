@@ -38,6 +38,7 @@ BUILD_DIR = build
 # ntsc.c
 C_SOURCES =  \
 syscalls.c \
+picture.c \
 Core/Src/main.c \
 Core/Src/stm32h7xx_it.c \
 Core/Src/stm32h7xx_hal_msp.c \
