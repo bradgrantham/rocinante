@@ -1587,7 +1587,8 @@ void VGAFillRowBuffer(int frameNumber, int lineNumber, uint16_t *rowBuffer)
         memset(rowBuffer, 0, VGA_DMA_COLUMNS * sizeof(pattern[0]));
     } else {
         int visibleLineNumber = lineNumber - (VGA_VSYNC_BACK_PORCH + VGA_TOP_BORDER_ROWS);
-        memcpy_fast_16byte_multiple(rowBuffer + VGA_HSYNC_BACK_PORCH + VGA_LEFT_BORDER_COLUMNS, pattern + VGA_VISIBLE_COLUMNS * visibleLineNumber, VGA_VISIBLE_COLUMNS * sizeof(pattern[0]));
+        // memcpy_fast_16byte_multiple(rowBuffer + VGA_HSYNC_BACK_PORCH + VGA_LEFT_BORDER_COLUMNS, pattern + VGA_VISIBLE_COLUMNS * visibleLineNumber, VGA_VISIBLE_COLUMNS * sizeof(pattern[0]));
+        memcpy_fast_16byte_multiple(rowBuffer + VGA_HSYNC_BACK_PORCH + VGA_LEFT_BORDER_COLUMNS, SDRAM_image + VGA_VISIBLE_COLUMNS * visibleLineNumber, VGA_VISIBLE_COLUMNS * sizeof(SDRAM_image[0]));
     }
 }
 
@@ -2867,7 +2868,8 @@ static void VGA_TIM1_Init(void)
 
 void startVGAScanout()
 {
-    memcpy(SDRAM_image, pattern, sizeof(pattern));
+    // memcpy(SDRAM_image, pattern, sizeof(pattern));
+    memcpy(SDRAM_image, 0x8000000, sizeof(pattern));
 
     HAL_StatusTypeDef status;
     HAL_StatusTypeDef status1, status2;
@@ -3006,6 +3008,63 @@ void startVGAScanout()
     // GPIO_13 .214V red
     // GPIO_14 .407V red
     // GPIO_15 .804V red
+}
+
+//----------------------------------------------------------------------------
+// Drawing routines - bad, should delete them - provide better,
+// format-independent, clipped, and optimized functions
+
+void SetPixel(int x, int y, int c)
+{
+    SDRAM_image[x + y * 640] = c;
+}
+
+void DrawFilledCircle(int cx, int cy, int r, int c)
+{
+    /* should clip here */
+    for(int y = cy - r - 1; y < cy + r + 1; y++) {
+        if((y < 0) || (y > 479)) continue;
+        for(int x = cx - r - 1; x < cx + r + 1; x++) {
+            if((x < 0) || (x > 639)) continue;
+            int dx = (x - cx);
+            int dy = (y - cy);
+            int distsquared = dx * dx + dy * dy;
+            if(distsquared < r * r) {
+                SetPixel(x, y, c);
+            }
+        }
+    }
+}
+
+void DrawLine(int x0, int y0, int x1, int y1, int c)
+{
+    int dx = x1 - x0;
+    int dy = y1 - y0;
+
+    /* should clip here */
+    if(abs(dx) > abs(dy)) {
+        if(x1 < x0) {
+            int tx = x1; x1 = x0; x0 = tx;
+            int ty = y1; y1 = y0; y0 = ty;
+        }
+        int y = y0 * 65536;
+        int d = dy * 65536 / dx;
+        for(int x = x0; x < x1; x++) {
+            SetPixel(x, y / 65536, c);
+            y += d;
+        }
+    } else {
+        if(y1 < y0) {
+            int tx = x1; x1 = x0; x0 = tx;
+            int ty = y1; y1 = y0; y0 = ty;
+        }
+        int x = x0 * 65536;
+        int d = dx * 65536 / dy;
+        for(int y = y0; y < y1; y++) {
+            SetPixel(x / 65536, y, c);
+            x += d;
+        }
+    }
 }
 
 /* USER CODE END 0 */
@@ -3209,7 +3268,22 @@ int main(void)
     if(1) {
         startVGAScanout();
         printf("VGA Scanout Started\n"); HAL_Delay(100);
-        while(1);
+
+        while(1) {
+            int cx = 20 + rand() % (640 - 40);
+            int cy = 20 + rand() % (480 - 40);
+            int cr = 5 + rand() % 15;
+            int c = rand() % 65536;
+            // printf("%d %d %d\n", cx, cy , cr); HAL_Delay(10);
+            // DrawFilledCircle(cx, cy, cr, c);
+
+            int x0 = 10 + rand() % (640 - 20);
+            int y0 = 10 + rand() % (480 - 20);
+            int x1 = 10 + rand() % (640 - 20);
+            int y1 = 10 + rand() % (480 - 20);
+            c = rand() % 65536;
+            // DrawLine(x0, y0, x1, y1, c);
+        }
     } else {
         startNTSCScanout();
     }
