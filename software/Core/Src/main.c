@@ -601,7 +601,27 @@ INLINE int voltageToDACValueFixed16NoBounds(int voltage)
 //----------------------------------------------------------------------------
 // VGA timing 
 
-#define VGA_CLOCK_DIVIDER       11
+#if 0 // 800x600
+
+#define VGA_CLOCK_DIVIDER 7
+
+#define VGA_VSYNC_BACK_PORCH 22
+#define VGA_TOP_BORDER_ROWS 0
+#define VGA_VISIBLE_ROWS 600
+#define VGA_BOTTOM_BORDER_ROWS 0
+#define VGA_VSYNC_FRONT_PORCH 1
+#define VGA_VSYNC_ROWS 2
+
+#define VGA_HSYNC_BACK_PORCH 120
+#define VGA_LEFT_BORDER_COLUMNS 8
+#define VGA_VISIBLE_COLUMNS 800
+#define VGA_RIGHT_BORDER_COLUMNS 8
+#define VGA_HSYNC_FRONT_PORCH 16
+#define VGA_HSYNC_CLOCKS 72
+
+#else // 640x480
+
+#define VGA_CLOCK_DIVIDER       10
 
 #define VGA_VSYNC_BACK_PORCH    25
 #define VGA_TOP_BORDER_ROWS     8
@@ -609,7 +629,6 @@ INLINE int voltageToDACValueFixed16NoBounds(int voltage)
 #define VGA_BOTTOM_BORDER_ROWS  8
 #define VGA_VSYNC_FRONT_PORCH   2
 #define VGA_VSYNC_ROWS          2
-#define VGA_TOTAL_ROWS          (VGA_VSYNC_BACK_PORCH + VGA_TOP_BORDER_ROWS + VGA_VISIBLE_ROWS + VGA_BOTTOM_BORDER_ROWS + VGA_VSYNC_FRONT_PORCH + VGA_VSYNC_ROWS)
 
 #define VGA_HSYNC_BACK_PORCH            40
 #define VGA_LEFT_BORDER_COLUMNS         8
@@ -617,8 +636,14 @@ INLINE int voltageToDACValueFixed16NoBounds(int voltage)
 #define VGA_RIGHT_BORDER_COLUMNS        8
 #define VGA_HSYNC_FRONT_PORCH           8
 #define VGA_HSYNC_CLOCKS                96
+
+#endif
+
+
 #define VGA_TOTAL_COLUMNS               (VGA_HSYNC_BACK_PORCH + VGA_LEFT_BORDER_COLUMNS + VGA_VISIBLE_COLUMNS + VGA_RIGHT_BORDER_COLUMNS + VGA_HSYNC_FRONT_PORCH + VGA_HSYNC_CLOCKS)
 #define VGA_DMA_COLUMNS                 VGA_TOTAL_COLUMNS
+
+#define VGA_TOTAL_ROWS          (VGA_VSYNC_BACK_PORCH + VGA_TOP_BORDER_ROWS + VGA_VISIBLE_ROWS + VGA_BOTTOM_BORDER_ROWS + VGA_VSYNC_FRONT_PORCH + VGA_VSYNC_ROWS)
 
 
 //----------------------------------------------------------------------------
@@ -1582,13 +1607,13 @@ uint16_t* SDRAM_image = (uint16_t *)SDRAM_START;
 void VGAFillRowBuffer(int frameNumber, int lineNumber, uint16_t *rowBuffer)
 {
     if(lineNumber < (VGA_VSYNC_BACK_PORCH + VGA_TOP_BORDER_ROWS)) {
-        memset(rowBuffer, 0, VGA_DMA_COLUMNS * sizeof(pattern[0]));
+        memset(rowBuffer, 0, VGA_DMA_COLUMNS * sizeof(uint16_t));
     } else if(lineNumber >= (VGA_VSYNC_BACK_PORCH + VGA_TOP_BORDER_ROWS + VGA_VISIBLE_ROWS)) {
-        memset(rowBuffer, 0, VGA_DMA_COLUMNS * sizeof(pattern[0]));
+        memset(rowBuffer, 0, VGA_DMA_COLUMNS * sizeof(uint16_t));
     } else {
         int visibleLineNumber = lineNumber - (VGA_VSYNC_BACK_PORCH + VGA_TOP_BORDER_ROWS);
-        // memcpy_fast_16byte_multiple(rowBuffer + VGA_HSYNC_BACK_PORCH + VGA_LEFT_BORDER_COLUMNS, pattern + VGA_VISIBLE_COLUMNS * visibleLineNumber, VGA_VISIBLE_COLUMNS * sizeof(pattern[0]));
-        memcpy_fast_16byte_multiple(rowBuffer + VGA_HSYNC_BACK_PORCH + VGA_LEFT_BORDER_COLUMNS, SDRAM_image + VGA_VISIBLE_COLUMNS * visibleLineNumber, VGA_VISIBLE_COLUMNS * sizeof(SDRAM_image[0]));
+        // memcpy_fast_16byte_multiple(rowBuffer + VGA_HSYNC_BACK_PORCH + VGA_LEFT_BORDER_COLUMNS, pattern + VGA_VISIBLE_COLUMNS * visibleLineNumber, VGA_VISIBLE_COLUMNS * sizeof(uint16_t));
+        memcpy_fast_16byte_multiple(rowBuffer + VGA_HSYNC_BACK_PORCH + VGA_LEFT_BORDER_COLUMNS, SDRAM_image + VGA_VISIBLE_COLUMNS * visibleLineNumber, VGA_VISIBLE_COLUMNS * sizeof(uint16_t));
     }
 }
 
@@ -2868,8 +2893,10 @@ static void VGA_TIM1_Init(void)
 
 void startVGAScanout()
 {
-    // memcpy(SDRAM_image, pattern, sizeof(pattern));
-    memcpy(SDRAM_image, 0x8000000, sizeof(pattern));
+    memset(SDRAM_image, 0, VGA_VISIBLE_ROWS * VGA_VISIBLE_COLUMNS);
+    for(int y = 0; y < 480; y++) {
+        memcpy(SDRAM_image + VGA_VISIBLE_COLUMNS * y, pattern + 640 * y, 640 * sizeof(pattern[0]));
+    }
 
     HAL_StatusTypeDef status;
     HAL_StatusTypeDef status1, status2;
@@ -2888,7 +2915,7 @@ void startVGAScanout()
     DMA2_Stream1->PAR = (uint32_t)&GPIOC->ODR;  // Destination address
     DMA2_Stream1->CR |= DMA_MDATAALIGN_HALFWORD;  // Memory data size
     DMA2_Stream1->CR |= DMA_PDATAALIGN_HALFWORD;  // Peripheral size
-    DMA2_Stream1->CR |= DMA_PRIORITY_VERY_HIGH;  // Peripheral size
+    DMA2_Stream1->CR |= DMA_PRIORITY_VERY_HIGH;  // Priority
     DMA2_Stream1->FCR = DMA_FIFOMODE_ENABLE |   // Enable FIFO to improve stutter
         DMA_FIFO_THRESHOLD_HALFFULL;        
     DMA2_Stream1->CR |= DMA_MBURST_INC4;  /* enable bursts from memory source */
@@ -2930,20 +2957,21 @@ void startVGAScanout()
     }
     printf("max tim5 seen: %lu\n", maxtim5); HAL_Delay(100);
 
-    while(__HAL_TIM_GetCounter(&htim5) > 0); // wait for end of first vertical sync and timer restart
 
-    DMA2_Stream1->CR |= DMA_SxCR_EN;    /* enable DMA */
-    TIM1->DIER |= TIM_DIER_CC2DE;
+    if(1) {
 
-    status = HAL_TIM_IC_Start(&htim1, TIM_CHANNEL_2);
-    if(status != HAL_OK){
-        printf("VGA DMA error %08d, error code %08lX, line %d\n", status, hdma_tim1_ch2.ErrorCode, why);
-        panic();
-    }
+        while(__HAL_TIM_GetCounter(&htim5) > 0); // wait for end of first vertical sync and timer restart
+        DMA2_Stream1->CR |= DMA_SxCR_EN;    /* enable DMA */
+        TIM1->DIER |= TIM_DIER_CC2DE;
 
-    if(0) {
-        static uint16_t scanline[640];
+        status = HAL_TIM_IC_Start(&htim1, TIM_CHANNEL_2);
+        if(status != HAL_OK){
+            printf("VGA DMA error %08d, error code %08lX, line %d\n", status, hdma_tim1_ch2.ErrorCode, why);
+            panic();
+        }
 
+    } else {
+        static uint16_t scanline[VGA_VISIBLE_COLUMNS];
 
         // __disable_irq(); // XXX rock solid if IRQs disabled
 
@@ -2962,7 +2990,7 @@ void startVGAScanout()
 
                 if(line < VGA_VISIBLE_ROWS) {
                     // memcpy(scanline, pattern + line * 640, sizeof(scanline));
-                    memcpy_fast_16byte_multiple(scanline, pattern + line * 640, sizeof(scanline));
+                    memcpy_fast_16byte_multiple(scanline, pattern + line * 640, 640 * sizeof(pattern[0]));
                 }
 
                 // GPIOC->ODR = 0xFFFF; // little pulse to show us where we are on screen
@@ -3016,16 +3044,16 @@ void startVGAScanout()
 
 void SetPixel(int x, int y, int c)
 {
-    SDRAM_image[x + y * 640] = c;
+    SDRAM_image[x + y * VGA_VISIBLE_COLUMNS] = c;
 }
 
 void DrawFilledCircle(int cx, int cy, int r, int c)
 {
     /* should clip here */
     for(int y = cy - r - 1; y < cy + r + 1; y++) {
-        if((y < 0) || (y > 479)) continue;
+        if((y < 0) || (y >= VGA_VISIBLE_ROWS)) continue;
         for(int x = cx - r - 1; x < cx + r + 1; x++) {
-            if((x < 0) || (x > 639)) continue;
+            if((x < 0) || (x >= VGA_VISIBLE_COLUMNS)) continue;
             int dx = (x - cx);
             int dy = (y - cy);
             int distsquared = dx * dx + dy * dy;
@@ -3270,17 +3298,17 @@ int main(void)
         printf("VGA Scanout Started\n"); HAL_Delay(100);
 
         while(1) {
-            int cx = 20 + rand() % (640 - 40);
-            int cy = 20 + rand() % (480 - 40);
+            int cx = 20 + rand() % (VGA_VISIBLE_COLUMNS - 40);
+            int cy = 20 + rand() % (VGA_VISIBLE_ROWS - 40);
             int cr = 5 + rand() % 15;
             int c = rand() % 65536;
             // printf("%d %d %d\n", cx, cy , cr); HAL_Delay(10);
             // DrawFilledCircle(cx, cy, cr, c);
 
-            int x0 = 10 + rand() % (640 - 20);
-            int y0 = 10 + rand() % (480 - 20);
-            int x1 = 10 + rand() % (640 - 20);
-            int y1 = 10 + rand() % (480 - 20);
+            int x0 = 10 + rand() % (VGA_VISIBLE_COLUMNS - 20);
+            int y0 = 10 + rand() % (VGA_VISIBLE_ROWS - 20);
+            int x1 = 10 + rand() % (VGA_VISIBLE_COLUMNS - 20);
+            int y1 = 10 + rand() % (VGA_VISIBLE_ROWS - 20);
             c = rand() % 65536;
             // DrawLine(x0, y0, x1, y1, c);
         }
@@ -3881,7 +3909,7 @@ static void MX_FMC_Init(void)
   hsdram1.Init.WriteProtection = FMC_SDRAM_WRITE_PROTECTION_DISABLE;
   hsdram1.Init.SDClockPeriod = FMC_SDRAM_CLOCK_PERIOD_2;
   hsdram1.Init.ReadBurst = FMC_SDRAM_RBURST_ENABLE;
-  hsdram1.Init.ReadPipeDelay = FMC_SDRAM_RPIPE_DELAY_1;
+  hsdram1.Init.ReadPipeDelay = FMC_SDRAM_RPIPE_DELAY_2;
   /* SdramTiming */
   SdramTiming.LoadToActiveDelay = 2;
   SdramTiming.ExitSelfRefreshDelay = 6;
