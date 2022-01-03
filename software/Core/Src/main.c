@@ -20,6 +20,7 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "fatfs.h"
+#include "libjpeg.h"
 #include "usb_host.h"
 
 /* Private includes ----------------------------------------------------------*/
@@ -55,6 +56,8 @@
 
 DAC_HandleTypeDef hdac1;
 
+JPEG_HandleTypeDef hjpeg;
+
 SD_HandleTypeDef hsd2;
 
 SPI_HandleTypeDef hspi4;
@@ -65,6 +68,7 @@ TIM_HandleTypeDef htim4;
 TIM_HandleTypeDef htim5;
 DMA_HandleTypeDef hdma_tim1_ch2;
 
+UART_HandleTypeDef huart4;
 UART_HandleTypeDef huart2;
 
 SDRAM_HandleTypeDef hsdram1;
@@ -87,6 +91,8 @@ static void MX_DAC1_Init(void);
 static void MX_TIM4_Init(void);
 static void MX_TIM5_Init(void);
 static void MX_FMC_Init(void);
+static void MX_UART4_Init(void);
+static void MX_JPEG_Init(void);
 void MX_USB_HOST_Process(void);
 
 /* USER CODE BEGIN PFP */
@@ -1211,7 +1217,7 @@ void VGARowHandler()
     SCB_CleanDCache();
 }
 
-void DMA2_Stream1_IRQHandler(void)
+void ROSA_DMA2_Stream1_IRQHandler(void)
 {
     if(currentDisplayMode == DISPLAY_MODE_NTSC) {
         NTSCRowHandler();
@@ -2641,6 +2647,9 @@ int main(void)
   MX_TIM4_Init();
   MX_TIM5_Init();
   MX_FMC_Init();
+  MX_UART4_Init();
+  MX_JPEG_Init();
+  MX_LIBJPEG_Init();
   /* USER CODE BEGIN 2 */
 
     SDRAMInit();
@@ -2792,6 +2801,61 @@ int main(void)
     LEDColors[1][0] = 0; LEDColors[1][1] = 0x10; LEDColors[1][2] = 0;
     LEDColors[2][0] = 0; LEDColors[2][1] = 0; LEDColors[2][2] = 0x10;
     write3LEDString(LEDColors);
+
+    HAL_GPIO_WritePin(GPIOG, ESP_EN_Pin, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(GPIOG, ESP_RESET_Pin, GPIO_PIN_RESET);
+    HAL_Delay(1);
+    HAL_GPIO_WritePin(GPIOG, ESP_RESET_Pin, GPIO_PIN_SET);
+    HAL_Delay(1);
+    while(1) {
+        HAL_StatusTypeDef status;
+        uint8_t input;
+
+        if(HAL_GPIO_ReadPin(USER2_GPIO_Port, USER2_Pin)) {
+            HAL_GPIO_WritePin(GPIOG, ESP_RESET_Pin, GPIO_PIN_RESET);
+            HAL_Delay(10);
+            while(HAL_GPIO_ReadPin(USER2_GPIO_Port, USER2_Pin));
+            HAL_GPIO_WritePin(GPIOG, ESP_RESET_Pin, GPIO_PIN_SET);
+        }
+
+        do {
+            status = HAL_UART_Receive(&huart4, &input, 1, 0);
+            if(UART4->ISR & USART_ISR_ORE) {
+                printf("ORE\n"); HAL_Delay(1);
+                UART4->ICR = USART_ICR_ORECF;
+            }
+            if(UART4->ISR & USART_ISR_FE) {
+                printf("FE\n"); HAL_Delay(1);
+                UART4->ICR = USART_ICR_FECF;
+            }
+            if(UART4->ISR & USART_ISR_NE) {
+                printf("NE\n"); HAL_Delay(1);
+                UART4->ICR = USART_ICR_NECF;
+            }
+            if(UART4->ISR & USART_ISR_CMF) {
+                printf("CMF\n"); HAL_Delay(1);
+                UART4->ICR = USART_ICR_CMCF;
+            }
+            if(status == HAL_OK) {
+                HAL_UART_Transmit_IT(&huart2, &input, 1);
+            } else if(status != HAL_TIMEOUT) {
+                printf("Status was %u\n", status);
+                HAL_Delay(100);
+                panic();
+            }
+        } while(status == HAL_OK);
+
+        status = HAL_UART_Receive(&huart2, &input, 1, 0);
+        if(status == HAL_OK) {
+            if(0 && (input == 13)) {
+                static uint8_t crnl[2] = {13, 10};
+                HAL_UART_Transmit_IT(&huart4, crnl, 2);
+            } else {
+                HAL_UART_Transmit_IT(&huart4, &input, 1);
+            }
+            // HAL_UART_Transmit_IT(&huart2, &input, 1);
+        }
+    }
 
     if(1) {
         startVGAScanout();
@@ -3007,9 +3071,9 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
-  PeriphClkInitStruct.PeriphClockSelection = RCC_PERIPHCLK_USART2|RCC_PERIPHCLK_SPI4
-                              |RCC_PERIPHCLK_SDMMC|RCC_PERIPHCLK_USB
-                              |RCC_PERIPHCLK_FMC;
+  PeriphClkInitStruct.PeriphClockSelection = RCC_PERIPHCLK_USART2|RCC_PERIPHCLK_UART4
+                              |RCC_PERIPHCLK_SPI4|RCC_PERIPHCLK_SDMMC
+                              |RCC_PERIPHCLK_USB|RCC_PERIPHCLK_FMC;
   PeriphClkInitStruct.FmcClockSelection = RCC_FMCCLKSOURCE_D1HCLK;
   PeriphClkInitStruct.SdmmcClockSelection = RCC_SDMMCCLKSOURCE_PLL;
   PeriphClkInitStruct.Spi45ClockSelection = RCC_SPI45CLKSOURCE_D2PCLK1;
@@ -3069,6 +3133,32 @@ static void MX_DAC1_Init(void)
   /* USER CODE BEGIN DAC1_Init 2 */
 
   /* USER CODE END DAC1_Init 2 */
+
+}
+
+/**
+  * @brief JPEG Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_JPEG_Init(void)
+{
+
+  /* USER CODE BEGIN JPEG_Init 0 */
+
+  /* USER CODE END JPEG_Init 0 */
+
+  /* USER CODE BEGIN JPEG_Init 1 */
+
+  /* USER CODE END JPEG_Init 1 */
+  hjpeg.Instance = JPEG;
+  if (HAL_JPEG_Init(&hjpeg) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN JPEG_Init 2 */
+
+  /* USER CODE END JPEG_Init 2 */
 
 }
 
@@ -3317,6 +3407,54 @@ static void MX_TIM5_Init(void)
 }
 
 /**
+  * @brief UART4 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_UART4_Init(void)
+{
+
+  /* USER CODE BEGIN UART4_Init 0 */
+
+  /* USER CODE END UART4_Init 0 */
+
+  /* USER CODE BEGIN UART4_Init 1 */
+
+  /* USER CODE END UART4_Init 1 */
+  huart4.Instance = UART4;
+  huart4.Init.BaudRate = 115200;
+  huart4.Init.WordLength = UART_WORDLENGTH_8B;
+  huart4.Init.StopBits = UART_STOPBITS_1;
+  huart4.Init.Parity = UART_PARITY_NONE;
+  huart4.Init.Mode = UART_MODE_TX_RX;
+  huart4.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  huart4.Init.OverSampling = UART_OVERSAMPLING_16;
+  huart4.Init.OneBitSampling = UART_ONE_BIT_SAMPLE_DISABLE;
+  huart4.Init.ClockPrescaler = UART_PRESCALER_DIV1;
+  huart4.AdvancedInit.AdvFeatureInit = UART_ADVFEATURE_NO_INIT;
+  if (HAL_UART_Init(&huart4) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_UARTEx_SetTxFifoThreshold(&huart4, UART_TXFIFO_THRESHOLD_1_8) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_UARTEx_SetRxFifoThreshold(&huart4, UART_RXFIFO_THRESHOLD_1_8) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_UARTEx_DisableFifoMode(&huart4) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN UART4_Init 2 */
+
+  /* USER CODE END UART4_Init 2 */
+
+}
+
+/**
   * @brief USART2 Initialization Function
   * @param None
   * @retval None
@@ -3411,7 +3549,7 @@ static void MX_FMC_Init(void)
   hsdram1.Init.WriteProtection = FMC_SDRAM_WRITE_PROTECTION_DISABLE;
   hsdram1.Init.SDClockPeriod = FMC_SDRAM_CLOCK_PERIOD_2;
   hsdram1.Init.ReadBurst = FMC_SDRAM_RBURST_ENABLE;
-  hsdram1.Init.ReadPipeDelay = FMC_SDRAM_RPIPE_DELAY_2;
+  hsdram1.Init.ReadPipeDelay = FMC_SDRAM_RPIPE_DELAY_1;
   /* SdramTiming */
   SdramTiming.LoadToActiveDelay = 2;
   SdramTiming.ExitSelfRefreshDelay = 6;
@@ -3443,13 +3581,13 @@ static void MX_GPIO_Init(void)
   /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOE_CLK_ENABLE();
   __HAL_RCC_GPIOC_CLK_ENABLE();
+  __HAL_RCC_GPIOI_CLK_ENABLE();
   __HAL_RCC_GPIOF_CLK_ENABLE();
   __HAL_RCC_GPIOH_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOG_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
   __HAL_RCC_GPIOD_CLK_ENABLE();
-  __HAL_RCC_GPIOI_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(DEBUG_LED_GPIO_Port, DEBUG_LED_Pin, GPIO_PIN_RESET);
@@ -3459,6 +3597,9 @@ static void MX_GPIO_Init(void)
                           |GPIO_PIN_1|GPIO_PIN_2|GPIO_PIN_3|GPIO_PIN_4
                           |GPIO_PIN_5|GPIO_PIN_6|GPIO_PIN_7|GPIO_PIN_8
                           |GPIO_PIN_9|GPIO_PIN_10|GPIO_PIN_11|GPIO_PIN_12, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOG, ESP_RESET_Pin|ESP_EN_Pin, GPIO_PIN_SET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOI, GPIO_PIN_0|GPIO_PIN_1|GPIO_PIN_2|GPIO_PIN_3
@@ -3502,6 +3643,13 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_PULLUP;
   HAL_GPIO_Init(SDIO_CD_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : ESP_RESET_Pin ESP_EN_Pin */
+  GPIO_InitStruct.Pin = ESP_RESET_Pin|ESP_EN_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOG, &GPIO_InitStruct);
 
   /*Configure GPIO pins : PI0 PI1 PI2 PI3
                            PI4 PI5 PI6 PI7 */
