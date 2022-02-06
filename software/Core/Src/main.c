@@ -1312,6 +1312,7 @@ __attribute__((hot,flatten)) void WozModeFillRowBufferHGR(int frameIndex, int ro
 {
     int rowIndex = (rowNumber - WOZ_MODE_TOP) / 2;
     uint8_t darker = NTSCBlack + (NTSCWhite - NTSCBlack) / 4; // XXX debug
+        // Serial Terminal to ESP-01
     if((rowIndex >= 0) && (rowIndex < 192)) {
         const uint8_t *rowSrc = WozModeHGRBuffers[WozModeAux][WozModePage] + rowIndex * 40; // row - ...?
 
@@ -2802,62 +2803,65 @@ int main(void)
     LEDColors[2][0] = 0; LEDColors[2][1] = 0; LEDColors[2][2] = 0x10;
     write3LEDString(LEDColors);
 
-    HAL_GPIO_WritePin(GPIOG, ESP_EN_Pin, GPIO_PIN_SET);
-    HAL_GPIO_WritePin(GPIOG, ESP_RESET_Pin, GPIO_PIN_RESET);
-    HAL_Delay(1);
-    HAL_GPIO_WritePin(GPIOG, ESP_RESET_Pin, GPIO_PIN_SET);
-    HAL_Delay(1);
-    while(1) {
-        HAL_StatusTypeDef status;
-        uint8_t input;
+    // Serial Terminal to ESP-01
+    if(0) {
+        HAL_GPIO_WritePin(GPIOG, ESP_EN_Pin, GPIO_PIN_SET);
+        HAL_GPIO_WritePin(GPIOG, ESP_RESET_Pin, GPIO_PIN_RESET);
+        HAL_Delay(1);
+        HAL_GPIO_WritePin(GPIOG, ESP_RESET_Pin, GPIO_PIN_SET);
+        HAL_Delay(1);
+        while(1) {
+            HAL_StatusTypeDef status;
+            uint8_t input;
 
-        if(HAL_GPIO_ReadPin(USER2_GPIO_Port, USER2_Pin)) {
-            HAL_GPIO_WritePin(GPIOG, ESP_RESET_Pin, GPIO_PIN_RESET);
-            HAL_Delay(10);
-            while(HAL_GPIO_ReadPin(USER2_GPIO_Port, USER2_Pin));
-            HAL_GPIO_WritePin(GPIOG, ESP_RESET_Pin, GPIO_PIN_SET);
-        }
+            if(HAL_GPIO_ReadPin(USER2_GPIO_Port, USER2_Pin)) {
+                HAL_GPIO_WritePin(GPIOG, ESP_RESET_Pin, GPIO_PIN_RESET);
+                HAL_Delay(10);
+                while(HAL_GPIO_ReadPin(USER2_GPIO_Port, USER2_Pin));
+                HAL_GPIO_WritePin(GPIOG, ESP_RESET_Pin, GPIO_PIN_SET);
+            }
 
-        do {
-            status = HAL_UART_Receive(&huart4, &input, 1, 0);
-            if(UART4->ISR & USART_ISR_ORE) {
-                printf("ORE\n"); HAL_Delay(1);
-                UART4->ICR = USART_ICR_ORECF;
-            }
-            if(UART4->ISR & USART_ISR_FE) {
-                printf("FE\n"); HAL_Delay(1);
-                UART4->ICR = USART_ICR_FECF;
-            }
-            if(UART4->ISR & USART_ISR_NE) {
-                printf("NE\n"); HAL_Delay(1);
-                UART4->ICR = USART_ICR_NECF;
-            }
-            if(UART4->ISR & USART_ISR_CMF) {
-                printf("CMF\n"); HAL_Delay(1);
-                UART4->ICR = USART_ICR_CMCF;
-            }
+            do {
+                status = HAL_UART_Receive(&huart4, &input, 1, 0);
+                if(UART4->ISR & USART_ISR_ORE) {
+                    printf("ORE\n"); HAL_Delay(1);
+                    UART4->ICR = USART_ICR_ORECF;
+                }
+                if(UART4->ISR & USART_ISR_FE) {
+                    printf("FE\n"); HAL_Delay(1);
+                    UART4->ICR = USART_ICR_FECF;
+                }
+                if(UART4->ISR & USART_ISR_NE) {
+                    printf("NE\n"); HAL_Delay(1);
+                    UART4->ICR = USART_ICR_NECF;
+                }
+                if(UART4->ISR & USART_ISR_CMF) {
+                    printf("CMF\n"); HAL_Delay(1);
+                    UART4->ICR = USART_ICR_CMCF;
+                }
+                if(status == HAL_OK) {
+                    HAL_UART_Transmit_IT(&huart2, &input, 1);
+                } else if(status != HAL_TIMEOUT) {
+                    printf("Status was %u\n", status);
+                    HAL_Delay(100);
+                    panic();
+                }
+            } while(status == HAL_OK);
+
+            status = HAL_UART_Receive(&huart2, &input, 1, 0);
             if(status == HAL_OK) {
-                HAL_UART_Transmit_IT(&huart2, &input, 1);
-            } else if(status != HAL_TIMEOUT) {
-                printf("Status was %u\n", status);
-                HAL_Delay(100);
-                panic();
+                if(0 && (input == 13)) {
+                    static uint8_t crnl[2] = {13, 10};
+                    HAL_UART_Transmit_IT(&huart4, crnl, 2);
+                } else {
+                    HAL_UART_Transmit_IT(&huart4, &input, 1);
+                }
+                // HAL_UART_Transmit_IT(&huart2, &input, 1);
             }
-        } while(status == HAL_OK);
-
-        status = HAL_UART_Receive(&huart2, &input, 1, 0);
-        if(status == HAL_OK) {
-            if(0 && (input == 13)) {
-                static uint8_t crnl[2] = {13, 10};
-                HAL_UART_Transmit_IT(&huart4, crnl, 2);
-            } else {
-                HAL_UART_Transmit_IT(&huart4, &input, 1);
-            }
-            // HAL_UART_Transmit_IT(&huart2, &input, 1);
         }
     }
 
-    if(1) {
+    if(0) {
         startVGAScanout();
         printf("VGA Scanout Started\n"); HAL_Delay(100);
 
@@ -2878,10 +2882,11 @@ int main(void)
                 DrawLine(x0, y0, x1, y1, c);
             }
         }
+
     } else {
+
         startNTSCScanout();
     }
-
 
     if(0) TextModeTest();
 
@@ -2899,6 +2904,8 @@ int main(void)
     // DisplayStringAndWaitForEnter("Press ENTER.");
 
     if(1) {
+
+        printf("Starting Apple ][ emulation menu\n");
 
         Status status;
         char *fileChosenInDir;
