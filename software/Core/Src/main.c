@@ -1240,6 +1240,8 @@ void startNTSCScanout()
 {
     AudioStart();
 
+    currentDisplayMode = DISPLAY_MODE_NTSC;
+
     NTSCCalculateParameters();
     NTSCGenerateLineBuffers();
 
@@ -1312,7 +1314,6 @@ __attribute__((hot,flatten)) void WozModeFillRowBufferHGR(int frameIndex, int ro
 {
     int rowIndex = (rowNumber - WOZ_MODE_TOP) / 2;
     uint8_t darker = NTSCBlack + (NTSCWhite - NTSCBlack) / 4; // XXX debug
-        // Serial Terminal to ESP-01
     if((rowIndex >= 0) && (rowIndex < 192)) {
         const uint8_t *rowSrc = WozModeHGRBuffers[WozModeAux][WozModePage] + rowIndex * 40; // row - ...?
 
@@ -2885,7 +2886,9 @@ int main(void)
 
     } else {
 
+        printf("Starting NTSC\n");
         startNTSCScanout();
+        printf("Started NTSC\n");
     }
 
     if(0) TextModeTest();
@@ -2905,7 +2908,7 @@ int main(void)
 
     if(1) {
 
-        printf("Starting Apple ][ emulation menu\n");
+        printf("Starting Apple ][ emulation menu\n"); // console_flush();
 
         Status status;
         char *fileChosenInDir;

@@ -251,7 +251,8 @@ void DMA2_Stream1_IRQHandler(void)
 {
   /* USER CODE BEGIN DMA2_Stream1_IRQn 0 */
 
-     extern ROSA_DMA2_Stream1_IRQHandler();
+     extern void ROSA_DMA2_Stream1_IRQHandler();
+     ROSA_DMA2_Stream1_IRQHandler();
      if(0) {
   /* USER CODE END DMA2_Stream1_IRQn 0 */
   HAL_DMA_IRQHandler(&hdma_tim1_ch2);
