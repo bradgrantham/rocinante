@@ -38,7 +38,7 @@ const int CAPS_LOCK = 280;
 struct event {
     EventType type;
     int value;
-    char *str;
+    char *str; // ownership transfered - caller of DequeueEvent must free
     event(EventType type_, int value_, char *str_ = NULL) :
         type(type_),
         value(value_),
