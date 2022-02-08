@@ -2671,7 +2671,7 @@ const int CONTROLLER_KEYPAD_9 = 0x04;
 const int CONTROLLER_KEYPAD_asterisk = 0x09;
 const int CONTROLLER_KEYPAD_pound = 0x06;
 
-void init_controllers(void)
+void InitializeControllers(void)
 {
     GPIO_InitTypeDef  GPIO_InitStruct = {0};
 
@@ -2745,7 +2745,7 @@ uint8_t RoGetJoystickState(RoControllerIndex which)
     HAL_Delay(1);
 
     // read joystick and fire-left
-    unsigned int joystick_value;
+    unsigned int joystick_value = 0;
     
     switch(which) {
         case CONTROLLER_1:
@@ -2805,7 +2805,8 @@ uint8_t RoGetKeypadState(RoControllerIndex which)
     HAL_Delay(1);
 
     // read keypad and fire-right
-    unsigned int keypad_value;
+    unsigned int keypad_value = 0;
+
     switch(which) {
         case CONTROLLER_1:
             keypad_value =  
@@ -2867,6 +2868,32 @@ char ColecoKeypadToCharacter(uint8_t value)
     }
 }
 
+void TestControllers()
+{
+    while(1) {
+        uint8_t joystick_1_state = RoGetJoystickState(CONTROLLER_1);
+        uint8_t keypad_1_state = RoGetKeypadState(CONTROLLER_1);
+        uint8_t joystick_2_state = RoGetJoystickState(CONTROLLER_2);
+        uint8_t keypad_2_state = RoGetKeypadState(CONTROLLER_2);
+        printf("joy 1 %c %c %c %c %c %c %c     ",
+            (joystick_1_state & CONTROLLER_NORTH_BIT) ? 'N' : '-',
+            (joystick_1_state & CONTROLLER_SOUTH_BIT) ? 'S' : '-',
+            (joystick_1_state & CONTROLLER_WEST_BIT) ? 'W' : '-',
+            (joystick_1_state & CONTROLLER_EAST_BIT) ? 'E' : '-',
+            (joystick_1_state & CONTROLLER_FIRE_BIT) ? '1' : '-',
+            (keypad_1_state & CONTROLLER_FIRE_BIT) ? '2' : '-',
+            ColecoKeypadToCharacter(keypad_1_state & CONTROLLER_KEYPAD_MASK));
+        printf("joy 2 %c %c %c %c %c %c %c\n",
+            (joystick_2_state & CONTROLLER_NORTH_BIT) ? 'N' : '-',
+            (joystick_2_state & CONTROLLER_SOUTH_BIT) ? 'S' : '-',
+            (joystick_2_state & CONTROLLER_WEST_BIT) ? 'W' : '-',
+            (joystick_2_state & CONTROLLER_EAST_BIT) ? 'E' : '-',
+            (joystick_2_state & CONTROLLER_FIRE_BIT) ? '1' : '-',
+            (keypad_2_state & CONTROLLER_FIRE_BIT) ? '2' : '-',
+            ColecoKeypadToCharacter(keypad_2_state & CONTROLLER_KEYPAD_MASK));
+    }
+}
+
 /* USER CODE END 0 */
 
 /**
@@ -2919,6 +2946,7 @@ int main(void)
   /* USER CODE BEGIN 2 */
 
     SDRAMInit();
+    InitializeControllers();
 
     if(0){
         GPIO_InitTypeDef GPIO_InitStruct = {0};
@@ -3170,29 +3198,8 @@ int main(void)
 
     // DisplayStringAndWaitForEnter("Press ENTER.");
 
-    init_controllers();
-
-    while(1) {
-        uint8_t joystick_1_state = RoGetJoystickState(CONTROLLER_1);
-        uint8_t keypad_1_state = RoGetKeypadState(CONTROLLER_1);
-        uint8_t joystick_2_state = RoGetJoystickState(CONTROLLER_2);
-        uint8_t keypad_2_state = RoGetKeypadState(CONTROLLER_2);
-        printf("joy 1 %c %c %c %c %c %c %c     ",
-            (joystick_1_state & CONTROLLER_NORTH_BIT) ? 'N' : '-',
-            (joystick_1_state & CONTROLLER_SOUTH_BIT) ? 'S' : '-',
-            (joystick_1_state & CONTROLLER_WEST_BIT) ? 'W' : '-',
-            (joystick_1_state & CONTROLLER_EAST_BIT) ? 'E' : '-',
-            (joystick_1_state & CONTROLLER_FIRE_BIT) ? '1' : '-',
-            (keypad_1_state & CONTROLLER_FIRE_BIT) ? '2' : '-',
-            ColecoKeypadToCharacter(keypad_1_state & CONTROLLER_KEYPAD_MASK));
-        printf("joy 2 %c %c %c %c %c %c %c\n",
-            (joystick_2_state & CONTROLLER_NORTH_BIT) ? 'N' : '-',
-            (joystick_2_state & CONTROLLER_SOUTH_BIT) ? 'S' : '-',
-            (joystick_2_state & CONTROLLER_WEST_BIT) ? 'W' : '-',
-            (joystick_2_state & CONTROLLER_EAST_BIT) ? 'E' : '-',
-            (joystick_2_state & CONTROLLER_FIRE_BIT) ? '1' : '-',
-            (keypad_2_state & CONTROLLER_FIRE_BIT) ? '2' : '-',
-            ColecoKeypadToCharacter(keypad_2_state & CONTROLLER_KEYPAD_MASK));
+    if(0) {
+        TestControllers();
     }
 
     if(1) {
