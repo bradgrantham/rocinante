@@ -151,6 +151,7 @@ CXX_SOURCES = \
 	apple2e.cpp \
 	dis6502.cpp \
 	interface_rosa.cpp \
+	coleco/tms9918.cpp \
         $(NULL)
 
 
@@ -274,7 +275,7 @@ OBJECTS += $(addprefix $(BUILD_DIR)/,$(notdir $(ASM_SOURCES:.s=.o)))
 vpath %.s $(sort $(dir $(ASM_SOURCES)))
 # C++ objects
 OBJECTS += $(addprefix $(BUILD_DIR)/,$(notdir $(CXX_SOURCES:.cpp=.o)))
-vpath %.s $(sort $(dir $(CXX_SOURCES)))
+vpath %.cpp $(sort $(dir $(CXX_SOURCES)))
 
 $(BUILD_DIR)/%.o: %.cpp Makefile | $(BUILD_DIR) 
 	$(CXX) -c $(CXXFLAGS) -Wa,-a,-ad,-alms=$(BUILD_DIR)/$(notdir $(<:.c=.lst)) $< -o $@
