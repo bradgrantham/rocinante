@@ -76,37 +76,37 @@ constexpr int REGISTER_COUNT = 8;
 
 enum GraphicsMode { GRAPHICS_I, GRAPHICS_II, TEXT, MULTICOLOR, UNDEFINED };
 
-bool SpritesAreSize4(const uint8_t* registers)
+inline bool SpritesAreSize4(const uint8_t* registers)
 {
     return registers[1] & VR1_SIZE4_MASK;
 }
 
-bool SpritesAreMagnified2X(const uint8_t* registers)
+inline bool SpritesAreMagnified2X(const uint8_t* registers)
 {
     return registers[1] & VR1_MAG2X_MASK;
 }
 
-bool ActiveDisplayAreaIsBlanked(const uint8_t* registers)
+inline bool ActiveDisplayAreaIsBlanked(const uint8_t* registers)
 {
     return (registers[1] & VR1_BLANK_MASK) == 0;
 }
 
-uint8_t GetBackdropColor(const uint8_t* registers)
+inline uint8_t GetBackdropColor(const uint8_t* registers)
 {
     return (registers[7] & VR7_BD_MASK) >> VR7_BD_SHIFT;
 }
 
-bool InterruptsAreEnabled(const uint8_t* registers)
+inline bool InterruptsAreEnabled(const uint8_t* registers)
 {
     return registers[1] & VR1_INT_MASK;
 }
 
-bool VSyncInterruptHasOccurred(uint8_t status_register)
+inline bool VSyncInterruptHasOccurred(uint8_t status_register)
 {
     return status_register & VDP_STATUS_F_BIT;
 }
 
-GraphicsMode GetGraphicsMode(const uint8_t* registers)
+inline GraphicsMode GetGraphicsMode(const uint8_t* registers)
 {
     bool M1 = registers[1] & VR1_M1_MASK;
     bool M2 = registers[1] & VR1_M2_MASK;
@@ -124,7 +124,7 @@ GraphicsMode GetGraphicsMode(const uint8_t* registers)
     return GraphicsMode::UNDEFINED;
 }
 
-bool SpritesVisible(const uint8_t* registers)
+inline bool SpritesVisible(const uint8_t* registers)
 {
     if(ActiveDisplayAreaIsBlanked(registers)) {
         return false;
@@ -150,29 +150,29 @@ bool SpritesVisible(const uint8_t* registers)
     return false;
 }
 
-uint16_t GetNameTableBase(const uint8_t* registers)
+inline uint16_t GetNameTableBase(const uint8_t* registers)
 {
     return (registers[2] & VR2_NAME_TABLE_MASK) << VR2_NAME_TABLE_SHIFT;
 }
 
-uint16_t GetSpriteAttributeTableBase(const uint8_t* registers)
+inline uint16_t GetSpriteAttributeTableBase(const uint8_t* registers)
 {
     return (registers[5] & VR5_SPRITE_ATTR_MASK) << VR5_SPRITE_ATTR_SHIFT;
 }
 
-uint16_t GetSpritePatternTableBase(const uint8_t* registers)
+inline uint16_t GetSpritePatternTableBase(const uint8_t* registers)
 {
     return (registers[6] & VR6_SPRITE_PATTERN_MASK) << VR6_SPRITE_PATTERN_SHIFT;
 }
 
-void CopyColor(uint8_t* dst, uint8_t* src)
+inline void CopyColor(uint8_t* dst, uint8_t* src)
 {
     dst[0] = src[0];
     dst[1] = src[1];
     dst[2] = src[2];
 }
 
-void SetColor(uint8_t *color, uint8_t r, uint8_t g, uint8_t b)
+inline void SetColor(uint8_t *color, uint8_t r, uint8_t g, uint8_t b)
 {
     color[0] = r;
     color[1] = g;
