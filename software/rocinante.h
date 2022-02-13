@@ -78,6 +78,11 @@ void RoAudioClear();
 
 void RoProcessYield(void);
 
+typedef enum RoControllerIndex { CONTROLLER_1, CONTROLLER_2 } RoControllerIndex;
+
+uint8_t RoGetJoystickState(RoControllerIndex which);
+uint8_t RoGetKeypadState(RoControllerIndex which);
+
 void panic(void);
 
 #ifdef __cplusplus

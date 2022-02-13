@@ -2280,19 +2280,21 @@ struct averaged_sequence
     }
 };
 
+#ifdef ROSA
 extern "C" {
 void HAL_Delay(uint32_t millis);
 };
+#endif
 
-void sleep_for(int32_t millis)
+static void sleep_for(int32_t millis)
 {
     if(millis < 0) {
         return;
     }
-#ifdef MACOS
-    this_thread::sleep_for(chrono::milliseconds(millis));
-#else
+#ifdef ROSA
     HAL_Delay(millis);
+#else
+    this_thread::sleep_for(chrono::milliseconds(millis));
 #endif
 }
 

@@ -152,6 +152,9 @@ CXX_SOURCES = \
 	dis6502.cpp \
 	interface_rosa.cpp \
 	coleco/tms9918.cpp \
+	coleco/emulator.cpp \
+	coleco/coleco_platform_rosa.cpp \
+	coleco/z80emu.cpp \
         $(NULL)
 
 
@@ -204,6 +207,7 @@ AS_DEFS =
 # C defines
 C_DEFS =  \
 -DUSE_HAL_DRIVER \
+-DROSA \
 -DSTM32H743xx
 
 
@@ -213,6 +217,7 @@ AS_INCLUDES =
 # C includes
 C_INCLUDES =  \
 -I. \
+-Icoleco \
 -ICore/Inc \
 -IDrivers/STM32H7xx_HAL_Driver/Inc \
 -IDrivers/STM32H7xx_HAL_Driver/Inc/Legacy \
@@ -236,7 +241,7 @@ ASFLAGS = $(MCU) $(AS_DEFS) $(AS_INCLUDES) $(OPT) -Wall -fdata-sections -ffuncti
 
 CFLAGS = $(MCU) $(C_DEFS) $(C_INCLUDES) $(OPT) -Wall -fdata-sections -ffunction-sections
 
-CXXFLAGS =       $(MCU) $(C_DEFS) $(C_INCLUDES) $(OPT) -Wall -fdata-sections -ffunction-sections -std=c++17 -Wno-psabi
+CXXFLAGS = $(MCU) $(C_DEFS) $(C_INCLUDES) $(OPT) -Wall -fdata-sections -ffunction-sections -std=c++17 -Wno-psabi
 
 ifeq ($(DEBUG), 1)
 CFLAGS += -g -gdwarf-2

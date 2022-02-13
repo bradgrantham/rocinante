@@ -1024,13 +1024,13 @@ void NTSCFillRowBuffer(int frameNumber, int lineNumber, unsigned char *rowBuffer
 int debugOverlayEnabled = 0;
 
 #define debugDisplayLeftTick (NTSCHSyncClocks + NTSCBackPorchClocks + 56)
-#define debugDisplayTopTick (NTSC_EQPULSE_LINES + NTSC_VSYNC_LINES + NTSC_EQPULSE_LINES + NTSC_VBLANK_LINES + 10)
+#define debugDisplayTopTick (NTSC_EQPULSE_LINES + NTSC_VSYNC_LINES + NTSC_EQPULSE_LINES + NTSC_VBLANK_LINES + 18)
 /* debugFontWidthScale != 4 looks terrible in a color field because of adjacent color columns; probably need to ensure 0s around any 1 text column */
 #define debugFontWidthScale 2
 #define debugCharGapPixels 1
 #define debugFontHeightScale 1
 #define debugDisplayWidth (604 / (font8x16Width * debugFontWidthScale + debugCharGapPixels))
-#define debugDisplayHeight ((218 + 10) / font8x16Height)
+#define debugDisplayHeight ((218 - 6) / font8x16Height)
 
 char debugDisplay[debugDisplayHeight][debugDisplayWidth];
 
@@ -1291,7 +1291,7 @@ void startNTSCScanout()
 /* so the last pixel is extended another 1/3 to fill last clock */
 #define TMS9918_MODE_WIDTH 683
 #define TMS9918_MODE_LEFT ((704 - TMS9918_MODE_WIDTH) / 2) 
-#define TMS9918_MODE_TOP 60 
+#define TMS9918_MODE_TOP 65 
 #define TMS9918_MODE_HEIGHT 192 
 
 uint8_t TMS9918Registers[8];
@@ -1855,19 +1855,19 @@ int AlwaysColorburst()
 // Text Mode
 
 #define TextModeLeftTick 56
-#define TextModeTopTick 18
+#define TextModeTopTick (NTSC_EQPULSE_LINES + NTSC_VSYNC_LINES + NTSC_EQPULSE_LINES + NTSC_VBLANK_LINES + 26)
 #define TextModeFontWidthScale 2
 #define TextModeCharGapPixels 1
 #define TextModeFontHeightScale 1
 #define TextModeWidth (604 / (font8x16Width * TextModeFontWidthScale + TextModeCharGapPixels))
-#define TextModeHeight ((218 + 10) / font8x16Height)
+#define TextModeHeight ((218 - 6) / font8x16Height)
 
 enum {
     TEXT_NO_ATTRIBUTES = 0x00,
     TEXT_INVERSE       = 0x01,
 };
-uint8_t TextModeAttributes[debugDisplayHeight * debugDisplayWidth];
-char TextModeBuffer[debugDisplayHeight * debugDisplayWidth];
+uint8_t TextModeAttributes[TextModeHeight * TextModeWidth];
+char TextModeBuffer[TextModeHeight * TextModeWidth];
 
 __attribute__((hot,flatten)) void TextModeFillRowBuffer(int frameIndex, int rowNumber, size_t maxSamples, uint8_t* rowBuffer)
 {
@@ -1956,6 +1956,7 @@ void ImageFillRowBuffer2(int frameIndex, int rowNumber, size_t maxSamples, uint8
 }
 
 int apple2_main(int argc, const char **argv);
+int coleco_main(int argc, const char **argv);
 
 int writeLEDColors = 1;
 // set these no higher than 32, maybe after getting a case and light
@@ -2009,13 +2010,7 @@ void LEDTestIterate()
   
 int main_iterate(void)
 {
-    static int q = 0;
-    if(++q > 1000) {
-        q = 0;
-        // printf(".");
-    }
-
-    MX_USB_HOST_Process();
+    // XXX MX_USB_HOST_Process();
 
     // LEDTestIterate();
 
@@ -2843,8 +2838,6 @@ void InitializeControllers(void)
     HAL_GPIO_Init(joystick_2_fire.port, &GPIO_InitStruct);
 }
 
-typedef enum RoControllerIndex { CONTROLLER_1, CONTROLLER_2 } RoControllerIndex;
-
 uint8_t RoGetJoystickState(RoControllerIndex which)
 {
     GPIO_InitTypeDef  GPIO_InitStruct = {0};
@@ -3195,7 +3188,7 @@ int main(void)
 
     printf("Hello World\n");
     printf("System clock is %lu\n", HAL_RCC_GetSysClockFreq());
-    // RoDebugOverlayPrintf("Hello World\n");
+    RoDebugOverlayPrintf("Hello World\n");
 
     while(0) {
         for(int i = 0; i < 1000000; i++) {
@@ -3316,7 +3309,7 @@ int main(void)
         TestControllers();
     }
 
-    if(1) {
+    if(0) {
 
         DisplayStringCentered("One second to TMS9918A test");
         HAL_Delay(1000);
@@ -3498,7 +3491,6 @@ int main(void)
         uint8_t memory[16384];
 
         for(int test = 0; test < testCount; test ++) {
-            HAL_Delay(10);
             FILE *vdp_dump_in = fopen(testNames[test], "rb");
             if(vdp_dump_in == NULL) {
                 printf("failed on %s\n", testNames[test]);
@@ -3522,11 +3514,18 @@ int main(void)
             NTSCWaitFrame();
             memcpy(TMS9918Registers, registers, sizeof(registers));
             memcpy(TMS9918RAM, memory, sizeof(memory));
-            HAL_Delay(100);
         }
+    }
 
-        HAL_Delay(100);
-        while(1);
+    if(1) {
+        const char *args[] = {
+            "emulator",
+            "coleco/COLECO.ROM",
+            "coleco/zaxxon.col"
+        };
+        printf("coleco...\n");
+        NTSCSwitchModeFuncs(TMS9918ModeFillRowBuffer, DefaultNeedsColorburst);
+        coleco_main(sizeof(args) / sizeof(args[0]), args); /* doesn't return */
     }
 
     if(1) {
