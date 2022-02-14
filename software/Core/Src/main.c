@@ -513,8 +513,14 @@ void HSVToRGB3f(float h, float s, float v, float *r, float *g, float *b)
 
 // Audio subsystem =========================================================
 
-static uint8_t audioBuffer[15700 / 60 * 2 * 2]; // Two 16.667ms buffers of stereo u8 
-static volatile size_t audioBufferPosition = 0;
+// This was 15700 / 60 * 2 * 2, // 261 samples per channel per
+// buffer.  But that seemed unreliable under WAV playback for some
+// reason; maybe the overhead of reading plus the read ended up being
+// longer than the duration of one buffer, so it missed.
+
+static uint8_t audioBuffer[512 * 2 * 2];
+
+volatile size_t audioBufferPosition = 0;
 
 void RoAudioGetSamplingInfo(float *rate, size_t *bufferLength, uint8_t **stereoBufferU8)
 {
@@ -2187,13 +2193,13 @@ int playAudio(int argc, const char **argv)
     }
 
     size_t where;
-    size_t samplesRead = 0;
+    size_t samplesRead = 0, total_samples = 0;
     int quit = 0;
     do {
         // Wait for audio to get at least half a buffer past us
         samplesRead = fread(monoTrack, 1, halfBufferMonoSamples, fp);
         if(samplesRead < 1) {
-            printf("ERROR: couldn't read block of audio from \"%s\", read %zd\n", filename, samplesRead);
+            printf("ERROR: couldn't read block of audio from \"%s\", read %d\n", filename, samplesRead);
             return 1;
         }
         where = RoAudioBlockToHalfBuffer();
@@ -2221,6 +2227,7 @@ int playAudio(int argc, const char **argv)
             }
         }
         main_iterate(); // XXX
+        total_samples += samplesRead;
     } while(!quit && (samplesRead == halfBufferMonoSamples));
 
     // fill any part not read from file to silence
@@ -3298,8 +3305,8 @@ int main(void)
     if(0) {
         const char *args[] = {
             "play",
-            // "inside-out.u8",
-            "deeper_understanding.u8",
+            "inside-out.u8",
+            // "deeper_understanding.u8",
         };
         playAudio(sizeof(args) / sizeof(args[0]), args);
     }
