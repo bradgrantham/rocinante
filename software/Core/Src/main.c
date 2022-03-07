@@ -510,6 +510,269 @@ void HSVToRGB3f(float h, float s, float v, float *r, float *g, float *b)
     }
 }
 
+//----------------------------------------------------------------------------
+// Controller Code from alice3cv that needs to be cleaned up and pared down
+
+static inline void set_GPIO_value(GPIO_TypeDef* gpio, int mask, int value)
+{
+    unsigned long int data = value ? mask : 0;
+    gpio->ODR = (gpio->ODR & ~mask) | data;
+    __asm__ volatile("" ::: "memory"); // Force all memory operations before to come before and all after to come after.
+}
+
+static inline void set_GPIO_iotype(GPIO_TypeDef* gpio, int pin, unsigned int iotype)
+{
+    long unsigned int mask = ~(3U << (pin * 2));
+    long unsigned int value = iotype << (pin * 2);
+    gpio->MODER = (gpio->MODER & mask) | value;
+    __asm__ volatile("" ::: "memory"); // Force all memory operations before to come before and all after to come after.
+}
+
+typedef struct gpio
+{
+    GPIO_TypeDef* port;
+    int pin;
+    unsigned int mask;
+#if 0
+    gpio(GPIO_TypeDef* port_, int pin_) :
+        port(port_),
+        pin(pin_)
+    {
+        mask = 1U << pin;
+    }
+#endif
+} gpio;
+
+const gpio select_joystick = { GPIOB, 13, 1U << 13};
+const gpio select_keypad_1 = { GPIOF, 7, 1U << 7};
+const gpio select_keypad_2 = { GPIOF, 8, 1U << 8};
+
+const gpio joystick_1_north = { GPIOH, 6, 1U << 6};
+const gpio joystick_1_south = { GPIOH, 7, 1U << 7};
+const gpio joystick_1_west = { GPIOH, 8, 1U << 8};
+const gpio joystick_1_east = { GPIOH, 9, 1U << 9};
+const gpio joystick_1_fire = { GPIOI, 10, 1U << 10};
+
+const gpio joystick_2_north = { GPIOH, 12, 1U << 12};
+const gpio joystick_2_south = { GPIOH, 13, 1U << 13};
+const gpio joystick_2_west = { GPIOH, 14, 1U << 14};
+const gpio joystick_2_east = { GPIOH, 15, 1U << 15};
+const gpio joystick_2_fire = { GPIOI, 11, 1U << 11};
+
+const int CONTROLLER_FIRE_BIT = 0x40;
+const int CONTROLLER_NORTH_BIT = 0x01;
+const int CONTROLLER_EAST_BIT = 0x02;
+const int CONTROLLER_SOUTH_BIT = 0x04;
+const int CONTROLLER_WEST_BIT = 0x08;
+const int CONTROLLER_KEYPAD_MASK = 0x0F;
+const int CONTROLLER_KEYPAD_0 = 0x05;
+const int CONTROLLER_KEYPAD_1 = 0x02;
+const int CONTROLLER_KEYPAD_2 = 0x08;
+const int CONTROLLER_KEYPAD_3 = 0x03;
+const int CONTROLLER_KEYPAD_4 = 0x0D;
+const int CONTROLLER_KEYPAD_5 = 0x0C;
+const int CONTROLLER_KEYPAD_6 = 0x01;
+const int CONTROLLER_KEYPAD_7 = 0x0A;
+const int CONTROLLER_KEYPAD_8 = 0x0E;
+const int CONTROLLER_KEYPAD_9 = 0x04;
+const int CONTROLLER_KEYPAD_asterisk = 0x09;
+const int CONTROLLER_KEYPAD_pound = 0x06;
+
+void InitializeControllers(void)
+{
+    GPIO_InitTypeDef  GPIO_InitStruct = {0};
+
+    // Joystick directions and fire are hooked to select_joystick
+    // and select_keyboard within the controller.
+
+    // Set all joystick directions and fire button to inputs
+
+    GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+    GPIO_InitStruct.Pull = GPIO_PULLUP;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+
+    GPIO_InitStruct.Pin = joystick_1_north.mask;
+    HAL_GPIO_Init(joystick_1_north.port, &GPIO_InitStruct);
+    GPIO_InitStruct.Pin = joystick_1_south.mask;
+    HAL_GPIO_Init(joystick_1_south.port, &GPIO_InitStruct);
+    GPIO_InitStruct.Pin = joystick_1_west.mask;
+    HAL_GPIO_Init(joystick_1_west.port, &GPIO_InitStruct);
+    GPIO_InitStruct.Pin = joystick_1_east.mask;
+    HAL_GPIO_Init(joystick_1_east.port, &GPIO_InitStruct);
+    GPIO_InitStruct.Pin = joystick_1_fire.mask;
+    HAL_GPIO_Init(joystick_1_fire.port, &GPIO_InitStruct);
+
+    // Set select signals to high-impedance
+
+    GPIO_InitStruct.Pin = select_joystick.mask;
+    HAL_GPIO_Init(select_joystick.port, &GPIO_InitStruct); 
+
+    GPIO_InitStruct.Pin = select_keypad_1.mask;
+    HAL_GPIO_Init(select_keypad_1.port, &GPIO_InitStruct); 
+
+    GPIO_InitStruct.Pin = select_keypad_2.mask;
+    HAL_GPIO_Init(select_keypad_2.port, &GPIO_InitStruct); 
+
+    // Joystick directions and fire are hooked to select_joystick
+    // and select_keyboard within the controller.
+
+    // Set all joystick directions and fire button to inputs
+
+    GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+    GPIO_InitStruct.Pull = GPIO_PULLUP;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+
+    GPIO_InitStruct.Pin = joystick_2_north.mask;
+    HAL_GPIO_Init(joystick_2_north.port, &GPIO_InitStruct);
+    GPIO_InitStruct.Pin = joystick_2_south.mask;
+    HAL_GPIO_Init(joystick_2_south.port, &GPIO_InitStruct);
+    GPIO_InitStruct.Pin = joystick_2_west.mask;
+    HAL_GPIO_Init(joystick_2_west.port, &GPIO_InitStruct);
+    GPIO_InitStruct.Pin = joystick_2_east.mask;
+    HAL_GPIO_Init(joystick_2_east.port, &GPIO_InitStruct);
+    GPIO_InitStruct.Pin = joystick_2_fire.mask;
+    HAL_GPIO_Init(joystick_2_fire.port, &GPIO_InitStruct);
+}
+
+uint8_t RoGetJoystickState(RoControllerIndex which)
+{
+    GPIO_InitTypeDef  GPIO_InitStruct = {0};
+
+    // Set select_joystick to RESET, which grounds joystick and fire-left switches
+    GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_OD;
+    GPIO_InitStruct.Pull = GPIO_NOPULL;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+
+    GPIO_InitStruct.Pin = select_joystick.mask;
+    HAL_GPIO_WritePin(select_joystick.port, select_joystick.mask, GPIO_PIN_RESET);
+    HAL_GPIO_Init(select_joystick.port, &GPIO_InitStruct); 
+
+    HAL_Delay(1);
+
+    // read joystick and fire-left
+    unsigned int joystick_value = 0;
+    
+    switch(which) {
+        case CONTROLLER_1:
+            joystick_value = (
+                (HAL_GPIO_ReadPin(joystick_1_north.port, joystick_1_north.mask) << 0) | 
+                (HAL_GPIO_ReadPin(joystick_1_east.port, joystick_1_east.mask) << 1) | 
+                (HAL_GPIO_ReadPin(joystick_1_south.port, joystick_1_south.mask) << 2) | 
+                (HAL_GPIO_ReadPin(joystick_1_west.port, joystick_1_west.mask) << 3) |
+                (HAL_GPIO_ReadPin(joystick_1_fire.port, joystick_1_fire.mask) << 6)
+                ) ^ 0x4F;
+            break;
+
+        case CONTROLLER_2:
+            joystick_value = (
+                (HAL_GPIO_ReadPin(joystick_2_north.port, joystick_2_north.mask) << 0) | 
+                (HAL_GPIO_ReadPin(joystick_2_east.port, joystick_2_east.mask) << 1) | 
+                (HAL_GPIO_ReadPin(joystick_2_south.port, joystick_2_south.mask) << 2) | 
+                (HAL_GPIO_ReadPin(joystick_2_west.port, joystick_2_west.mask) << 3) |
+                (HAL_GPIO_ReadPin(joystick_2_fire.port, joystick_2_fire.mask) << 6)
+                ) ^ 0x4F;
+            break;
+    }
+
+    // set select_joystick to high-impedance
+    GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+    GPIO_InitStruct.Pull = GPIO_PULLUP;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+    GPIO_InitStruct.Pin = select_joystick.mask;
+    HAL_GPIO_Init(select_joystick.port, &GPIO_InitStruct); 
+
+    HAL_Delay(1);
+    return joystick_value;
+}
+
+uint8_t RoGetKeypadState(RoControllerIndex which)
+{
+    GPIO_InitTypeDef  GPIO_InitStruct = {0};
+
+    // Set select_keypad to RESET, which grounds keypad and fire-right switches
+    GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_OD;
+    GPIO_InitStruct.Pull = GPIO_NOPULL;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+
+    switch(which) {
+        case CONTROLLER_1:
+            GPIO_InitStruct.Pin = select_keypad_1.mask;
+            HAL_GPIO_WritePin(select_keypad_1.port, select_keypad_1.mask, GPIO_PIN_RESET);
+            HAL_GPIO_Init(select_keypad_1.port, &GPIO_InitStruct); 
+            break;
+        case CONTROLLER_2:
+            GPIO_InitStruct.Pin = select_keypad_2.mask;
+            HAL_GPIO_WritePin(select_keypad_2.port, select_keypad_2.mask, GPIO_PIN_RESET);
+            HAL_GPIO_Init(select_keypad_2.port, &GPIO_InitStruct); 
+            break;
+    }
+
+    HAL_Delay(1);
+
+    // read keypad and fire-right
+    unsigned int keypad_value = 0;
+
+    switch(which) {
+        case CONTROLLER_1:
+            keypad_value =  
+                ((HAL_GPIO_ReadPin(joystick_1_north.port, joystick_1_north.mask) << 0) | 
+                (HAL_GPIO_ReadPin(joystick_1_east.port, joystick_1_east.mask) << 1) | 
+                (HAL_GPIO_ReadPin(joystick_1_south.port, joystick_1_south.mask) << 2) | 
+                (HAL_GPIO_ReadPin(joystick_1_west.port, joystick_1_west.mask) << 3) |
+                (HAL_GPIO_ReadPin(joystick_1_fire.port, joystick_1_fire.mask) << 6)
+                ) ^ 0x4F;
+            break;
+        case CONTROLLER_2:
+            keypad_value =  
+                ((HAL_GPIO_ReadPin(joystick_2_north.port, joystick_2_north.mask) << 0) | 
+                (HAL_GPIO_ReadPin(joystick_2_east.port, joystick_2_east.mask) << 1) | 
+                (HAL_GPIO_ReadPin(joystick_2_south.port, joystick_2_south.mask) << 2) | 
+                (HAL_GPIO_ReadPin(joystick_2_west.port, joystick_2_west.mask) << 3) |
+                (HAL_GPIO_ReadPin(joystick_2_fire.port, joystick_2_fire.mask) << 6)
+                ) ^ 0x4F;
+            break;
+    }
+
+    // set select_keypad to high-impedance
+    GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+    GPIO_InitStruct.Pull = GPIO_PULLUP;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+    switch(which) {
+        case CONTROLLER_1:
+            GPIO_InitStruct.Pin = select_keypad_1.mask;
+            HAL_GPIO_Init(select_keypad_1.port, &GPIO_InitStruct); 
+            break;
+        case CONTROLLER_2:
+            GPIO_InitStruct.Pin = select_keypad_2.mask;
+            HAL_GPIO_Init(select_keypad_2.port, &GPIO_InitStruct); 
+            break;
+    }
+
+    HAL_Delay(1);
+
+    return keypad_value;
+}
+
+char ColecoKeypadToCharacter(uint8_t value)
+{
+    switch(value) {
+        case 0: return '-';
+        case CONTROLLER_KEYPAD_0: return '0';
+        case CONTROLLER_KEYPAD_1: return '1';
+        case CONTROLLER_KEYPAD_2: return '2';
+        case CONTROLLER_KEYPAD_3: return '3';
+        case CONTROLLER_KEYPAD_4: return '4';
+        case CONTROLLER_KEYPAD_5: return '5';
+        case CONTROLLER_KEYPAD_6: return '6';
+        case CONTROLLER_KEYPAD_7: return '7';
+        case CONTROLLER_KEYPAD_8: return '8';
+        case CONTROLLER_KEYPAD_9: return '9';
+        case CONTROLLER_KEYPAD_asterisk: return '*';
+        case CONTROLLER_KEYPAD_pound: return '#';
+        default: return '?';
+    }
+}
+
 
 // Audio subsystem =========================================================
 
@@ -1029,7 +1292,7 @@ void NTSCFillRowBuffer(int frameNumber, int lineNumber, unsigned char *rowBuffer
 
 int debugOverlayEnabled = 0;
 
-#define debugDisplayLeftTick (NTSCHSyncClocks + NTSCBackPorchClocks + 56)
+#define debugDisplayLeftTick (NTSCHSyncClocks + NTSCBackPorchClocks + 64)
 #define debugDisplayTopTick (NTSC_EQPULSE_LINES + NTSC_VSYNC_LINES + NTSC_EQPULSE_LINES + NTSC_VBLANK_LINES + 18)
 /* debugFontWidthScale != 4 looks terrible in a color field because of adjacent color columns; probably need to ensure 0s around any 1 text column */
 #define debugFontWidthScale 2
@@ -1860,7 +2123,7 @@ int AlwaysColorburst()
 //----------------------------------------------------------------------------
 // Text Mode
 
-#define TextModeLeftTick 56
+#define TextModeLeftTick 64
 #define TextModeTopTick (NTSC_EQPULSE_LINES + NTSC_VSYNC_LINES + NTSC_EQPULSE_LINES + NTSC_VBLANK_LINES + 26)
 #define TextModeFontWidthScale 2
 #define TextModeCharGapPixels 1
@@ -2397,12 +2660,40 @@ Status PromptUserToChooseFile(const char *title, const char *dirName, uint32_t f
     Status status = RO_SUCCESS;
 
     KeyRepeatManager keyRepeat;
+    uint8_t wasPressed = 0;
+    uint32_t debounceStart = 0;
 
     while(!done) {
+
+        int moveUpOne = 0;
+        int moveDownOne = 0;
+        int selectCurrentLine = 0;
 
         if(redraw) {
             ShowListOfItems(title, filenames, filenamesSize, whichFilenameAtTop, whichFilenameSelected);
             redraw = 0;
+        }
+
+        uint8_t joystick1 = RoGetJoystickState(CONTROLLER_1);
+        int northPressed = joystick1 & CONTROLLER_NORTH_BIT;
+        int southPressed = joystick1 & CONTROLLER_SOUTH_BIT;
+        int firePressed = joystick1 & CONTROLLER_FIRE_BIT;
+        if(northPressed || southPressed || firePressed) {
+            wasPressed = joystick1;
+            debounceStart = HAL_GetTick();
+        }
+        uint32_t now = HAL_GetTick();
+        if(wasPressed && (joystick1 == 0) && ((now - debounceStart) > 100)) {
+            if(wasPressed & CONTROLLER_NORTH_BIT) {
+                moveUpOne = 1;
+            }
+            if(wasPressed & CONTROLLER_SOUTH_BIT) {
+                moveDownOne = 1;
+            }
+            if(wasPressed & CONTROLLER_FIRE_BIT) {
+                selectCurrentLine = 1;
+            }
+            wasPressed = 0;
         }
 
         Event ev;
@@ -2425,31 +2716,15 @@ Status PromptUserToChooseFile(const char *title, const char *dirName, uint32_t f
 
                         } else if(raw.key == KEYCAP_ENTER) {
 
-                            *fileChosen = strdup(filenames[whichFilenameSelected]);
-                            status = RO_SUCCESS;
-                            done = 1;
+                            selectCurrentLine = 1;
 
                         } else if(raw.key == KEYCAP_UP) {
 
-                            whichFilenameSelected = (whichFilenameSelected - 1 < 0) ? 0 : (whichFilenameSelected - 1);
-                            if(whichFilenameAtTop > whichFilenameSelected) {
-                                whichFilenameAtTop = whichFilenameSelected;
-                            }
-                            redraw = 1;
+                            moveUpOne = 1;
 
                         } else if(raw.key == KEYCAP_DOWN) {
 
-                            int w, h;
-                            TextModeGetSize(&w, &h);
-                            int availableLines = h - 4;
-                            whichFilenameSelected = whichFilenameSelected + 1;
-                            if((whichFilenameSelected + 1) > filenamesSize - 1) {
-                                whichFilenameSelected = filenamesSize - 1;
-                            }
-                            if(whichFilenameSelected > whichFilenameAtTop + (availableLines - 1)) {
-                                whichFilenameAtTop = whichFilenameSelected - (availableLines - 1);
-                            }
-                            redraw = 1;
+                            moveDownOne = 1;
                         }
                     }
                     break;
@@ -2459,6 +2734,36 @@ Status PromptUserToChooseFile(const char *title, const char *dirName, uint32_t f
                     break;
             }
         }
+
+        if(selectCurrentLine) {
+            *fileChosen = strdup(filenames[whichFilenameSelected]);
+            status = RO_SUCCESS;
+            done = 1;
+        }
+
+        if(moveUpOne) {
+
+            whichFilenameSelected = (whichFilenameSelected - 1 < 0) ? 0 : (whichFilenameSelected - 1);
+            if(whichFilenameAtTop > whichFilenameSelected) {
+                whichFilenameAtTop = whichFilenameSelected;
+            }
+            redraw = 1;
+
+        } else if(moveDownOne) {
+
+            int w, h;
+            TextModeGetSize(&w, &h);
+            int availableLines = h - 4;
+            whichFilenameSelected = whichFilenameSelected + 1;
+            if((whichFilenameSelected + 1) > filenamesSize - 1) {
+                whichFilenameSelected = filenamesSize - 1;
+            }
+            if(whichFilenameSelected > whichFilenameAtTop + (availableLines - 1)) {
+                whichFilenameAtTop = whichFilenameSelected - (availableLines - 1);
+            }
+            redraw = 1;
+        }
+
         main_iterate(); // XXX
     }
 
@@ -2722,267 +3027,6 @@ void DrawLine(int x0, int y0, int x1, int y1, int c)
 }
 
 //----------------------------------------------------------------------------
-// Code from alice3cv that needs to be cleaned up and pared down
-
-static inline void set_GPIO_value(GPIO_TypeDef* gpio, int mask, int value)
-{
-    unsigned long int data = value ? mask : 0;
-    gpio->ODR = (gpio->ODR & ~mask) | data;
-    __asm__ volatile("" ::: "memory"); // Force all memory operations before to come before and all after to come after.
-}
-
-static inline void set_GPIO_iotype(GPIO_TypeDef* gpio, int pin, unsigned int iotype)
-{
-    long unsigned int mask = ~(3U << (pin * 2));
-    long unsigned int value = iotype << (pin * 2);
-    gpio->MODER = (gpio->MODER & mask) | value;
-    __asm__ volatile("" ::: "memory"); // Force all memory operations before to come before and all after to come after.
-}
-
-typedef struct gpio
-{
-    GPIO_TypeDef* port;
-    int pin;
-    unsigned int mask;
-#if 0
-    gpio(GPIO_TypeDef* port_, int pin_) :
-        port(port_),
-        pin(pin_)
-    {
-        mask = 1U << pin;
-    }
-#endif
-} gpio;
-
-const gpio select_joystick = { GPIOB, 13, 1U << 13};
-const gpio select_keypad_1 = { GPIOF, 7, 1U << 7};
-const gpio select_keypad_2 = { GPIOF, 8, 1U << 8};
-
-const gpio joystick_1_north = { GPIOH, 6, 1U << 6};
-const gpio joystick_1_south = { GPIOH, 7, 1U << 7};
-const gpio joystick_1_west = { GPIOH, 8, 1U << 8};
-const gpio joystick_1_east = { GPIOH, 9, 1U << 9};
-const gpio joystick_1_fire = { GPIOI, 10, 1U << 10};
-
-const gpio joystick_2_north = { GPIOH, 12, 1U << 12};
-const gpio joystick_2_south = { GPIOH, 13, 1U << 13};
-const gpio joystick_2_west = { GPIOH, 14, 1U << 14};
-const gpio joystick_2_east = { GPIOH, 15, 1U << 15};
-const gpio joystick_2_fire = { GPIOI, 11, 1U << 11};
-
-const int CONTROLLER_FIRE_BIT = 0x40;
-const int CONTROLLER_NORTH_BIT = 0x01;
-const int CONTROLLER_EAST_BIT = 0x02;
-const int CONTROLLER_SOUTH_BIT = 0x04;
-const int CONTROLLER_WEST_BIT = 0x08;
-const int CONTROLLER_KEYPAD_MASK = 0x0F;
-const int CONTROLLER_KEYPAD_0 = 0x05;
-const int CONTROLLER_KEYPAD_1 = 0x02;
-const int CONTROLLER_KEYPAD_2 = 0x08;
-const int CONTROLLER_KEYPAD_3 = 0x03;
-const int CONTROLLER_KEYPAD_4 = 0x0D;
-const int CONTROLLER_KEYPAD_5 = 0x0C;
-const int CONTROLLER_KEYPAD_6 = 0x01;
-const int CONTROLLER_KEYPAD_7 = 0x0A;
-const int CONTROLLER_KEYPAD_8 = 0x0E;
-const int CONTROLLER_KEYPAD_9 = 0x04;
-const int CONTROLLER_KEYPAD_asterisk = 0x09;
-const int CONTROLLER_KEYPAD_pound = 0x06;
-
-void InitializeControllers(void)
-{
-    GPIO_InitTypeDef  GPIO_InitStruct = {0};
-
-    // Joystick directions and fire are hooked to select_joystick
-    // and select_keyboard within the controller.
-
-    // Set all joystick directions and fire button to inputs
-
-    GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-    GPIO_InitStruct.Pull = GPIO_PULLUP;
-    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-
-    GPIO_InitStruct.Pin = joystick_1_north.mask;
-    HAL_GPIO_Init(joystick_1_north.port, &GPIO_InitStruct);
-    GPIO_InitStruct.Pin = joystick_1_south.mask;
-    HAL_GPIO_Init(joystick_1_south.port, &GPIO_InitStruct);
-    GPIO_InitStruct.Pin = joystick_1_west.mask;
-    HAL_GPIO_Init(joystick_1_west.port, &GPIO_InitStruct);
-    GPIO_InitStruct.Pin = joystick_1_east.mask;
-    HAL_GPIO_Init(joystick_1_east.port, &GPIO_InitStruct);
-    GPIO_InitStruct.Pin = joystick_1_fire.mask;
-    HAL_GPIO_Init(joystick_1_fire.port, &GPIO_InitStruct);
-
-    // Set select signals to high-impedance
-
-    GPIO_InitStruct.Pin = select_joystick.mask;
-    HAL_GPIO_Init(select_joystick.port, &GPIO_InitStruct); 
-
-    GPIO_InitStruct.Pin = select_keypad_1.mask;
-    HAL_GPIO_Init(select_keypad_1.port, &GPIO_InitStruct); 
-
-    GPIO_InitStruct.Pin = select_keypad_2.mask;
-    HAL_GPIO_Init(select_keypad_2.port, &GPIO_InitStruct); 
-
-    // Joystick directions and fire are hooked to select_joystick
-    // and select_keyboard within the controller.
-
-    // Set all joystick directions and fire button to inputs
-
-    GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-    GPIO_InitStruct.Pull = GPIO_PULLUP;
-    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-
-    GPIO_InitStruct.Pin = joystick_2_north.mask;
-    HAL_GPIO_Init(joystick_2_north.port, &GPIO_InitStruct);
-    GPIO_InitStruct.Pin = joystick_2_south.mask;
-    HAL_GPIO_Init(joystick_2_south.port, &GPIO_InitStruct);
-    GPIO_InitStruct.Pin = joystick_2_west.mask;
-    HAL_GPIO_Init(joystick_2_west.port, &GPIO_InitStruct);
-    GPIO_InitStruct.Pin = joystick_2_east.mask;
-    HAL_GPIO_Init(joystick_2_east.port, &GPIO_InitStruct);
-    GPIO_InitStruct.Pin = joystick_2_fire.mask;
-    HAL_GPIO_Init(joystick_2_fire.port, &GPIO_InitStruct);
-}
-
-uint8_t RoGetJoystickState(RoControllerIndex which)
-{
-    GPIO_InitTypeDef  GPIO_InitStruct = {0};
-
-    // Set select_joystick to RESET, which grounds joystick and fire-left switches
-    GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_OD;
-    GPIO_InitStruct.Pull = GPIO_NOPULL;
-    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-
-    GPIO_InitStruct.Pin = select_joystick.mask;
-    HAL_GPIO_WritePin(select_joystick.port, select_joystick.mask, GPIO_PIN_RESET);
-    HAL_GPIO_Init(select_joystick.port, &GPIO_InitStruct); 
-
-    HAL_Delay(1);
-
-    // read joystick and fire-left
-    unsigned int joystick_value = 0;
-    
-    switch(which) {
-        case CONTROLLER_1:
-            joystick_value = (
-                (HAL_GPIO_ReadPin(joystick_1_north.port, joystick_1_north.mask) << 0) | 
-                (HAL_GPIO_ReadPin(joystick_1_east.port, joystick_1_east.mask) << 1) | 
-                (HAL_GPIO_ReadPin(joystick_1_south.port, joystick_1_south.mask) << 2) | 
-                (HAL_GPIO_ReadPin(joystick_1_west.port, joystick_1_west.mask) << 3) |
-                (HAL_GPIO_ReadPin(joystick_1_fire.port, joystick_1_fire.mask) << 6)
-                ) ^ 0x4F;
-            break;
-
-        case CONTROLLER_2:
-            joystick_value = (
-                (HAL_GPIO_ReadPin(joystick_2_north.port, joystick_2_north.mask) << 0) | 
-                (HAL_GPIO_ReadPin(joystick_2_east.port, joystick_2_east.mask) << 1) | 
-                (HAL_GPIO_ReadPin(joystick_2_south.port, joystick_2_south.mask) << 2) | 
-                (HAL_GPIO_ReadPin(joystick_2_west.port, joystick_2_west.mask) << 3) |
-                (HAL_GPIO_ReadPin(joystick_2_fire.port, joystick_2_fire.mask) << 6)
-                ) ^ 0x4F;
-            break;
-    }
-
-    // set select_joystick to high-impedance
-    GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-    GPIO_InitStruct.Pull = GPIO_PULLUP;
-    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-    GPIO_InitStruct.Pin = select_joystick.mask;
-    HAL_GPIO_Init(select_joystick.port, &GPIO_InitStruct); 
-
-    HAL_Delay(1);
-    return joystick_value;
-}
-
-uint8_t RoGetKeypadState(RoControllerIndex which)
-{
-    GPIO_InitTypeDef  GPIO_InitStruct = {0};
-
-    // Set select_keypad to RESET, which grounds keypad and fire-right switches
-    GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_OD;
-    GPIO_InitStruct.Pull = GPIO_NOPULL;
-    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-
-    switch(which) {
-        case CONTROLLER_1:
-            GPIO_InitStruct.Pin = select_keypad_1.mask;
-            HAL_GPIO_WritePin(select_keypad_1.port, select_keypad_1.mask, GPIO_PIN_RESET);
-            HAL_GPIO_Init(select_keypad_1.port, &GPIO_InitStruct); 
-            break;
-        case CONTROLLER_2:
-            GPIO_InitStruct.Pin = select_keypad_2.mask;
-            HAL_GPIO_WritePin(select_keypad_2.port, select_keypad_2.mask, GPIO_PIN_RESET);
-            HAL_GPIO_Init(select_keypad_2.port, &GPIO_InitStruct); 
-            break;
-    }
-
-    HAL_Delay(1);
-
-    // read keypad and fire-right
-    unsigned int keypad_value = 0;
-
-    switch(which) {
-        case CONTROLLER_1:
-            keypad_value =  
-                ((HAL_GPIO_ReadPin(joystick_1_north.port, joystick_1_north.mask) << 0) | 
-                (HAL_GPIO_ReadPin(joystick_1_east.port, joystick_1_east.mask) << 1) | 
-                (HAL_GPIO_ReadPin(joystick_1_south.port, joystick_1_south.mask) << 2) | 
-                (HAL_GPIO_ReadPin(joystick_1_west.port, joystick_1_west.mask) << 3) |
-                (HAL_GPIO_ReadPin(joystick_1_fire.port, joystick_1_fire.mask) << 6)
-                ) ^ 0x4F;
-            break;
-        case CONTROLLER_2:
-            keypad_value =  
-                ((HAL_GPIO_ReadPin(joystick_2_north.port, joystick_2_north.mask) << 0) | 
-                (HAL_GPIO_ReadPin(joystick_2_east.port, joystick_2_east.mask) << 1) | 
-                (HAL_GPIO_ReadPin(joystick_2_south.port, joystick_2_south.mask) << 2) | 
-                (HAL_GPIO_ReadPin(joystick_2_west.port, joystick_2_west.mask) << 3) |
-                (HAL_GPIO_ReadPin(joystick_2_fire.port, joystick_2_fire.mask) << 6)
-                ) ^ 0x4F;
-            break;
-    }
-
-    // set select_keypad to high-impedance
-    GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-    GPIO_InitStruct.Pull = GPIO_PULLUP;
-    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-    switch(which) {
-        case CONTROLLER_1:
-            GPIO_InitStruct.Pin = select_keypad_1.mask;
-            HAL_GPIO_Init(select_keypad_1.port, &GPIO_InitStruct); 
-            break;
-        case CONTROLLER_2:
-            GPIO_InitStruct.Pin = select_keypad_2.mask;
-            HAL_GPIO_Init(select_keypad_2.port, &GPIO_InitStruct); 
-            break;
-    }
-
-    HAL_Delay(1);
-
-    return keypad_value;
-}
-
-char ColecoKeypadToCharacter(uint8_t value)
-{
-    switch(value) {
-        case 0: return '-';
-        case CONTROLLER_KEYPAD_0: return '0';
-        case CONTROLLER_KEYPAD_1: return '1';
-        case CONTROLLER_KEYPAD_2: return '2';
-        case CONTROLLER_KEYPAD_3: return '3';
-        case CONTROLLER_KEYPAD_4: return '4';
-        case CONTROLLER_KEYPAD_5: return '5';
-        case CONTROLLER_KEYPAD_6: return '6';
-        case CONTROLLER_KEYPAD_7: return '7';
-        case CONTROLLER_KEYPAD_8: return '8';
-        case CONTROLLER_KEYPAD_9: return '9';
-        case CONTROLLER_KEYPAD_asterisk: return '*';
-        case CONTROLLER_KEYPAD_pound: return '#';
-        default: return '?';
-    }
-}
 
 void TestControllers()
 {
@@ -3195,7 +3239,6 @@ int main(void)
 
     printf("Hello World\n");
     printf("System clock is %lu\n", HAL_RCC_GetSysClockFreq());
-    RoDebugOverlayPrintf("Hello World\n");
 
     while(0) {
         for(int i = 0; i < 1000000; i++) {
@@ -3525,14 +3568,23 @@ int main(void)
     }
 
     if(1) {
-        const char *args[] = {
-            "emulator",
-            "coleco/COLECO.ROM",
-            "coleco/zaxxon.col"
-        };
-        printf("coleco...\n");
-        NTSCSwitchModeFuncs(TMS9918ModeFillRowBuffer, DefaultNeedsColorburst);
-        coleco_main(sizeof(args) / sizeof(args[0]), args); /* doesn't return */
+        Status status;
+        char *fileChosenInDir;
+        char fileChosen[512];
+
+        status = PromptUserToChooseFile("Choose a Coleco Cartridge", "/coleco", CHOOSE_FILE_IGNORE_DOTFILES, NULL /* ".dsk" */, &fileChosenInDir);
+        sprintf(fileChosen, "/coleco/%s", fileChosenInDir);
+        RoDebugOverlayPrintf("chose \"%s\"\n", fileChosen);
+        HAL_Delay(2000);
+        if(status == RO_SUCCESS) {
+            const char *args[] = {
+                "emulator",
+                "coleco/COLECO.ROM",
+                fileChosen,
+            };
+            NTSCSwitchModeFuncs(TMS9918ModeFillRowBuffer, DefaultNeedsColorburst);
+            coleco_main(sizeof(args) / sizeof(args[0]), args); /* doesn't return */
+        }
     }
 
     if(1) {
@@ -3541,7 +3593,7 @@ int main(void)
 
         Status status;
         char *fileChosenInDir;
-        static char fileChosen[512];
+        char fileChosen[512];
 
         status = PromptUserToChooseFile("Choose an Apple ][ boot disk", "/floppies", CHOOSE_FILE_IGNORE_DOTFILES, NULL /* ".dsk" */, &fileChosenInDir);
         sprintf(fileChosen, "/floppies/%s", fileChosenInDir);

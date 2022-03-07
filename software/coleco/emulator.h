@@ -11,8 +11,6 @@ extern unsigned short Z80_INTERRUPT_FETCH_DATA;
 
 struct board_base
 {
-    std::set<int> io_reads;
-    std::map<int, unsigned char> io_writes;
     virtual bool memory_write(int addr, unsigned char data) { return false; }
     virtual bool memory_read(int addr, unsigned char &data) { return false; }
     virtual bool io_write(int addr, unsigned char data) { return false; }

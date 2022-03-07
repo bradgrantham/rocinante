@@ -154,6 +154,7 @@ CXX_SOURCES = \
 	coleco/tms9918.cpp \
 	coleco/emulator.cpp \
 	coleco/coleco_platform_rosa.cpp \
+	coleco/z80emu.c \
         $(NULL)
 
 

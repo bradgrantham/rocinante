@@ -63,14 +63,13 @@ uint8_t GetJoystickState(ControllerIndex controller)
     uint8_t data;
     switch(controller) {
         case CONTROLLER_1:
-            data = ((~keyboard_1_joystick_state) & 0x7F)  | RoGetJoystickState(RoControllerIndex::CONTROLLER_1);
+            data = ~(keyboard_1_joystick_state | RoGetJoystickState(RoControllerIndex::CONTROLLER_1)) & 0x7F;
             break;
         case CONTROLLER_2:
-            data = ((~keyboard_2_joystick_state) & 0x7F)  | RoGetJoystickState(RoControllerIndex::CONTROLLER_2);
+            data = ~(keyboard_2_joystick_state | RoGetJoystickState(RoControllerIndex::CONTROLLER_2)) & 0x7F;
             break;
         default: return 0;
     }
-    RoDebugOverlayPrintf("controller %d: %02X\n", data);
     return data;
 }
 
@@ -79,14 +78,13 @@ uint8_t GetKeypadState(ControllerIndex controller)
     uint8_t data;
     switch(controller) {
         case CONTROLLER_1:
-            data = ((~keyboard_1_keypad_state) & 0x7F)  | RoGetKeypadState(RoControllerIndex::CONTROLLER_1);
+            data = ~(keyboard_1_keypad_state | RoGetKeypadState(RoControllerIndex::CONTROLLER_1)) & 0x7F;
             break;
         case CONTROLLER_2:
-            data = ((~keyboard_2_keypad_state) & 0x7F)  | RoGetKeypadState(RoControllerIndex::CONTROLLER_2);
+            data = ~(keyboard_2_keypad_state | RoGetKeypadState(RoControllerIndex::CONTROLLER_2)) & 0x7F;
             break;
         default: return 0;
     }
-    RoDebugOverlayPrintf("controller %d: %02X\n", data);
     return data;
 }
 
@@ -334,13 +332,14 @@ void Frame(const uint8_t* vdp_registers, const uint8_t* vdp_ram, uint8_t& vdp_st
     std::chrono::duration<float> elapsed;
     
     elapsed = now - previous_event_time;
-    if(elapsed.count() > .05) {
+    if(elapsed.count() > .015) {
         HandleEvents();
         previous_event_time = now;
     }
 
     elapsed = now - previous_draw_time;
-    if(elapsed.count() > .05) {
+    if(elapsed.count() > .015)
+    {
         NTSCWaitFrame();
         memcpy(TMS9918Registers, vdp_registers, 8);
         memcpy(TMS9918RAM, vdp_ram, 16384);
