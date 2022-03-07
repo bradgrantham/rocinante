@@ -117,7 +117,7 @@ void EnqueueAudioSamples(uint8_t *buf, size_t sz)
 std::chrono::time_point<std::chrono::system_clock> previous_draw_time;
 std::chrono::time_point<std::chrono::system_clock> previous_event_time;
 
-void Start(int& audioSampleRate_, size_t& preferredAudioBufferSampleCount_)
+void Start(uint32_t& audioSampleRate_, size_t& preferredAudioBufferSampleCount_)
 {
     uint8_t *audioBufferPtr; /* ignored */
     RoAudioGetSamplingInfo(&audioSampleRate, &audioBufferLengthBytes, &audioBufferPtr);
