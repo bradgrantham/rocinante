@@ -40,6 +40,10 @@
 
 // XXX *** MUST do sprite signal at scanout time *** XXX
 
+// Wrap the entire app in a namespace to protect from other apps if linked together.
+namespace ColecovisionEmulator
+{
+
 Z80_STATE z80state;
 
 bool Z80IsInNMI(Z80_STATE& z80state)
@@ -95,9 +99,6 @@ struct ROMboard
     {
     }
 };
-
-namespace ColecovisionEmulator
-{
 
 bool quit_requested = false;
 bool enter_debugger = false; 
@@ -391,7 +392,7 @@ struct TMS9918AEmulator
     void write(uint8_t cmd, uint8_t data)
     {
         using namespace TMS9918A;
-        if(debug & DEBUG_VDP_OPERATIONS) printf("VDP write %d cmd==%d, in_nmi = %d\n", write_number, cmd, Z80IsInNMI(z80state) ? 1 : 0);
+        if(debug & DEBUG_VDP_OPERATIONS) printf("VDP write %lu cmd==%d, in_nmi = %d\n", write_number, cmd, Z80IsInNMI(z80state) ? 1 : 0);
         if(do_save_images_on_vdp_write) { /* debug */
 
             uint8_t framebuffer[SCREEN_X * SCREEN_Y * 3];
@@ -402,7 +403,7 @@ struct TMS9918AEmulator
 
             CreateImageAndReturnFlags(registers.data(), memory.data(), pixel_setter);
             char name[512];
-            sprintf(name, "frame_%04d_%05d_%d_%02X.ppm", frame_number, write_number, cmd, data);
+            sprintf(name, "frame_%04lu_%05lu_%d_%02X.ppm", frame_number, write_number, cmd, data);
             FILE *fp = fopen(name, "wb");
             write_rgb8_image_as_P6(framebuffer, SCREEN_X, SCREEN_Y, fp);
             fclose(fp);
@@ -495,7 +496,7 @@ struct TMS9918AEmulator
         frame_number++;
         write_number = 0;
         if(debug & DEBUG_SCANOUT) {
-            printf("scanout frame %d\n", frame_number);
+            printf("scanout frame %lu\n", frame_number);
         }
 
         status_register |= scanout(registers.data(), memory.data());
@@ -665,32 +666,6 @@ struct ColecoHW
     }
 };
 
-}; // namespace ColecovisionEmulator
-
-uint8_t cv_in_byte(void* ctx_, uint16_t address16)
-{
-    auto *context = reinterpret_cast<ColecovisionContext*>(ctx_);
-    auto* cvhw = reinterpret_cast<ColecovisionEmulator::ColecoHW*>(context->cvhw);
-
-    uint8_t b = 0;
-    bool served = cvhw->io_read(address16 & 0xff, b);
-    if(!served) {
-        printf("IN %d (0x%02X) was not handled!\n", address16, address16);
-    }
-    return b;
-}
-
-void cv_out_byte(void* ctx_, uint16_t address16, uint8_t value)
-{
-    auto *context = reinterpret_cast<ColecovisionContext*>(ctx_);
-    auto* cvhw = reinterpret_cast<ColecovisionEmulator::ColecoHW*>(context->cvhw);
-
-    bool accepted = cvhw->io_write(address16 & 0xff, value);
-    if(!accepted) {
-        printf("OUT %d (0x%02X), 0x%02X was not handled!\n", address16, address16, value);
-    }
-}
-
 #if USE_BG80D
 #include "bg80d.h"
 #endif /* USE_BG80D */
@@ -826,7 +801,7 @@ bool is_breakpoint_triggered(std::vector<BreakPoint>& breakpoints, Z80_STATE* st
 
 struct Debugger
 {
-    ColecovisionEmulator::ColecoHW* colecohw{nullptr};
+    ColecoHW* colecohw{nullptr};
     ColecovisionContext *colecovision_context;
     clk_t& clk;
     std::vector<BreakPoint> breakpoints;
@@ -889,7 +864,7 @@ struct Debugger
         last_was_step = false;
         last_was_jump = false;
     }
-    Debugger(ColecovisionEmulator::ColecoHW *colecohw, ColecovisionContext *colecovision_context, clk_t& clk) :
+    Debugger(ColecoHW *colecohw, ColecovisionContext *colecovision_context, clk_t& clk) :
         colecohw(colecohw),
         colecovision_context(colecovision_context),
         clk(clk)
@@ -1615,7 +1590,7 @@ void Debugger::go(FILE *fp, Z80_STATE* state)
 
 struct Debugger
 {
-    Debugger(ColecovisionEmulator::ColecoHW *colecohw, ColecovisionContext *colecovision_context, clk_t& clk) {}
+    Debugger(ColecoHW *colecohw, ColecovisionContext *colecovision_context, clk_t& clk) {}
 };
 
 #endif /* PROVIDE_DEBUGGER */
@@ -1685,7 +1660,7 @@ void WriteVDPStateToFile(const char *base, int which, const uint8_t* registers, 
     fputs("", vdp_file);
 }
 
-void SaveVDPState(const ColecovisionEmulator::TMS9918AEmulator *vdp, int which)
+void SaveVDPState(const TMS9918AEmulator *vdp, int which)
 {
     char filename[512];
     sprintf(filename, "%s_%02d.vdp", getenv("VDP_OUT_BASE"), which);
@@ -1693,6 +1668,42 @@ void SaveVDPState(const ColecovisionEmulator::TMS9918AEmulator *vdp, int which)
     WriteVDPStateToFile(getenv("VDP_OUT_BASE"), which, vdp->registers.data(), vdp->memory.data(), vdp_file);
     fclose(vdp_file);
 }
+
+uint8_t GetPlatformControllerState(int index, bool JoystickNotKeypad)
+{
+    using namespace PlatformInterface;
+    ControllerIndex controller = (index == 0) ? PlatformInterface::CONTROLLER_1 : PlatformInterface::CONTROLLER_2;
+    if(JoystickNotKeypad) {
+        return GetJoystickState(controller);
+    } else {
+        return GetKeypadState(controller);
+    }
+}
+
+struct ControllerEvent
+{
+    clk_t clk;
+    bool JoystickNotKeypad;
+    int index;
+    uint8_t bits_set;
+    uint8_t bits_cleared;
+};
+
+void set_colecovision_context(ColecovisionContext *colecovision_context, RAMboard& RAM, ROMboard& BIOS, ROMboard& cartridge, ColecoHW* colecohw)
+{
+    colecovision_context->RAM = RAM.bytes.data();
+
+    colecovision_context->BIOS.start = BIOS.base;
+    colecovision_context->BIOS.length = BIOS.length;
+    colecovision_context->BIOS.bytes = BIOS.bytes.data();
+
+    colecovision_context->cartridge.start = cartridge.base;
+    colecovision_context->cartridge.length = cartridge.length;
+    colecovision_context->cartridge.bytes = cartridge.bytes.data();
+
+    colecovision_context->cvhw = colecohw;
+}
+
 
 #if defined(ROSA)
 
@@ -1719,44 +1730,36 @@ static void sleep_for(int32_t millis)
 #endif
 }
 
-uint8_t GetPlatformControllerState(int index, bool JoystickNotKeypad)
+extern "C" {
+
+uint8_t cv_in_byte(void* ctx_, uint16_t address16)
 {
-    using namespace PlatformInterface;
-    ControllerIndex controller = (index == 0) ? CONTROLLER_1 : CONTROLLER_2;
-    if(JoystickNotKeypad) {
-        return GetJoystickState(controller);
-    } else {
-        return GetKeypadState(controller);
+    auto *context = reinterpret_cast<ColecovisionContext*>(ctx_);
+    auto* cvhw = reinterpret_cast<ColecoHW*>(context->cvhw);
+
+    uint8_t b = 0;
+    bool served = cvhw->io_read(address16 & 0xff, b);
+    if(!served) {
+        printf("IN %d (0x%02X) was not handled!\n", address16, address16);
+    }
+    return b;
+}
+
+void cv_out_byte(void* ctx_, uint16_t address16, uint8_t value)
+{
+    auto *context = reinterpret_cast<ColecovisionContext*>(ctx_);
+    auto* cvhw = reinterpret_cast<ColecoHW*>(context->cvhw);
+
+    bool accepted = cvhw->io_write(address16 & 0xff, value);
+    if(!accepted) {
+        printf("OUT %d (0x%02X), 0x%02X was not handled!\n", address16, address16, value);
     }
 }
 
-struct ControllerEvent
-{
-    clk_t clk;
-    bool JoystickNotKeypad;
-    int index;
-    uint8_t bits_set;
-    uint8_t bits_cleared;
 };
-
-void set_colecovision_context(ColecovisionContext *colecovision_context, RAMboard& RAM, ROMboard& BIOS, ROMboard& cartridge, ColecovisionEmulator::ColecoHW* colecohw)
-{
-    colecovision_context->RAM = RAM.bytes.data();
-
-    colecovision_context->BIOS.start = BIOS.base;
-    colecovision_context->BIOS.length = BIOS.length;
-    colecovision_context->BIOS.bytes = BIOS.bytes.data();
-
-    colecovision_context->cartridge.start = cartridge.base;
-    colecovision_context->cartridge.length = cartridge.length;
-    colecovision_context->cartridge.bytes = cartridge.bytes.data();
-
-    colecovision_context->cvhw = colecohw;
-}
 
 int main(int argc, char **argv)
 {
-    using namespace ColecovisionEmulator;
     using namespace PlatformInterface;
     using namespace std::chrono_literals;
 #ifdef PROVIDE_DEBUGGER
@@ -2149,3 +2152,6 @@ int main(int argc, char **argv)
 
     return 0;
 }
+
+}; // namespace ColecovisionEmulator
+
