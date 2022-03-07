@@ -39,6 +39,7 @@ BUILD_DIR = build
 C_SOURCES =  \
 syscalls.c \
 picture.c \
+coleco/z80emu.c \
 Core/Src/main.c \
 Core/Src/stm32h7xx_it.c \
 Core/Src/stm32h7xx_hal_msp.c \
@@ -154,7 +155,6 @@ CXX_SOURCES = \
 	coleco/tms9918.cpp \
 	coleco/emulator.cpp \
 	coleco/coleco_platform_rosa.cpp \
-	coleco/z80emu.c \
         $(NULL)
 
 
