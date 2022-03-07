@@ -348,6 +348,8 @@ static uint8_t AddSpritesToRowReturnFlags(int row, uint8_t row_colors[TMS9918A::
         bool sprite_earlyclock = sprite[3] & SPRITE_EARLY_CLOCK_MASK;
         int sprite_color = sprite[3] & SPRITE_COLOR_MASK;
 
+        int masked_sprite = sprite_name & SPRITE_NAME_MASK_SIZE4;
+
         // printf("sprite %d: %d %d %d %d\n", i, sprite_x, sprite_y, sprite_name, sprite_color);
 
         if(sprite_earlyclock) {
@@ -366,7 +368,12 @@ static uint8_t AddSpritesToRowReturnFlags(int row, uint8_t row_colors[TMS9918A::
             sprites_in_row ++;
             if(sprites_in_row > 5) {
                 flags_set |= VDP_STATUS_5S_BIT;
+                break; // XXX
             }
+
+            int within_quadrant_y = within_sprite_y % 8;
+            int quadrant_y = within_sprite_y / 8;
+            int sprite_pattern_address_notsize4 = GetSpritePatternTableBase(registers) | (sprite_name << SPRITE_NAME_SHIFT) | within_sprite_y;
 
             for(int x = start_x; x <= end_x; x++) {
 
@@ -376,17 +383,14 @@ static uint8_t AddSpritesToRowReturnFlags(int row, uint8_t row_colors[TMS9918A::
 
                 if(size4) {
 
-                    int quadrant = within_sprite_y / 8 + (within_sprite_x / 8) * 2;
-                    int within_quadrant_y = within_sprite_y % 8;
+                    int quadrant = quadrant_y + (within_sprite_x / 8) * 2;
                     int within_quadrant_x = within_sprite_x % 8;
-                    int masked_sprite = sprite_name & SPRITE_NAME_MASK_SIZE4;
                     int sprite_pattern_address = GetSpritePatternTableBase(registers) | (masked_sprite << SPRITE_NAME_SHIFT) | (quadrant << 3) | within_quadrant_y;
                     bit = memory[sprite_pattern_address] & (0x80 >> within_quadrant_x);
 
                 } else {
 
-                    int sprite_pattern_address = GetSpritePatternTableBase(registers) | (sprite_name << SPRITE_NAME_SHIFT) | within_sprite_y;
-                    bit = memory[sprite_pattern_address] & (0x80 >> within_sprite_x);
+                    bit = memory[sprite_pattern_address_notsize4] & (0x80 >> within_sprite_x);
                 }
 
                 if(bit) {
@@ -394,6 +398,9 @@ static uint8_t AddSpritesToRowReturnFlags(int row, uint8_t row_colors[TMS9918A::
                         flags_set |= VDP_STATUS_C_BIT;
                     }
                     sprite_touched[x] = true;
+		    // XXX I don't think this next bit is necessarily
+		    // right - I think a transparent sprite pixel may 
+		    // make the sprite pixels under it invisible
                     if(sprite_color != TRANSPARENT_COLOR_INDEX) {
                         row_colors[x] = sprite_color;
                     }
