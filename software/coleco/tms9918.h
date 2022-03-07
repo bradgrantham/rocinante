@@ -371,41 +371,63 @@ static uint8_t AddSpritesToRowReturnFlags(int row, uint8_t row_colors[TMS9918A::
                 break; // XXX
             }
 
-            int within_quadrant_y = within_sprite_y % 8;
-            int quadrant_y = within_sprite_y / 8;
-            int sprite_pattern_address_notsize4 = GetSpritePatternTableBase(registers) | (sprite_name << SPRITE_NAME_SHIFT) | within_sprite_y;
+            if(size4) {
+                int within_quadrant_y = within_sprite_y % 8;
+                int quadrant_y = within_sprite_y / 8;
 
-            for(int x = start_x; x <= end_x; x++) {
+                for(int x = start_x; x <= end_x; x++) {
 
-                int within_sprite_x = mag2x ? ((x - sprite_x) / 2) : (x - sprite_x);
+                    int within_sprite_x = mag2x ? ((x - sprite_x) / 2) : (x - sprite_x);
 
-                int bit = 0;
-
-                if(size4) {
+                    int bit = 0;
 
                     int quadrant = quadrant_y + (within_sprite_x / 8) * 2;
                     int within_quadrant_x = within_sprite_x % 8;
                     int sprite_pattern_address = GetSpritePatternTableBase(registers) | (masked_sprite << SPRITE_NAME_SHIFT) | (quadrant << 3) | within_quadrant_y;
                     bit = memory[sprite_pattern_address] & (0x80 >> within_quadrant_x);
 
-                } else {
-
-                    bit = memory[sprite_pattern_address_notsize4] & (0x80 >> within_sprite_x);
+                    if(bit) {
+                        if(sprite_touched[x]) {
+                            flags_set |= VDP_STATUS_C_BIT;
+                        }
+                        sprite_touched[x] = true;
+                        // XXX I don't think this next bit is necessarily
+                        // right - I think a transparent sprite pixel may 
+                        // make the sprite pixels under it invisible
+                        if(sprite_color != TRANSPARENT_COLOR_INDEX) {
+                            row_colors[x] = sprite_color;
+                        }
+                    }
                 }
 
-                if(bit) {
-                    if(sprite_touched[x]) {
-                        flags_set |= VDP_STATUS_C_BIT;
-                    }
-                    sprite_touched[x] = true;
-		    // XXX I don't think this next bit is necessarily
-		    // right - I think a transparent sprite pixel may 
-		    // make the sprite pixels under it invisible
-                    if(sprite_color != TRANSPARENT_COLOR_INDEX) {
-                        row_colors[x] = sprite_color;
+            } else {
+
+                int sprite_pattern_address = GetSpritePatternTableBase(registers) | (sprite_name << SPRITE_NAME_SHIFT) | within_sprite_y;
+                int bitpattern = memory[sprite_pattern_address];
+
+                for(int x = start_x; x <= end_x; x++) {
+
+                    int within_sprite_x = mag2x ? ((x - sprite_x) / 2) : (x - sprite_x);
+
+                    int bit = 0;
+
+                    bit = bitpattern & (0x80 >> within_sprite_x);
+
+                    if(bit) {
+                        if(sprite_touched[x]) {
+                            flags_set |= VDP_STATUS_C_BIT;
+                        }
+                        sprite_touched[x] = true;
+                        // XXX I don't think this next bit is necessarily
+                        // right - I think a transparent sprite pixel may 
+                        // make the sprite pixels under it invisible
+                        if(sprite_color != TRANSPARENT_COLOR_INDEX) {
+                            row_colors[x] = sprite_color;
+                        }
                     }
                 }
             }
+
         }
     }
     return flags_set;
