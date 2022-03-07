@@ -540,7 +540,7 @@ struct ColecoHW
     {
     }
 
-    virtual bool io_write(uint8_t addr, uint8_t data)
+    bool io_write(uint8_t addr, uint8_t data)
     {
         if(false) {
             if(addr == ColecoHW::VDP_CMD_PORT) {
@@ -599,7 +599,7 @@ struct ColecoHW
         return false;
     }
 
-    virtual bool io_read(uint8_t addr, uint8_t &data)
+    bool io_read(uint8_t addr, uint8_t &data)
     {
         if(false) {
             if(addr == ColecoHW::VDP_CMD_PORT) {
@@ -649,13 +649,13 @@ struct ColecoHW
         return false;
     }
 
-    virtual void reset(void)
+    void reset(void)
     {
         vdp.reset();
         sound.reset();
     }
 
-    virtual bool nmi_required()
+    bool nmi_required()
     {
         return vdp.nmi_required();
     }
@@ -1756,11 +1756,15 @@ void cv_out_byte(void* ctx_, uint16_t address16, uint8_t value)
     }
 }
 
-};
+}; // extern "C" 
+
+}; // namespace ColecovisionEmulator
+
 
 int main(int argc, char **argv)
 {
     using namespace PlatformInterface;
+    using namespace ColecovisionEmulator;
     using namespace std::chrono_literals;
 #ifdef PROVIDE_DEBUGGER
     bool do_debugger = false;
@@ -2152,6 +2156,4 @@ int main(int argc, char **argv)
 
     return 0;
 }
-
-}; // namespace ColecovisionEmulator
 
