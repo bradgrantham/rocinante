@@ -114,7 +114,6 @@ void EnqueueAudioSamples(uint8_t *buf, size_t sz)
 
 }
 
-std::chrono::time_point<std::chrono::system_clock> previous_draw_time;
 std::chrono::time_point<std::chrono::system_clock> previous_event_time;
 
 void Start(uint32_t& audioSampleRate_, size_t& preferredAudioBufferSampleCount_)
@@ -125,7 +124,7 @@ void Start(uint32_t& audioSampleRate_, size_t& preferredAudioBufferSampleCount_)
     // Divide by 2 because Rocinante alternates between blocking at beginning and middle
     preferredAudioBufferSampleCount_ = audioBufferLengthBytes / 2 / 2;
 
-    previous_event_time = previous_draw_time = std::chrono::system_clock::now();
+    previous_event_time = std::chrono::system_clock::now();
 }
 
 bool right_shift_pressed = false;
@@ -332,19 +331,15 @@ void Frame(const uint8_t* vdp_registers, const uint8_t* vdp_ram, uint8_t& vdp_st
     std::chrono::duration<float> elapsed;
     
     elapsed = now - previous_event_time;
-    if(elapsed.count() > .015) {
+    if(elapsed.count() > .015)
+    {
         HandleEvents();
         previous_event_time = now;
     }
 
-    elapsed = now - previous_draw_time;
-    if(elapsed.count() > .015)
-    {
-        NTSCWaitFrame();
-        memcpy(TMS9918Registers, vdp_registers, 8);
-        memcpy(TMS9918RAM, vdp_ram, 16384);
-        previous_draw_time = now;
-    }
+    // NTSCWaitFrame(); // XXX should be doing this - is function bad or is timing bad?
+    memcpy(TMS9918Registers, vdp_registers, 8);
+    memcpy(TMS9918RAM, vdp_ram, 16384);
 }
 
 void MainLoopAndShutdown(MainLoopBodyFunc body)
