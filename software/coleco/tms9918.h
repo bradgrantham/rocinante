@@ -8,71 +8,71 @@
 namespace TMS9918A
 {
 
-constexpr int SCREEN_X = 256;
-constexpr int SCREEN_Y = 192;
+static constexpr int SCREEN_X = 256;
+static constexpr int SCREEN_Y = 192;
 
-constexpr int REG_A0_A5_MASK = 0x3F;
-constexpr int CMD_MASK = 0xC0;
-constexpr int CMD_SET_REGISTER = 0x80;
-constexpr int CMD_SET_WRITE_ADDRESS = 0x40;
-constexpr int CMD_SET_READ_ADDRESS = 0x00;
+static constexpr int REG_A0_A5_MASK = 0x3F;
+static constexpr int CMD_MASK = 0xC0;
+static constexpr int CMD_SET_REGISTER = 0x80;
+static constexpr int CMD_SET_WRITE_ADDRESS = 0x40;
+static constexpr int CMD_SET_READ_ADDRESS = 0x00;
 
-constexpr int VR0_M3_MASK = 0x02;
-[[maybe_unused]] constexpr int VR0_EXTVID_MASK = 0x01;
+static constexpr int VR0_M3_MASK = 0x02;
+[[maybe_unused]] static constexpr int VR0_EXTVID_MASK = 0x01;
 
-[[maybe_unused]] constexpr int VR1_16K_MASK = 0x80; 
-constexpr int VR1_BLANK_MASK = 0x40; /* and BLANK is active low */
-constexpr int VR1_INT_MASK = 0x20;
-constexpr int VR1_M2_MASK = 0x10;
-constexpr int VR1_M1_MASK = 0x08;
-constexpr int VR1_SIZE4_MASK = 0x02;
-constexpr int VR1_MAG2X_MASK = 0x01;
+[[maybe_unused]] static constexpr int VR1_16K_MASK = 0x80; 
+static constexpr int VR1_BLANK_MASK = 0x40; /* and BLANK is active low */
+static constexpr int VR1_INT_MASK = 0x20;
+static constexpr int VR1_M2_MASK = 0x10;
+static constexpr int VR1_M1_MASK = 0x08;
+static constexpr int VR1_SIZE4_MASK = 0x02;
+static constexpr int VR1_MAG2X_MASK = 0x01;
 
-constexpr int VR2_NAME_TABLE_MASK = 0x0F;
-constexpr int VR2_NAME_TABLE_SHIFT = 10;
+static constexpr int VR2_NAME_TABLE_MASK = 0x0F;
+static constexpr int VR2_NAME_TABLE_SHIFT = 10;
 
-constexpr int VR3_COLORTABLE_MASK_STANDARD = 0xFF;
-constexpr int VR3_COLORTABLE_SHIFT_STANDARD = 6;
+static constexpr int VR3_COLORTABLE_MASK_STANDARD = 0xFF;
+static constexpr int VR3_COLORTABLE_SHIFT_STANDARD = 6;
 
-constexpr int VR3_COLORTABLE_MASK_BITMAP = 0x80;
-constexpr int VR3_COLORTABLE_SHIFT_BITMAP = 6;
+static constexpr int VR3_COLORTABLE_MASK_BITMAP = 0x80;
+static constexpr int VR3_COLORTABLE_SHIFT_BITMAP = 6;
 
-constexpr int VR3_ADDRESS_MASK_BITMAP = 0x7F;
-constexpr int VR3_ADDRESS_MASK_SHIFT = 6;
+static constexpr int VR3_ADDRESS_MASK_BITMAP = 0x7F;
+static constexpr int VR3_ADDRESS_MASK_SHIFT = 6;
 
-constexpr int VR4_PATTERN_MASK_STANDARD = 0x07;
-constexpr int VR4_PATTERN_SHIFT_STANDARD = 11;
+static constexpr int VR4_PATTERN_MASK_STANDARD = 0x07;
+static constexpr int VR4_PATTERN_SHIFT_STANDARD = 11;
 
-constexpr int VR4_PATTERN_MASK_BITMAP = 0x04;
-constexpr int VR4_PATTERN_SHIFT_BITMAP = 11;
+static constexpr int VR4_PATTERN_MASK_BITMAP = 0x04;
+static constexpr int VR4_PATTERN_SHIFT_BITMAP = 11;
 
-constexpr int VR5_SPRITE_ATTR_MASK = 0x7F;
-constexpr int VR5_SPRITE_ATTR_SHIFT = 7;
+static constexpr int VR5_SPRITE_ATTR_MASK = 0x7F;
+static constexpr int VR5_SPRITE_ATTR_SHIFT = 7;
 
-constexpr int VR6_SPRITE_PATTERN_MASK = 0x07;
-constexpr int VR6_SPRITE_PATTERN_SHIFT = 11;
+static constexpr int VR6_SPRITE_PATTERN_MASK = 0x07;
+static constexpr int VR6_SPRITE_PATTERN_SHIFT = 11;
 
-constexpr int VR7_BD_MASK = 0x0F;
-constexpr int VR7_BD_SHIFT = 0;
+static constexpr int VR7_BD_MASK = 0x0F;
+static constexpr int VR7_BD_SHIFT = 0;
 
-constexpr int VDP_STATUS_F_BIT = 0x80;
-constexpr int VDP_STATUS_5S_BIT = 0x40;
-constexpr int VDP_STATUS_C_BIT = 0x20;
+static constexpr int VDP_STATUS_F_BIT = 0x80;
+static constexpr int VDP_STATUS_5S_BIT = 0x40;
+static constexpr int VDP_STATUS_C_BIT = 0x20;
 
-constexpr int ROW_SHIFT = 5;
-constexpr int THIRD_SHIFT = 11;
-constexpr int CHARACTER_PATTERN_SHIFT = 3;
-constexpr int CHARACTER_COLOR_SHIFT = 3;
-constexpr int ADDRESS_MASK_FILL = 0x3F;
+static constexpr int ROW_SHIFT = 5;
+static constexpr int THIRD_SHIFT = 11;
+static constexpr int CHARACTER_PATTERN_SHIFT = 3;
+static constexpr int CHARACTER_COLOR_SHIFT = 3;
+static constexpr int ADDRESS_MASK_FILL = 0x3F;
 
-constexpr int SPRITE_EARLY_CLOCK_MASK = 0x80;
-constexpr int SPRITE_COLOR_MASK = 0x0F;
-constexpr int SPRITE_NAME_SHIFT = 3;
-constexpr int SPRITE_NAME_MASK_SIZE4 = 0xFC;
+static constexpr int SPRITE_EARLY_CLOCK_MASK = 0x80;
+static constexpr int SPRITE_COLOR_MASK = 0x0F;
+static constexpr int SPRITE_NAME_SHIFT = 3;
+static constexpr int SPRITE_NAME_MASK_SIZE4 = 0xFC;
 
-constexpr int TRANSPARENT_COLOR_INDEX = 0;
+static constexpr int TRANSPARENT_COLOR_INDEX = 0;
 
-constexpr int REGISTER_COUNT = 8;
+static constexpr int REGISTER_COUNT = 8;
 
 enum GraphicsMode { GRAPHICS_I, GRAPHICS_II, TEXT, MULTICOLOR, UNDEFINED };
 
@@ -231,6 +231,7 @@ static void FillRowFromGraphicsI(int y, uint8_t row_colors[TMS9918A::SCREEN_X], 
             color1 = backdrop;
         }
 
+#pragma GCC unroll 8
         for(int pattern_col = 0; pattern_col < 8; pattern_col++) {
             bool bit = pattern_byte & (0x80 >> pattern_col);
             *rowp++ = bit ? color1 : color0;
@@ -273,6 +274,7 @@ static void FillRowFromGraphicsII(int y, uint8_t row_colors[TMS9918A::SCREEN_X],
             color1 = backdrop;
         }
 
+#pragma GCC unroll 8
         for(int pattern_col = 0; pattern_col < 8; pattern_col++) {
             bool bit = pattern_byte & (0x80 >> pattern_col);
             *rowp++ = bit ? color1 : color0;
@@ -312,7 +314,9 @@ static uint8_t AddSpritesToRowReturnFlags(int row, uint8_t row_colors[TMS9918A::
 {
     using namespace TMS9918A;
 
-    bool sprite_touched[SCREEN_X]{};
+    static bool sprite_touched[SCREEN_X];
+
+    std::fill(sprite_touched, sprite_touched + SCREEN_X, false);
 
     uint8_t flags_set = 0;
 
@@ -339,16 +343,15 @@ static uint8_t AddSpritesToRowReturnFlags(int row, uint8_t row_colors[TMS9918A::
     }
 
     int sprites_in_row = 0;
-    for(int i = sprite_count - 1; i >= 0; i--) {
+    for(int i = 0; i < sprite_count; i++) {
         auto sprite = memory + sprite_table_address + i * 4;
 
-        int sprite_y = sprite[0] + 1;
+        int sprite_y_byte = (sprite[0] + 1) & 0xFF;
+        int sprite_y = (sprite_y_byte > 209) ? (sprite_y_byte - 256) : sprite_y_byte;
         int sprite_x = sprite[1];
         int sprite_name = sprite[2];
         bool sprite_earlyclock = sprite[3] & SPRITE_EARLY_CLOCK_MASK;
         int sprite_color = sprite[3] & SPRITE_COLOR_MASK;
-
-        int masked_sprite = sprite_name & SPRITE_NAME_MASK_SIZE4;
 
         // printf("sprite %d: %d %d %d %d\n", i, sprite_x, sprite_y, sprite_name, sprite_color);
 
@@ -366,38 +369,40 @@ static uint8_t AddSpritesToRowReturnFlags(int row, uint8_t row_colors[TMS9918A::
             int within_sprite_y = mag2x ? ((row - sprite_y) / 2) : (row - sprite_y);
 
             sprites_in_row ++;
-            if(sprites_in_row > 5) {
+            if(sprites_in_row > 4) {
                 flags_set |= VDP_STATUS_5S_BIT;
-                break; // XXX
+                // XXX also set which sprite
+                break;
             }
+
+            auto set_color_from_bit = [&flags_set, &row_colors, sprite_color](int bit, int x) {
+                if(bit) {
+                    if(!sprite_touched[x]) {
+                        sprite_touched[x] = true;
+                        if(sprite_color != TRANSPARENT_COLOR_INDEX) {
+                            row_colors[x] = sprite_color;
+                        }
+                    } else {
+                        flags_set |= VDP_STATUS_C_BIT;
+                    }
+                }
+            };
 
             if(size4) {
                 int within_quadrant_y = within_sprite_y % 8;
                 int quadrant_y = within_sprite_y / 8;
+                int masked_sprite_name = sprite_name & SPRITE_NAME_MASK_SIZE4;
 
+#pragma GCC unroll 8
                 for(int x = start_x; x <= end_x; x++) {
 
                     int within_sprite_x = mag2x ? ((x - sprite_x) / 2) : (x - sprite_x);
 
-                    int bit = 0;
-
                     int quadrant = quadrant_y + (within_sprite_x / 8) * 2;
                     int within_quadrant_x = within_sprite_x % 8;
-                    int sprite_pattern_address = GetSpritePatternTableBase(registers) | (masked_sprite << SPRITE_NAME_SHIFT) | (quadrant << 3) | within_quadrant_y;
-                    bit = memory[sprite_pattern_address] & (0x80 >> within_quadrant_x);
-
-                    if(bit) {
-                        if(sprite_touched[x]) {
-                            flags_set |= VDP_STATUS_C_BIT;
-                        }
-                        sprite_touched[x] = true;
-                        // XXX I don't think this next bit is necessarily
-                        // right - I think a transparent sprite pixel may 
-                        // make the sprite pixels under it invisible
-                        if(sprite_color != TRANSPARENT_COLOR_INDEX) {
-                            row_colors[x] = sprite_color;
-                        }
-                    }
+                    int sprite_pattern_address = GetSpritePatternTableBase(registers) | (masked_sprite_name << SPRITE_NAME_SHIFT) | (quadrant << 3) | within_quadrant_y;
+                    int bit = memory[sprite_pattern_address] & (0x80 >> within_quadrant_x);
+                    set_color_from_bit(bit, x);
                 }
 
             } else {
@@ -405,26 +410,13 @@ static uint8_t AddSpritesToRowReturnFlags(int row, uint8_t row_colors[TMS9918A::
                 int sprite_pattern_address = GetSpritePatternTableBase(registers) | (sprite_name << SPRITE_NAME_SHIFT) | within_sprite_y;
                 int bitpattern = memory[sprite_pattern_address];
 
+#pragma GCC unroll 8
                 for(int x = start_x; x <= end_x; x++) {
 
                     int within_sprite_x = mag2x ? ((x - sprite_x) / 2) : (x - sprite_x);
 
-                    int bit = 0;
-
-                    bit = bitpattern & (0x80 >> within_sprite_x);
-
-                    if(bit) {
-                        if(sprite_touched[x]) {
-                            flags_set |= VDP_STATUS_C_BIT;
-                        }
-                        sprite_touched[x] = true;
-                        // XXX I don't think this next bit is necessarily
-                        // right - I think a transparent sprite pixel may 
-                        // make the sprite pixels under it invisible
-                        if(sprite_color != TRANSPARENT_COLOR_INDEX) {
-                            row_colors[x] = sprite_color;
-                        }
-                    }
+                    int bit = bitpattern & (0x80 >> within_sprite_x);
+                    set_color_from_bit(bit, x);
                 }
             }
 
