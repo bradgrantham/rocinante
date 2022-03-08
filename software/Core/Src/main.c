@@ -1456,7 +1456,7 @@ void NTSCRowHandler(void)
     SCB_CleanDCache();
 
     // A little pulse so we know where we are on the line when we finished
-    if(0 /* markHandlerInSamples */) {
+    if(1 /* markHandlerInSamples */) {
         for(int i = 0; i < 5; i++) { GPIOI->ODR = (GPIOI->ODR & 0xFFFFFF00) | 0xFFFFFFE8; }
     }
 }
@@ -1605,57 +1605,45 @@ void TMS9918Init()
 
 extern uint8_t TMS9918AComputeRow(const uint8_t* registers, const uint8_t* memory, int row, uint8_t* row_colors);
 
-/* __attribute__((hot,flatten)) */ void TMS9918ModeFillRowBuffer(int frameIndex, int rowNumber, size_t maxSamples, uint8_t* rowBuffer)
+__attribute__((hot,flatten)) void TMS9918ModeFillRowBuffer(int frameIndex, int rowNumber, size_t maxSamples, uint8_t* rowBuffer)
 {
     int rowIndex = (rowNumber - TMS9918_MODE_TOP) / 2;
     if((rowIndex >= 0) && (rowIndex < 192)) {
         uint8_t rowColors[256];
-        uint8_t *rowDst = rowBuffer + TMS9918_MODE_LEFT;
 
         // fill rowColors in from pattern buffer and sprites
         TMS9918AComputeRow(TMS9918Registers, TMS9918RAM, rowIndex, rowColors);
 
         // convert rowColors to NTSC waveform into rowDst 2 2/3 samples at a time.  8-|
-        int thirdsPhase = 0; /* 0, 1, or 2 is which third of 14MHz clock this pixel starts */
-        int colorburstPhase = TMS9918_MODE_LEFT % 4; /* 0, 1, 2, or 3 */
+        uint16_t index = TMS9918_MODE_LEFT;
         // And last pixel is special case
-        uint8_t carry_over = 0;
-        for(int i = 0; i < 255; i++) {
+
+        for(int i = 0; i < 255; i += 3) {
+            // First color covers 2 and 2/3 of a pixel
             uint8_t *color = TMS9918ColorsToNTSC[rowColors[i]];
-            switch(thirdsPhase) {
-                case 0:
-                    *rowDst = color[colorburstPhase];
-                    rowDst++; colorburstPhase = (colorburstPhase + 1) % 4;
-                    *rowDst = color[colorburstPhase];
-                    rowDst++; colorburstPhase = (colorburstPhase + 1) % 4;
-                    carry_over = color[colorburstPhase];
-                    break;
-                case 1:
-                    *rowDst = (carry_over * 6 + color[colorburstPhase] * 3) / 9;
-                    rowDst++; colorburstPhase = (colorburstPhase + 1) % 4;
-                    *rowDst = color[colorburstPhase];
-                    rowDst++; colorburstPhase = (colorburstPhase + 1) % 4;
-                    *rowDst = color[colorburstPhase];
-                    rowDst++; colorburstPhase = (colorburstPhase + 1) % 4;
-                    carry_over = color[colorburstPhase];
-                    break;
-                case 2:
-                    *rowDst = (carry_over * 3 + color[colorburstPhase] * 6) / 9;
-                    rowDst++; colorburstPhase = (colorburstPhase + 1) % 4;
-                    *rowDst = color[colorburstPhase];
-                    rowDst++; colorburstPhase = (colorburstPhase + 1) % 4;
-                    *rowDst = color[colorburstPhase];
-                    rowDst++; colorburstPhase = (colorburstPhase + 1) % 4;
-                    break;
-            }
-            thirdsPhase = (thirdsPhase + 1) % 3;
+            rowBuffer[index + 0] = color[(index + 0) % 4];
+            rowBuffer[index + 1] = color[(index + 1) % 4];
+            uint8_t carry_over = color[(index + 2) % 4];
+
+            // second color covers 1/3, 2, and 1/3 of a pixel
+            color = TMS9918ColorsToNTSC[rowColors[i + 1]];
+            rowBuffer[index + 2] = (carry_over * 6 + color[(index + 2) % 4] * 3) / 9;
+            rowBuffer[index + 3] = color[(index + 3) % 4];
+            rowBuffer[index + 4] = color[(index + 4) % 4];
+            carry_over = color[(index + 5) % 4];
+
+            // third color covers 2/3 and 2 pixels
+            color = TMS9918ColorsToNTSC[rowColors[i + 2]];
+            rowBuffer[index + 5] = (carry_over * 3 + color[(index + 5) % 4] * 6) / 9;
+            rowBuffer[index + 6] = color[(index + 6) % 4];
+            rowBuffer[index + 7] = color[(index + 7) % 4];
+
+            index += 8;
         }
         uint8_t *color = TMS9918ColorsToNTSC[rowColors[255]];
-        *rowDst = color[colorburstPhase];
-        rowDst++; colorburstPhase = (colorburstPhase + 1) % 4;
-        *rowDst = color[colorburstPhase];
-        rowDst++; colorburstPhase = (colorburstPhase + 1) % 4;
-        *rowDst = color[colorburstPhase];
+        rowBuffer[index + 0] = color[(index + 0) % 4];
+        rowBuffer[index + 1] = color[(index + 1) % 4];
+        rowBuffer[index + 2] = color[(index + 2) % 4];
     }
 }
 
@@ -3574,8 +3562,6 @@ int main(void)
 
         status = PromptUserToChooseFile("Choose a Coleco Cartridge", "/coleco", CHOOSE_FILE_IGNORE_DOTFILES, NULL /* ".dsk" */, &fileChosenInDir);
         sprintf(fileChosen, "/coleco/%s", fileChosenInDir);
-        RoDebugOverlayPrintf("chose \"%s\"\n", fileChosen);
-        HAL_Delay(2000);
         if(status == RO_SUCCESS) {
             const char *args[] = {
                 "emulator",
