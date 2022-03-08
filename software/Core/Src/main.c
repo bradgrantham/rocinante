@@ -1414,6 +1414,7 @@ void VGAFillRowBuffer(int frameNumber, int lineNumber, uint16_t *rowBuffer)
 uint8_t /*  __attribute__((section (".ram_d1"))) */ NTSCRowDoubleBuffer[ROW_SAMPLES * 2];
 volatile int NTSCRowNumber = 0;
 volatile int NTSCFrameNumber = 0;
+volatile int markHandlerInSamples = 0;
 
 int why = 0;
 
@@ -1456,7 +1457,7 @@ void NTSCRowHandler(void)
     SCB_CleanDCache();
 
     // A little pulse so we know where we are on the line when we finished
-    if(1 /* markHandlerInSamples */) {
+    if(markHandlerInSamples) {
         for(int i = 0; i < 5; i++) { GPIOI->ODR = (GPIOI->ODR & 0xFFFFFF00) | 0xFFFFFFE8; }
     }
 }
