@@ -58,6 +58,7 @@ static constexpr int VR7_BD_SHIFT = 0;
 static constexpr int VDP_STATUS_F_BIT = 0x80;
 static constexpr int VDP_STATUS_5S_BIT = 0x40;
 static constexpr int VDP_STATUS_C_BIT = 0x20;
+static constexpr int VDP_STATUS_5S_MASK = 0x1F;
 
 static constexpr int ROW_SHIFT = 5;
 static constexpr int THIRD_SHIFT = 11;
@@ -79,6 +80,16 @@ enum GraphicsMode { GRAPHICS_I, GRAPHICS_II, TEXT, MULTICOLOR, UNDEFINED };
 inline bool SpritesAreSize4(const uint8_t* registers)
 {
     return registers[1] & VR1_SIZE4_MASK;
+}
+
+inline bool SpritesCollided(const uint8_t status_register)
+{
+    return status_register & VDP_STATUS_5S_BIT;
+}
+
+inline bool FifthSprite(const uint8_t status_register)
+{
+    return status_register & VDP_STATUS_5S_MASK;
 }
 
 inline bool SpritesAreMagnified2X(const uint8_t* registers)
@@ -310,15 +321,13 @@ static void FillRowFromPattern(int y, uint8_t row_colors[TMS9918A::SCREEN_X], co
     }
 }
 
-static uint8_t AddSpritesToRowReturnFlags(int row, uint8_t row_colors[TMS9918A::SCREEN_X], const uint8_t* registers, const uint8_t* memory)
+static void AddSpritesToRow(int row, uint8_t row_colors[TMS9918A::SCREEN_X], const uint8_t* registers, const uint8_t* memory, uint8_t& flags_set)
 {
     using namespace TMS9918A;
 
     static bool sprite_touched[SCREEN_X];
 
     std::fill(sprite_touched, sprite_touched + SCREEN_X, false);
-
-    uint8_t flags_set = 0;
 
     // XXX do per row here because will do this per row on Rosa
     int sprite_table_address = GetSpriteAttributeTableBase(registers);
@@ -369,9 +378,9 @@ static uint8_t AddSpritesToRowReturnFlags(int row, uint8_t row_colors[TMS9918A::
             int within_sprite_y = mag2x ? ((row - sprite_y) / 2) : (row - sprite_y);
 
             sprites_in_row ++;
-            if(sprites_in_row > 4) {
+            if(!SpritesCollided(flags_set) && sprites_in_row > 4) {
                 flags_set |= VDP_STATUS_5S_BIT;
-                // XXX also set which sprite
+                flags_set |= i & VDP_STATUS_5S_MASK;
                 break;
             }
 
@@ -422,7 +431,6 @@ static uint8_t AddSpritesToRowReturnFlags(int row, uint8_t row_colors[TMS9918A::
 
         }
     }
-    return flags_set;
 }
 
 template <typename SetPixelFunc>
@@ -451,13 +459,34 @@ static uint8_t CreateImageAndReturnFlags(const uint8_t* registers, const uint8_t
         FillRowFromPattern(row, row_colors, registers, memory);
 
         if(SpritesVisible(registers)) {
-            flags_set |= AddSpritesToRowReturnFlags(row, row_colors, registers, memory);
+            AddSpritesToRow(row, row_colors, registers, memory, flags_set);
         }
 
         for(int col = 0; col < SCREEN_X; col++) {
             uint8_t rgb[3];
             CopyColor(rgb, Colors[row_colors[col]]);
             SetPixel(col, row, rgb[0], rgb[1], rgb[2]);
+        }
+    }
+
+    return flags_set;
+}
+
+static uint8_t GetStatusFromSpriteConfiguration(const uint8_t* registers, const uint8_t* memory)
+{
+    using namespace TMS9918A;
+
+    uint8_t flags_set = 0;
+
+    static uint8_t row_colors[SCREEN_X];
+
+    for(int row = 0; row < SCREEN_Y; row++) {
+
+        std::fill(row_colors, row_colors + SCREEN_X, 0);
+        FillRowFromPattern(row, row_colors, registers, memory);
+
+        if(SpritesVisible(registers)) {
+            AddSpritesToRow(row, row_colors, registers, memory, flags_set);
         }
     }
 

@@ -20,7 +20,7 @@ uint8_t TMS9918AComputeRow(const uint8_t* registers, const uint8_t* memory, int 
         FillRowFromPattern(row, row_colors, registers, memory);
 
         if(SpritesVisible(registers)) {
-            flags_set |= AddSpritesToRowReturnFlags(row, row_colors, registers, memory);
+            AddSpritesToRow(row, row_colors, registers, memory, flags_set);
         }
     }
 
