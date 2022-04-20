@@ -263,20 +263,23 @@ struct SN76489A
 
     void advance_noise_to_clock(clk_t flips)
     {
+        if(noise_config == 1) {
         for(int i = 0; i < flips; i++) {
             noise_flipflop ^= 1;
 
             if(noise_flipflop) {
-                uint8_t noise_bit = noise_register & 0x1;
-                uint8_t new_bit;
+                    uint8_t new_bit = (noise_register & 0x1) ^ ((noise_register & 0x8) >> 3);
 
-                if(noise_config == 1) {
-                    new_bit = (noise_register & 0x1) ^ ((noise_register & 0x8) >> 3);
-                } else {
-                    new_bit = noise_bit;
+                    noise_register = (noise_register >> 1) | (new_bit << 15);
                 }
+            }
+                } else {
+            for(int i = 0; i < flips; i++) {
+                noise_flipflop ^= 1;
 
-                noise_register = (noise_register >> 1) | (new_bit << 15);
+                if(noise_flipflop) {
+                    noise_register = (noise_register >> 1) | ((noise_register & 0x1) << 15);
+                }
             }
         }
     }
@@ -375,8 +378,12 @@ struct TMS9918AEmulator
     uint16_t read_address = 0x0;
     uint16_t write_address = 0x0;
 
-    TMS9918AEmulator()
+    uint32_t& interrupt_status; /* uint32_t for interop with C */
+
+    TMS9918AEmulator(uint32_t &interrupt_status) :
+        interrupt_status(interrupt_status)
     {
+        interrupt_status = 0;
     }
 
     void reset()
@@ -385,10 +392,31 @@ struct TMS9918AEmulator
         std::fill(memory.begin(), memory.end(), 0);
     }
 
+    void clear_status_register_bits(uint8_t b)
+    {
+        using namespace TMS9918A;
+        status_register = status_register & ~b;
+        interrupt_status = InterruptsAreEnabled(registers.data()) && VSyncInterruptHasOccurred(status_register);
+    }
+
+    void set_status_register_bits(uint8_t b)
+    {
+        using namespace TMS9918A;
+        status_register = status_register | b;
+        interrupt_status = InterruptsAreEnabled(registers.data()) && VSyncInterruptHasOccurred(status_register);
+    }
+
+    void set_register(uint8_t which_register, uint8_t data)
+    {
+        using namespace TMS9918A;
+        registers[which_register] = cmd_data;
+        interrupt_status = InterruptsAreEnabled(registers.data()) && VSyncInterruptHasOccurred(status_register);
+    }
+
     void vsync()
     {
         using namespace TMS9918A;
-        status_register |= VDP_STATUS_F_BIT;
+        set_status_register_bits(VDP_STATUS_F_BIT);
     }
 
     void write(uint8_t cmd, uint8_t data)
@@ -437,7 +465,7 @@ struct TMS9918AEmulator
                 if(cmd == CMD_SET_REGISTER) {
                     uint8_t which_register = data & REG_A0_A5_MASK;
                     if(debug & DEBUG_VDP_OPERATIONS) printf("VDP command write to register 0x%02X, value 0x%02X\n", which_register, cmd_data);
-                    registers[which_register] = cmd_data;
+                    set_register(which_register, cmd_data);
                 } else if(cmd == CMD_SET_WRITE_ADDRESS) {
                     write_address = ((data & REG_A0_A5_MASK) << 8) | cmd_data;
                     if(debug & DEBUG_VDP_OPERATIONS) printf("VDP write address set to 0x%04X\n", write_address);
@@ -487,7 +515,7 @@ struct TMS9918AEmulator
             }
             cmd_phase = CMD_PHASE_FIRST;
             uint8_t data = status_register;
-            status_register = 0;  
+            clear_status_register_bits(status_register);
             return data;
         } else {
             uint8_t data = memory[read_address];
@@ -505,13 +533,8 @@ struct TMS9918AEmulator
             printf("scanout frame %lu\n", frame_number);
         }
 
-        status_register |= scanout(registers.data(), memory.data());
-    }
-
-    bool nmi_required()
-    {
-        using namespace TMS9918A;
-        return InterruptsAreEnabled(registers.data()) && VSyncInterruptHasOccurred(status_register);
+        uint8_t scanout_status_set = scanout(registers.data(), memory.data());
+        set_status_register_bits(scanout_status_set);
     }
 };
 
@@ -520,6 +543,8 @@ typedef std::function<uint8_t (int index, bool JoystickNotKeypad)> GetController
 struct ColecoHW
 {
     TMS9918AEmulator vdp;
+    uint32_t vdp_interrupt_status{0};
+
     SN76489A sound;
 
     bool reading_joystick = true;
@@ -541,6 +566,7 @@ struct ColecoHW
     std::map<uint16_t, uint8_t> io_writes;
 
     ColecoHW(uint32_t sample_rate, size_t audio_buffer_size, GetControllerStateFunc get_controller_state) :
+        vdp(vdp_interrupt_status),
         sound(machine_clock_rate, sample_rate, audio_buffer_size),
         get_controller_state(get_controller_state)
     {
@@ -659,11 +685,6 @@ struct ColecoHW
     {
         vdp.reset();
         sound.reset();
-    }
-
-    bool nmi_required()
-    {
-        return vdp.nmi_required();
     }
 
     void fill_flush_audio(clk_t clk, audio_flush_func audio_flush)
@@ -1611,12 +1632,19 @@ void usage(char *progname)
     printf("usage: %s [options] bios.bin cartridge.bin\n", progname);
     printf("\n");
     printf("options:\n");
+    printf("\t--free-run                     Don't throttle emulation to match realtime play.\n");
+    printf("\t--record-controllers file      Record controller data to file\n");
+    printf("\t--playback-controllers file    Playback controller data from file\n");
+    printf("\t                               Only one of --record-controllers or\n");
+    printf("\t                               --playback-controllers may be specified at any time.\n");
+    printf("\t--vdp-test file image          Use previously-saved contents of file as the\n");
+    printf("\t                               state for the VDP and save resulting screen as image.\n");
 #ifdef PROVIDE_DEBUGGER
     printf("\t--debugger init          Invoke debugger on startup\n");
 #endif
     printf("\t                        \"init\" can be commands (separated by \";\"\n");
     printf("\t                        or a filename.  The initial commands can be\n");
-    printf("\t                        the empty string.\n");
+    printf("\t                               an empty string.\n");
     printf("\n");
 }
 
@@ -1696,7 +1724,7 @@ struct ControllerEvent
     uint8_t bits_cleared;
 };
 
-void set_colecovision_context(ColecovisionContext *colecovision_context, RAMboard& RAM, ROMboard& BIOS, ROMboard& cartridge, ColecoHW* colecohw)
+void set_colecovision_context(ColecovisionContext *colecovision_context, RAMboard& RAM, ROMboard& BIOS, ROMboard& cartridge, ColecoHW* colecohw, int64_t* clk, uint32_t* nmi)
 {
     colecovision_context->RAM = RAM.bytes.data();
 
@@ -1709,6 +1737,15 @@ void set_colecovision_context(ColecovisionContext *colecovision_context, RAMboar
     colecovision_context->cartridge.bytes = cartridge.bytes.data();
 
     colecovision_context->cvhw = colecohw;
+
+    colecovision_context->clk = clk;
+    colecovision_context->clocks_per_retrace = clocks_per_retrace;
+    colecovision_context->next_field_start_clock = clocks_per_retrace;
+    colecovision_context->do_vretrace_work = 0;
+
+    colecovision_context->nmi = nmi;
+    colecovision_context->nmi_was_issued = false;
+    colecovision_context->do_nmi = 0;
 }
 
 }; // namespace ColecovisionEmulator
@@ -1740,7 +1777,6 @@ static void sleep_for(int32_t millis)
     std::this_thread::sleep_for(std::chrono::milliseconds(millis));
 #endif
 }
-
 
 extern "C" {
 
@@ -1774,6 +1810,7 @@ void cv_out_byte(void* ctx_, uint16_t address16, uint8_t value)
 
 int main(int argc, char **argv)
 {
+    bool freerun = false;
     using namespace PlatformInterface;
     using namespace ColecovisionEmulator;
     using namespace std::chrono_literals;
@@ -1811,6 +1848,10 @@ int main(int argc, char **argv)
             }
             do_vdp_test(argv[1], argv[2]);
             exit(0);
+        } else if(strcmp(argv[0], "--free-run") == 0) {
+            freerun = true;
+            argv++;
+            argc--;
         }
 
 #ifdef ENABLE_AUTOMATION
@@ -2016,12 +2057,12 @@ int main(int argc, char **argv)
 
 #endif
 
+    bool save_vdp = false;
+
     ColecoHW* colecohw = new ColecoHW(audioSampleRate, preferredAudioBufferSampleCount, get_controller_state);
 
     ColecovisionContext *colecovision_context = new ColecovisionContext;
-    set_colecovision_context(colecovision_context, RAM, bios_rom, cart_rom, colecohw);
-
-    bool save_vdp = false;
+    set_colecovision_context(colecovision_context, RAM, bios_rom, cart_rom, colecohw, &clk, &colecohw->vdp_interrupt_status);
 
     [[maybe_unused]] Debugger *debugger = NULL;
 #ifdef PROVIDE_DEBUGGER
@@ -2039,15 +2080,13 @@ int main(int argc, char **argv)
     }
 #endif
 
-    bool nmi_was_issued = false;
-    clk_t previous_field_start_clock = clk;
     std::chrono::time_point<std::chrono::system_clock> emulation_start_time = std::chrono::system_clock::now();
     uint32_t prevTick;
 #if defined(ROSA)
     prevTick = HAL_GetTick();
 #endif
 
-    PlatformInterface::MainLoopBodyFunc main_loop_body = [colecovision_context, &clk, debugger, colecohw, &nmi_was_issued, &save_vdp, audio_flush, platform_scanout, &previous_field_start_clock, &emulation_start_time, &prevTick]() {
+    PlatformInterface::MainLoopBodyFunc main_loop_body = [colecovision_context, &clk, debugger, colecohw, &save_vdp, audio_flush, platform_scanout, &emulation_start_time, &prevTick, freerun]() {
         (void)debugger; // If !PROVIDE_DEBUGGER then debugger is not referenced.
         (void)prevTick; // If !ROSA then prevTick is not referenced. // XXX move iterate call to platform main loop
 
@@ -2061,7 +2100,7 @@ int main(int argc, char **argv)
             std::chrono::time_point<std::chrono::system_clock> now = std::chrono::system_clock::now();
             auto micros_since_start = std::chrono::duration_cast<std::chrono::microseconds>(now - emulation_start_time);
             clk_t clock_now = machine_clock_rate * micros_since_start.count() / 1000000;
-            if(clock_now < clk) {
+            if((!freerun) && (clock_now < clk)) {
                 /* if we get ahead somehow, sleep a little to fall back */
                 // sleep_for(2); // 1ms);
                 return quit_requested;
@@ -2070,14 +2109,14 @@ int main(int argc, char **argv)
             target_clock = clk + machine_clock_rate / 120;
             if(false) printf("was at %llu, need to be at %llu, need %llu (%.2f ms), will run %llu (%.2f ms)\n", clk, clock_now, clock_now - clk, (clock_now - clk) * 1000.0f / machine_clock_rate, target_clock - clk, (target_clock - clk) * 1000.0f / machine_clock_rate);
 
-            // XXX THIS HAS TO REMAIN 1 UNTIL I CAN ISSUE NonMaskableInterrupt PER-INSTRUCTION
-            static constexpr uint32_t iterated_clock_quantum = 1; // 1;
+            static constexpr uint32_t iterated_clock_quantum = 10000;
 
 #if defined(ROSA)
             // RoDebugOverlayPrintf("%ld\n", (int)(target_clock - clk));
 #endif /* ROSA */
 
             while(clk < target_clock) {
+#if 0
                 std::string dummy;
                 {
                     static int which = 0;
@@ -2090,27 +2129,17 @@ int main(int argc, char **argv)
                 uint8_t byte = cv_read_byte(colecovision_context, z80state.pc);
                 bool is_HALT = byte == 0x76;
                 // printf("PC is %04X\n", z80state.pc);
-                clk_t clocks_this_step = Z80Emulate(&z80state, iterated_clock_quantum, colecovision_context);
-                if(false && is_HALT) {
-                    printf("VDP status register = %02X\n", colecohw->vdp.status_register);
-                    printf("VDP interrupts %s\n", TMS9918A::InterruptsAreEnabled(colecohw->vdp.registers.data()) ? "enabled" : "disabled");
-                    printf("VDP interrupt has %soccurred\n", TMS9918A::VSyncInterruptHasOccurred(colecohw->vdp.status_register) ? "" : "not ");
-                    printf("im = %d\n", z80state.im);
-                    printf("HALT took %llu clocks\n", clocks_this_step);
-                }
-#ifdef PROVIDE_DEBUGGER
-                if(debugger) {
-                    if(enter_debugger || debugger->should_debug(&z80state)) {
-                        debugger->go(stdin, &z80state);
-                        enter_debugger = false;
-                    }
-                }
 #endif
+
+                clk_t clocks_this_step = Z80Emulate(&z80state, iterated_clock_quantum, colecovision_context);
                 clk += clocks_this_step;
 
-                uint64_t retrace_before = previous_field_start_clock / clocks_per_retrace;
-                uint64_t retrace_after = clk / clocks_per_retrace;
-                if(retrace_before != retrace_after) {
+		// If Z80_PROCESS_CYCLES in z80user.h detects the clock
+                // crossed a video field boundary, it sets "do_vretrace_work"
+                // and causes Emulate to return early.
+                if(colecovision_context->do_vretrace_work) {
+                    colecovision_context->do_vretrace_work = 0;
+                    
                     colecohw->vdp.perform_scanout(platform_scanout);
                     if(save_vdp) {
                         static int which = 0;
@@ -2119,18 +2148,36 @@ int main(int argc, char **argv)
                     }
 
                     colecohw->vdp.vsync();
-                    colecohw->fill_flush_audio(clk, audio_flush);
-                    previous_field_start_clock = clk;
                 }
 
-                if(colecohw->nmi_required()) {
-                    if(!nmi_was_issued) {
-                        clk += Z80NonMaskableInterrupt (&z80state, colecovision_context);
-                        nmi_was_issued = true;
-                    }
-                } else {
-                    nmi_was_issued = false;
+                colecohw->fill_flush_audio(clk, audio_flush);
+
+		// If Z80_PROCESS_CYCLES in z80user.h detects NMI
+		// was asserted (from the VDP vretrace and VDP registers),
+		// it sets "do_nmi" and causes Emulate to return early.
+                if(colecovision_context->do_nmi) {
+                    colecovision_context->do_nmi = 0;
+                    clk += Z80NonMaskableInterrupt (&z80state, colecovision_context);
                 }
+
+#if 0
+                if(false && is_HALT) {
+                    printf("VDP status register = %02X\n", colecohw->vdp.status_register);
+                    printf("VDP interrupts %s\n", TMS9918A::InterruptsAreEnabled(colecohw->vdp.registers.data()) ? "enabled" : "disabled");
+                    printf("VDP interrupt has %soccurred\n", TMS9918A::VSyncInterruptHasOccurred(colecohw->vdp.status_register) ? "" : "not ");
+                    printf("im = %d\n", z80state.im);
+                    printf("HALT took %llu clocks\n", clocks_this_step);
+                }
+#endif
+
+#ifdef PROVIDE_DEBUGGER
+                if(debugger) {
+                    if(enter_debugger || debugger->should_debug(&z80state)) {
+                        debugger->go(stdin, &z80state);
+                        enter_debugger = false;
+                    }
+                }
+#endif
             }
 
 #if defined(ROSA)

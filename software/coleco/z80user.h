@@ -106,7 +106,14 @@ typedef struct ColecovisionContext
     Z80MemoryInfo BIOS;
     Z80MemoryInfo cartridge;
     uint8_t* RAM;
-    void* cvhw;
+    void* cvhw;                         /* struct ColecoHW */
+    int64_t* clk;                       /* main CPU clock */
+    int64_t next_field_start_clock;
+    uint32_t clocks_per_retrace;
+    int do_vretrace_work;               /* does main loop need to do retrace work if we return? */
+    uint32_t* nmi;                      /* NMI signal */
+    int nmi_was_issued;                 /* was NMI already asserted? */
+    int do_nmi;                         /* does main loop need to call NonMaskableInterrupt? */
 } ColecovisionContext;
 
 static inline uint8_t cv_read_byte(void *ctx_, uint32_t address32)
@@ -185,6 +192,35 @@ static inline void cv_write_word(void *ctx_, uint32_t address32, uint16_t word)
 #define Z80_INPUT_BYTE(port16, x) { (x) = cv_in_byte((context), (port16)); }
 
 #define Z80_OUTPUT_BYTE(port16, x) { cv_out_byte((context), (port16), (x)); }
+
+// process the number of clocks emulated
+#define Z80_PROCESS_CYCLES(cycles) \
+{ \
+    int return_early = 0; \
+    ColecovisionContext *ctx = (ColecovisionContext*)(context); \
+\
+    /* Check to see if main loop needs to perform scanout */ \
+    if((*ctx->clk) + (cycles) > ctx->next_field_start_clock) { \
+        ctx->do_vretrace_work = 1; \
+        ctx->next_field_start_clock += ctx->clocks_per_retrace; \
+        return_early = 1; \
+    } \
+\
+    /* Check to see if main loop needs to perform NonMaskableInterrupt */ \
+    if(*ctx->nmi) { \
+        if(!ctx->nmi_was_issued) { \
+            ctx->nmi_was_issued = 1; \
+            ctx->do_nmi = 1; \
+            return_early = 1; \
+        } \
+    } else { \
+        ctx->nmi_was_issued = 0; \
+    } \
+\
+    if(return_early) { \
+        number_cycles = 0; /* cause Emulate to stop loop and return */ \
+    } \
+}
 
 #ifdef __cplusplus
 }

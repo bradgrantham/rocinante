@@ -2608,6 +2608,8 @@ emulate_next_instruction:
 
                 }
 
+                Z80_PROCESS_CYCLES(elapsed_cycles);
+
                 if (elapsed_cycles >= number_cycles)
 
                         goto stop_emulation;
