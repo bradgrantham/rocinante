@@ -1610,14 +1610,13 @@ __attribute__((hot,flatten)) void TMS9918ModeFillRowBuffer(int frameIndex, int r
 {
     int rowIndex = (rowNumber - TMS9918_MODE_TOP) / 2;
     if((rowIndex >= 0) && (rowIndex < 192)) {
-        uint8_t rowColors[256];
+        static uint8_t rowColors[256];
 
         // fill rowColors in from pattern buffer and sprites
         TMS9918AComputeRow(TMS9918Registers, TMS9918RAM, rowIndex, rowColors);
 
         // convert rowColors to NTSC waveform into rowDst 2 2/3 samples at a time.  8-|
         uint16_t index = TMS9918_MODE_LEFT;
-        // And last pixel is special case
 
         for(int i = 0; i < 255; i += 3) {
             // First color covers 2 and 2/3 of a pixel
@@ -1641,6 +1640,7 @@ __attribute__((hot,flatten)) void TMS9918ModeFillRowBuffer(int frameIndex, int r
 
             index += 8;
         }
+        // And last pixel is special case
         uint8_t *color = TMS9918ColorsToNTSC[rowColors[255]];
         rowBuffer[index + 0] = color[(index + 0) % 4];
         rowBuffer[index + 1] = color[(index + 1) % 4];
