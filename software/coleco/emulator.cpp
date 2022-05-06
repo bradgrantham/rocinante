@@ -3,6 +3,7 @@
 #include <cstring>
 #include <cassert>
 #include <cerrno>
+#include <cinttypes>
 
 #include <string>
 #include <chrono>
@@ -39,8 +40,6 @@
 #if defined(ROSA)
 #include "rocinante.h"
 #endif
-
-// XXX *** MUST do sprite signal at scanout time *** XXX
 
 // Wrap the entire app in a namespace to protect from other apps if linked together.
 namespace ColecovisionEmulator
@@ -264,16 +263,16 @@ struct SN76489A
     void advance_noise_to_clock(clk_t flips)
     {
         if(noise_config == 1) {
-        for(int i = 0; i < flips; i++) {
-            noise_flipflop ^= 1;
+            for(int i = 0; i < flips; i++) {
+                noise_flipflop ^= 1;
 
-            if(noise_flipflop) {
+                if(noise_flipflop) {
                     uint8_t new_bit = (noise_register & 0x1) ^ ((noise_register & 0x8) >> 3);
 
                     noise_register = (noise_register >> 1) | (new_bit << 15);
                 }
             }
-                } else {
+        } else {
             for(int i = 0; i < flips; i++) {
                 noise_flipflop ^= 1;
 
@@ -422,18 +421,20 @@ struct TMS9918AEmulator
     void write(uint8_t cmd, uint8_t data)
     {
         using namespace TMS9918A;
-        if(debug & DEBUG_VDP_OPERATIONS) printf("VDP write %lu cmd==%d, in_nmi = %d\n", write_number, cmd, Z80IsInNMI(z80state) ? 1 : 0);
+        if(debug & DEBUG_VDP_OPERATIONS) printf("VDP write %" PRIu32 " cmd==%d, in_nmi = %d\n", write_number, cmd, Z80IsInNMI(z80state) ? 1 : 0);
         if(do_save_images_on_vdp_write) { /* debug */
 
             uint8_t framebuffer[SCREEN_X * SCREEN_Y * 3];
-            auto pixel_setter = [&framebuffer](int x, int y, uint8_t r, uint8_t g, uint8_t b) {
+            auto pixel_setter = [&framebuffer](int x, int y, uint8_t color) {
                 uint8_t *pixel = framebuffer + 3 * (x + y * SCREEN_X) + 0;
-                SetColor(pixel, r, g, b);
+                uint8_t rgb[3];
+                CopyColor(rgb, Colors[color]);
+                SetColor(pixel, rgb[0], rgb[1], rgb[2]);
             };
 
             CreateImageAndReturnFlags(registers.data(), memory.data(), pixel_setter);
             char name[512];
-            sprintf(name, "frame_%04lu_%05lu_%d_%02X.ppm", frame_number, write_number, cmd, data);
+            sprintf(name, "frame_%04" PRIu32 "_%05" PRIu32 "_%d_%02X.ppm", frame_number, write_number, cmd, data);
             FILE *fp = fopen(name, "wb");
             write_rgb8_image_as_P6(framebuffer, SCREEN_X, SCREEN_Y, fp);
             fclose(fp);
@@ -530,7 +531,7 @@ struct TMS9918AEmulator
         frame_number++;
         write_number = 0;
         if(debug & DEBUG_SCANOUT) {
-            printf("scanout frame %lu\n", frame_number);
+            printf("scanout frame %" PRIu32 "\n", frame_number);
         }
 
         uint8_t scanout_status_set = scanout(registers.data(), memory.data());
@@ -1136,9 +1137,11 @@ bool debugger_image(Debugger *d, Z80_STATE* state, int argc, char **argv)
 
     // XXX
     uint8_t framebuffer[SCREEN_X * SCREEN_Y * 3];
-    auto pixel_setter = [&framebuffer](int x, int y, uint8_t r, uint8_t g, uint8_t b) {
+    auto pixel_setter = [&framebuffer](int x, int y, uint8_t color) {
         uint8_t *pixel = framebuffer + 3 * (x + y * SCREEN_X) + 0;
-        SetColor(pixel, r, g, b);
+        uint8_t rgb[3];
+        CopyColor(rgb, Colors[color]);
+        SetColor(pixel, rgb[0], rgb[1], rgb[2]);
     };
     std::chrono::time_point<std::chrono::system_clock> start_time = std::chrono::system_clock::now();
     CreateImageAndReturnFlags(vdp.registers.data(), vdp.memory.data(), pixel_setter);
@@ -1640,10 +1643,10 @@ void usage(char *progname)
     printf("\t--vdp-test file image          Use previously-saved contents of file as the\n");
     printf("\t                               state for the VDP and save resulting screen as image.\n");
 #ifdef PROVIDE_DEBUGGER
-    printf("\t--debugger init          Invoke debugger on startup\n");
+    printf("\t--debugger init                Invoke debugger on startup\n");
 #endif
-    printf("\t                        \"init\" can be commands (separated by \";\"\n");
-    printf("\t                        or a filename.  The initial commands can be\n");
+    printf("\t                               \"init\" can be commands (separated by \";\"\n");
+    printf("\t                               or a filename.  The initial commands can be\n");
     printf("\t                               an empty string.\n");
     printf("\n");
 }
@@ -1670,9 +1673,11 @@ void do_vdp_test(const char *vdp_dump_name, const char *image_name)
     fclose(vdp_dump_in);
 
     uint8_t framebuffer[SCREEN_X * SCREEN_Y * 3];
-    auto pixel_setter = [&framebuffer](int x, int y, uint8_t r, uint8_t g, uint8_t b) {
+    auto pixel_setter = [&framebuffer](int x, int y, uint8_t color) {
         uint8_t *pixel = framebuffer + 3 * (x + y * SCREEN_X) + 0;
-        SetColor(pixel, r, g, b);
+        uint8_t rgb[3];
+        CopyColor(rgb, Colors[color]);
+        SetColor(pixel, rgb[0], rgb[1], rgb[2]);
     };
     CreateImageAndReturnFlags(registers.data(), memory.data(), pixel_setter);
     FILE *fp = fopen(image_name, "wb");
@@ -1807,6 +1812,7 @@ void cv_out_byte(void* ctx_, uint16_t address16, uint8_t value)
 }; // extern "C" 
 
 }; // namespace ColecovisionEmulator
+
 
 int main(int argc, char **argv)
 {
@@ -2002,7 +2008,6 @@ int main(int argc, char **argv)
             playback_events.push_back(event);
         }
         fclose(playback_input);
-        printf("Will play back %zd events\n", playback_events.size());
 
         // Run for a few more seconds at the end of playback
         {
@@ -2034,14 +2039,12 @@ int main(int argc, char **argv)
         }
         if(playback_controllers) {
             if(playback_events.size() == 0) {
-                printf("playback ending\n");
                 exit(0);
             }
             current = previous;
             const ControllerEvent& next = playback_events.front();
             if((clk >= next.clk) && (index == next.index) && (JoystickNotKeypad == next.JoystickNotKeypad)) {
                 current = (previous | next.bits_set) & ~next.bits_cleared;
-                printf("playback matched %llu at %llu, state was %d and became %d\n", next.clk, clk, previous, current);
                 playback_events.pop_front();
             }
         }

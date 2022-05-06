@@ -5,6 +5,11 @@
 #include <cstdio>
 #include <array>
 
+// On desktop: call CreateImageAndReturnFlags as done previously to an RGB8 image
+// On Rosa: call CreateImageAndReturnFlags to 4BitPixmap on scanout?
+//     Maybe later optimization to keep track of sprites startrow-stoprow
+// AddSpritesToRow should operate on a 4BitPixmap
+
 namespace TMS9918A
 {
 
@@ -161,9 +166,62 @@ inline bool SpritesVisible(const uint8_t* registers)
     return false;
 }
 
-inline uint16_t GetNameTableBase(const uint8_t* registers)
+inline uint16_t GetPatternNameTableBase(const uint8_t* registers)
 {
     return (registers[2] & VR2_NAME_TABLE_MASK) << VR2_NAME_TABLE_SHIFT;
+}
+
+inline uint8_t PatternName(const uint8_t* registers, const uint8_t* memory, uint16_t x, uint16_t y)
+{
+    return memory[GetPatternNameTableBase(registers) | x | (y << ROW_SHIFT)];
+}
+
+inline uint16_t GetBitmapPatternGeneratorTableBase(const uint8_t* registers)
+{
+    return (registers[4] & VR4_PATTERN_MASK_BITMAP) << VR4_PATTERN_SHIFT_BITMAP;
+}
+
+inline const uint8_t* GetBitmapPatternRows(const uint8_t* registers, const uint8_t* memory, uint16_t sector, uint8_t pattern_name)
+{
+    uint16_t table_offset = (pattern_name * 8) + sector;
+    const uint8_t *bitmap_pattern_generator_table = memory + GetBitmapPatternGeneratorTableBase(registers);
+    return bitmap_pattern_generator_table + table_offset;
+}
+
+inline uint16_t GetStandardPatternGeneratorTableBase(const uint8_t* registers)
+{
+    return (registers[4] & VR4_PATTERN_MASK_STANDARD) << VR4_PATTERN_SHIFT_STANDARD;
+}
+
+inline const uint8_t* GetStandardPatternRows(const uint8_t* registers, const uint8_t* memory, uint8_t pattern_name)
+{
+    uint16_t table_offset = (pattern_name * 8);
+    const uint8_t *standard_pattern_generator_table = memory + GetStandardPatternGeneratorTableBase(registers);
+    return standard_pattern_generator_table + table_offset;
+}
+
+inline uint16_t GetBitmapColorTableBase(const uint8_t* registers)
+{
+    return (registers[3] & VR3_COLORTABLE_MASK_BITMAP) << VR3_COLORTABLE_SHIFT_BITMAP;
+}
+
+inline const uint8_t* GetBitmapColorRows(const uint8_t* registers, const uint8_t* memory, uint16_t sector, uint8_t pattern_name)
+{
+    uint16_t table_offset = (pattern_name * 8) + sector;
+    const uint8_t *color_table = memory + GetBitmapColorTableBase(registers);
+    return color_table + table_offset;
+}
+
+inline uint16_t GetStandardColorTableBase(const uint8_t* registers)
+{
+    return (registers[3] & VR3_COLORTABLE_MASK_STANDARD) << VR3_COLORTABLE_SHIFT_STANDARD;
+}
+
+inline uint8_t GetStandardColorPair(const uint8_t* registers, const uint8_t* memory, uint8_t pattern_name)
+{
+    uint16_t table_offset = pattern_name / 8;
+    const uint8_t *color_table = memory + GetStandardColorTableBase(registers);
+    return color_table[table_offset];
 }
 
 inline uint16_t GetSpriteAttributeTableBase(const uint8_t* registers)
@@ -209,91 +267,121 @@ static uint8_t Colors[16][3] = {
     {255, 255, 255},
 };
 
-static void FillRowFromGraphicsI(int y, uint8_t row_colors[TMS9918A::SCREEN_X], const uint8_t* registers, const uint8_t* memory)
+// Assumes X is increasing from 0.
+static void Set4BitPixmapColorIncrementingX(uint8_t pixmap[128 * 192], int x, int y, uint8_t color)
 {
-    using namespace TMS9918A;
+    if((x & 0b1) == 0) {
+        pixmap[x / 2 + y * 128] = color;
+    } else {
+        pixmap[x / 2 + y * 128] |= color << 4;
+    }
+}
 
-    uint16_t row = y / 8;
-    uint16_t pattern_row = y % 8;
+static void Set4BitPixmapColor(uint8_t pixmap[128 * 192], int x, int y, uint8_t color)
+{
+    uint8_t& pixelpair = pixmap[x / 2 + y * 128];
+    uint8_t shift = (x % 2) * 4;
+    uint8_t nybble_cleared = pixelpair & ~(0xF << shift);
+    pixelpair = nybble_cleared | (color << shift);
+}
 
-    uint16_t name_row_base = GetNameTableBase(registers) | (row << ROW_SHIFT);
-    uint16_t pattern_row_base = (registers[4] & VR4_PATTERN_MASK_STANDARD) << VR4_PATTERN_SHIFT_STANDARD | pattern_row;
-    uint16_t color_base = (registers[3] & VR3_COLORTABLE_MASK_STANDARD) << VR3_COLORTABLE_SHIFT_STANDARD;
+static void Clear4BitPixmap(uint8_t pixmap[128 * 192], uint8_t color)
+{
+    for(int index = 0; index < 128 * 192; index++) {
+        pixmap[index] = (color << 4) | color;
+    }
+}
 
-    uint8_t *rowp = row_colors;
+template <typename SetPixelFunc>
+static void DrawPatternFromGraphicsI(const uint8_t* registers, const uint8_t* memory, SetPixelFunc SetPixel)
+{
     uint8_t backdrop = GetBackdropColor(registers);
-    for(int x = 0; x < SCREEN_X; x += 8) {
-        uint16_t col = x / 8;
 
-        uint16_t name_table_address = name_row_base | col;
-        uint8_t pattern_name = memory[name_table_address];
-        uint16_t pattern_address = pattern_row_base | (pattern_name << CHARACTER_PATTERN_SHIFT);
-        uint16_t color_address = color_base | (pattern_name >> CHARACTER_COLOR_SHIFT);
+    for(uint16_t name_y = 0; name_y < 24; name_y++) {
 
-        uint8_t pattern_byte = memory[pattern_address];
-        uint8_t colortable = memory[color_address];
-        uint8_t color0 = colortable & 0xf;
-        uint8_t color1 = (colortable >> 4) & 0xf;
+        for(uint16_t name_x = 0; name_x < 32; name_x++) {
 
-        if(color0 == TRANSPARENT_COLOR_INDEX) {
-            color0 = backdrop;
-        }
-        if(color1 == TRANSPARENT_COLOR_INDEX) {
-            color1 = backdrop;
-        }
+            uint8_t pattern_name = PatternName(registers, memory, name_x, name_y);
 
-#pragma GCC unroll 8
-        for(int pattern_col = 0; pattern_col < 8; pattern_col++) {
-            bool bit = pattern_byte & (0x80 >> pattern_col);
-            *rowp++ = bit ? color1 : color0;
+            const uint8_t *pattern_rows = GetStandardPatternRows(registers, memory, pattern_name);
+
+            uint8_t color_pair = GetStandardColorPair(registers, memory, pattern_name);
+            uint8_t color0 = color_pair & 0xf;
+            uint8_t color1 = (color_pair >> 4) & 0xf;
+
+            if(color0 == TRANSPARENT_COLOR_INDEX) {
+                color0 = backdrop;
+            }
+            if(color1 == TRANSPARENT_COLOR_INDEX) {
+                color1 = backdrop;
+            }
+
+            for(uint16_t pattern_row_index = 0; pattern_row_index < 8; pattern_row_index++) {
+
+                uint8_t pattern_row_byte = pattern_rows[pattern_row_index];
+
+#pragma unroll 8
+                for(int pattern_col = 0; pattern_col < 8; pattern_col++) {
+
+                    bool bit = pattern_row_byte & (0x80 >> pattern_col);
+                    uint8_t color = bit ? color1 : color0;
+
+                    SetPixel(name_x * 8 + pattern_col, name_y * 8 + pattern_row_index, color);
+                }
+            }
         }
     }
 }
 
-static void FillRowFromGraphicsII(int y, uint8_t row_colors[TMS9918A::SCREEN_X], const uint8_t* registers, const uint8_t* memory)
+template <typename SetPixelFunc>
+static void DrawPatternFromGraphicsII(const uint8_t* registers, const uint8_t* memory, SetPixelFunc SetPixel)
 {
-    using namespace TMS9918A;
-
-    uint16_t row = y / 8;
-    uint16_t pattern_row = y % 8;
-    int third = (row / 8) << THIRD_SHIFT;
-
-    uint16_t name_table_row_base = GetNameTableBase(registers) | (row << ROW_SHIFT);
-    uint16_t address_mask = ((registers[3] & VR3_ADDRESS_MASK_BITMAP) << VR3_ADDRESS_MASK_SHIFT) | ADDRESS_MASK_FILL;
-    uint16_t pattern_address_row_base = ((registers[4] & VR4_PATTERN_MASK_BITMAP) << VR4_PATTERN_SHIFT_BITMAP) | pattern_row | (third & address_mask);
-    uint16_t color_address_row_base = ((registers[3] & VR3_COLORTABLE_MASK_BITMAP) << VR3_COLORTABLE_SHIFT_BITMAP) | pattern_row | (third & address_mask);
-
-    uint8_t *rowp = row_colors;
     uint8_t backdrop = GetBackdropColor(registers);
-    for(int x = 0; x < SCREEN_X; x += 8) {
-        uint16_t col = x / 8;
 
-        uint16_t name_table_address = name_table_row_base | col;
-        uint16_t pattern_name = memory[name_table_address];
+    // uint16_t address_mask = ((registers[3] & VR3_ADDRESS_MASK_BITMAP) << VR3_ADDRESS_MASK_SHIFT) | ADDRESS_MASK_FILL;
 
-        uint16_t pattern_address = pattern_address_row_base | ((pattern_name << CHARACTER_PATTERN_SHIFT) & address_mask);
-        uint16_t color_address = color_address_row_base | ((pattern_name << CHARACTER_PATTERN_SHIFT) & address_mask);
-        uint8_t pattern_byte = memory[pattern_address];
-        uint8_t colortable = memory[color_address];
-        uint8_t color0 = colortable & 0xf;
-        uint8_t color1 = (colortable >> 4) & 0xf;
+    for(uint16_t name_y = 0; name_y < 24; name_y++) {
 
-        if(color0 == TRANSPARENT_COLOR_INDEX) {
-            color0 = backdrop;
-        }
-        if(color1 == TRANSPARENT_COLOR_INDEX) {
-            color1 = backdrop;
-        }
+        uint16_t sector = (name_y / 8) << THIRD_SHIFT;
 
-#pragma GCC unroll 8
-        for(int pattern_col = 0; pattern_col < 8; pattern_col++) {
-            bool bit = pattern_byte & (0x80 >> pattern_col);
-            *rowp++ = bit ? color1 : color0;
+        for(uint16_t name_x = 0; name_x < 32; name_x++) {
+
+            uint8_t pattern_name = PatternName(registers, memory, name_x, name_y);
+
+            const uint8_t *pattern_rows = GetBitmapPatternRows(registers, memory, sector, pattern_name);
+
+            const uint8_t *color_pair_rows = GetBitmapColorRows(registers, memory, sector, pattern_name);
+
+            for(uint16_t pattern_row_index = 0; pattern_row_index < 8; pattern_row_index++) {
+
+                uint8_t pattern_row_byte = pattern_rows[pattern_row_index];
+
+                uint8_t color_pair = color_pair_rows[pattern_row_index];
+                uint8_t color0 = color_pair & 0xf;
+                uint8_t color1 = (color_pair >> 4) & 0xf;
+
+                if(color0 == TRANSPARENT_COLOR_INDEX) {
+                    color0 = backdrop;
+                }
+                if(color1 == TRANSPARENT_COLOR_INDEX) {
+                    color1 = backdrop;
+                }
+
+#pragma unroll 8
+                for(int pattern_col = 0; pattern_col < 8; pattern_col++) {
+
+                    bool bit = pattern_row_byte & (0x80 >> pattern_col);
+                    uint8_t color = bit ? color1 : color0;
+
+                    SetPixel(name_x * 8 + pattern_col, name_y * 8 + pattern_row_index, color);
+                }
+            }
         }
     }
 }
 
-static void FillRowFromPattern(int y, uint8_t row_colors[TMS9918A::SCREEN_X], const uint8_t* registers, const uint8_t* memory)
+template <typename SetPixelFunc>
+static void DrawPatternColors(const uint8_t* registers, const uint8_t* memory, SetPixelFunc SetPixel)
 {
     using namespace TMS9918A;
 
@@ -301,11 +389,11 @@ static void FillRowFromPattern(int y, uint8_t row_colors[TMS9918A::SCREEN_X], co
 
     if(mode == GraphicsMode::GRAPHICS_I) {
 
-        FillRowFromGraphicsI(y, row_colors, registers, memory);
+        DrawPatternFromGraphicsI(registers, memory, SetPixel);
 
     } else if(mode == GraphicsMode::GRAPHICS_II) {
-
-        FillRowFromGraphicsII(y, row_colors, registers, memory);
+        
+        DrawPatternFromGraphicsII(registers, memory, SetPixel);
 
     } else {
 
@@ -314,14 +402,16 @@ static void FillRowFromPattern(int y, uint8_t row_colors[TMS9918A::SCREEN_X], co
         bool M3 = registers[0] & VR0_M3_MASK;
         printf("unhandled video mode M1 = %d M2 = %d M3 = %d\n", M1, M2, M3);
 
-        for(int x = 0; x < SCREEN_X; x++) {
-            row_colors[x] = 8; // RED
+        for(int y = 0; y < SCREEN_Y; y++) {
+            for(int x = 0; x < SCREEN_X; x++) {
+                SetPixel(x, y, 8);
+            }
         }
-        // abort();
     }
 }
 
-static void AddSpritesToRow(int row, uint8_t row_colors[TMS9918A::SCREEN_X], const uint8_t* registers, const uint8_t* memory, uint8_t& flags_set)
+template <typename SetPixelFunc>
+static void DrawSprites(int row, const uint8_t* registers, const uint8_t* memory, uint8_t& flags_set, SetPixelFunc SetPixel)
 {
     using namespace TMS9918A;
 
@@ -384,14 +474,12 @@ static void AddSpritesToRow(int row, uint8_t row_colors[TMS9918A::SCREEN_X], con
                 break;
             }
 
-            auto set_color_from_bit = [&flags_set, &row_colors, sprite_color](int bit, int x) {
+            auto set_color_from_bit = [&flags_set, sprite_color, &SetPixel, row](int bit, int x) {
                 if(bit) {
                     if(!sprite_touched[x]) {
                         sprite_touched[x] = true;
-                        if(row_colors) {
-                            if(sprite_color != TRANSPARENT_COLOR_INDEX) {
-                                row_colors[x] = sprite_color;
-                            }
+                        if(sprite_color != TRANSPARENT_COLOR_INDEX) {
+                            SetPixel(x, row, sprite_color);
                         }
                     } else {
                         flags_set |= VDP_STATUS_C_BIT;
@@ -404,7 +492,7 @@ static void AddSpritesToRow(int row, uint8_t row_colors[TMS9918A::SCREEN_X], con
                 int quadrant_y = within_sprite_y / 8;
                 int masked_sprite_name = sprite_name & SPRITE_NAME_MASK_SIZE4;
 
-#pragma GCC unroll 8
+#pragma unroll 8
                 for(int x = start_x; x <= end_x; x++) {
 
                     int within_sprite_x = mag2x ? ((x - sprite_x) / 2) : (x - sprite_x);
@@ -421,7 +509,7 @@ static void AddSpritesToRow(int row, uint8_t row_colors[TMS9918A::SCREEN_X], con
                 int sprite_pattern_address = GetSpritePatternTableBase(registers) | (sprite_name << SPRITE_NAME_SHIFT) | within_sprite_y;
                 int bitpattern = memory[sprite_pattern_address];
 
-#pragma GCC unroll 8
+#pragma unroll 8
                 for(int x = start_x; x <= end_x; x++) {
 
                     int within_sprite_x = mag2x ? ((x - sprite_x) / 2) : (x - sprite_x);
@@ -435,6 +523,17 @@ static void AddSpritesToRow(int row, uint8_t row_colors[TMS9918A::SCREEN_X], con
     }
 }
 
+static void AddSpritesToRow(int row, uint8_t row_colors[TMS9918A::SCREEN_X], const uint8_t* registers, const uint8_t* memory, uint8_t& flags_set)
+{
+    auto RowSetPixel = [row_colors, row](int x, int y, int color) {
+        // We know row is constant so ignore it.
+        if(row_colors) {
+            row_colors[x] = color;
+        }
+    };
+    DrawSprites(row, registers, memory, flags_set, RowSetPixel);
+}
+
 template <typename SetPixelFunc>
 static uint8_t CreateImageAndReturnFlags(const uint8_t* registers, const uint8_t* memory, SetPixelFunc SetPixel)
 {
@@ -443,38 +542,26 @@ static uint8_t CreateImageAndReturnFlags(const uint8_t* registers, const uint8_t
     uint8_t flags_set = 0;
 
     if(ActiveDisplayAreaIsBlanked(registers)) {
-        uint8_t color_index = GetBackdropColor(registers);
-        uint8_t rgb[3];
-        CopyColor(rgb, Colors[color_index]);
+        uint8_t backdrop = GetBackdropColor(registers);
         for(int row = 0; row < SCREEN_Y; row++) {
             for(int col = 0; col < SCREEN_X; col++) {
-                SetPixel(col, row, rgb[0], rgb[1], rgb[2]);
+                SetPixel(col, row, backdrop);
             }
         }
         return flags_set;
     }
 
-    static uint8_t row_colors[SCREEN_X];
-
-    for(int row = 0; row < SCREEN_Y; row++) {
-
-        FillRowFromPattern(row, row_colors, registers, memory);
-
-        if(SpritesVisible(registers)) {
-            AddSpritesToRow(row, row_colors, registers, memory, flags_set);
-        }
-
-        for(int col = 0; col < SCREEN_X; col++) {
-            uint8_t rgb[3];
-            CopyColor(rgb, Colors[row_colors[col]]);
-            SetPixel(col, row, rgb[0], rgb[1], rgb[2]);
+    DrawPatternColors(registers, memory, SetPixel);
+    if(SpritesVisible(registers)) {
+        for(int row = 0; row < SCREEN_Y; row++) {
+            DrawSprites(row, registers, memory, flags_set, SetPixel);
         }
     }
 
     return flags_set;
 }
 
-static uint8_t GetStatusFromSpriteConfiguration(const uint8_t* registers, const uint8_t* memory)
+[[maybe_unused]] static uint8_t GetStatusFromSpriteConfiguration(const uint8_t* registers, const uint8_t* memory)
 {
     using namespace TMS9918A;
 
@@ -487,6 +574,15 @@ static uint8_t GetStatusFromSpriteConfiguration(const uint8_t* registers, const 
     }
 
     return flags_set;
+}
+
+[[maybe_unused]] static uint8_t Create4BitPixmap(const uint8_t* registers, const uint8_t* memory, uint8_t fb[128 * 192])
+{
+    auto pixel_setter = [fb](int x, int y, uint8_t color) {
+        TMS9918A::Set4BitPixmapColor(fb, x, y, color);
+    };
+
+    return TMS9918A::CreateImageAndReturnFlags(registers, memory, pixel_setter);
 }
 
 };

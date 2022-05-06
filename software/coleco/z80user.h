@@ -11,6 +11,7 @@
 #define __Z80USER_INCLUDED__
 
 #include <stdint.h>
+#include <assert.h>
 
 #ifdef __cplusplus
 extern "C" {

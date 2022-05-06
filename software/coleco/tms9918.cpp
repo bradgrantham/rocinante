@@ -2,6 +2,7 @@
 
 extern "C" {
 
+#if 0
 uint8_t TMS9918AComputeRow(const uint8_t* registers, const uint8_t* memory, int row, uint8_t* row_colors)
 {
     using namespace TMS9918A;
@@ -26,5 +27,6 @@ uint8_t TMS9918AComputeRow(const uint8_t* registers, const uint8_t* memory, int 
 
     return flags_set;
 }
+#endif
 
 };

@@ -317,9 +317,8 @@ void HandleEvents()
 
 extern "C" {
 
-extern uint8_t TMS9918Registers[8];
-extern uint8_t TMS9918RAM[16384];
-void NTSCWaitFrame(void);
+extern uint8_t Pixmap256_192_4b_Framebuffer[256 / 2 * 192];
+extern void NTSCWaitFrame(void);
 
 }
 
@@ -338,9 +337,7 @@ void Frame(const uint8_t* vdp_registers, const uint8_t* vdp_ram, uint8_t& vdp_st
     }
 
     // NTSCWaitFrame(); // XXX should be doing this - is function bad or is timing bad?
-    memcpy(TMS9918Registers, vdp_registers, 8);
-    memcpy(TMS9918RAM, vdp_ram, 16384);
-    vdp_status_result = TMS9918A::GetStatusFromSpriteConfiguration(vdp_registers, vdp_ram);
+    vdp_status_result = TMS9918A::Create4BitPixmap(vdp_registers, vdp_ram, Pixmap256_192_4b_Framebuffer);
 }
 
 void MainLoopAndShutdown(MainLoopBodyFunc body)
