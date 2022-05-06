@@ -46,7 +46,7 @@ struct ProcessEventQueue
     StaticQueue<Event, 32> eventQueue;
 };
 
-constexpr int MaxProcesses = 32;
+constexpr int MaxProcesses = 8;
 
 std::array<ProcessEventQueue,MaxProcesses> gEventsByProcess = { {0, false, {} } };
 
