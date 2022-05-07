@@ -102,6 +102,38 @@ void MX_USB_HOST_Process(void);
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
+//----------------------------------------------------------------------------
+// From: https://kbiva.wordpress.com/2013/03/25/microsecond-delay-function-for-stm32/
+
+void delay_init(void) 
+{
+  if (!(CoreDebug->DEMCR & CoreDebug_DEMCR_TRCENA_Msk)) 
+  {
+    CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
+    DWT->CYCCNT = 0;
+    DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
+  }
+}
+ 
+uint32_t DWT_Get(void)
+{
+  return DWT->CYCCNT;
+}
+ 
+static __inline
+uint8_t DWT_Compare(int32_t tp)
+{
+  return (((int32_t)DWT_Get() - tp) < 0);
+}
+ 
+void delay_us(uint32_t us) // microseconds
+{
+  int32_t tp = DWT_Get() + us * (SystemCoreClock/1000000);
+  while (DWT_Compare(tp));
+}
+
+// End of from: https://kbiva.wordpress.com/2013/03/25/microsecond-delay-function-for-stm32/
+
 enum { SDRAM_TEST_STEP_SIZE = 65536 };
 enum { SDRAM_START = 0x70000000 };
 
@@ -647,7 +679,8 @@ uint8_t RoGetJoystickState(RoControllerIndex which)
     HAL_GPIO_WritePin(select_joystick.port, select_joystick.mask, GPIO_PIN_RESET);
     HAL_GPIO_Init(select_joystick.port, &GPIO_InitStruct); 
 
-    HAL_Delay(1);
+    delay_us(10);
+    // HAL_Delay(1);
 
     // read joystick and fire-left
     unsigned int joystick_value = 0;
@@ -681,7 +714,7 @@ uint8_t RoGetJoystickState(RoControllerIndex which)
     GPIO_InitStruct.Pin = select_joystick.mask;
     HAL_GPIO_Init(select_joystick.port, &GPIO_InitStruct); 
 
-    HAL_Delay(1);
+    // HAL_Delay(1);
     return joystick_value;
 }
 
@@ -707,7 +740,8 @@ uint8_t RoGetKeypadState(RoControllerIndex which)
             break;
     }
 
-    HAL_Delay(1);
+    delay_us(10);
+    // HAL_Delay(1);
 
     // read keypad and fire-right
     unsigned int keypad_value = 0;
@@ -748,7 +782,7 @@ uint8_t RoGetKeypadState(RoControllerIndex which)
             break;
     }
 
-    HAL_Delay(1);
+    // HAL_Delay(1);
 
     return keypad_value;
 }
@@ -781,7 +815,8 @@ char ColecoKeypadToCharacter(uint8_t value)
 // reason; maybe the overhead of reading plus the read ended up being
 // longer than the duration of one buffer, so it missed.
 
-static uint8_t audioBuffer[512 * 2 * 2];
+#define AUDIO_CHUNK (512 * 2)
+static uint8_t audioBuffer[AUDIO_CHUNK * 2];
 
 volatile size_t audioBufferPosition = 0;
 
@@ -1423,7 +1458,12 @@ enum DisplayMode { DISPLAY_MODE_NONE, DISPLAY_MODE_NTSC, DISPLAY_MODE_VGA } curr
 void NTSCWaitFrame()
 {
     // NTSC won't actually go lineNumber >= 525...
-    while(!(NTSCRowNumber > 257 && NTSCRowNumber < 262) || (NTSCRowNumber > 520 && NTSCRowNumber < NTSC_FRAME_LINES)); // Wait for VBLANK; should do something smarter
+    int field0_vblank;
+    int field1_vblank;
+    do {
+        field0_vblank = (NTSCRowNumber > 257) && (NTSCRowNumber < 262);
+        field1_vblank = (NTSCRowNumber > 520) && (NTSCRowNumber < NTSC_FRAME_LINES);
+    } while(!field0_vblank && !field1_vblank); // Wait for VBLANK; should do something smarter
 }
 
 void NTSCRowHandler(void)
@@ -1551,100 +1591,6 @@ void startNTSCScanout()
     if(status != HAL_OK){
         printf("DMA error %08d, error code %08lX, line %d\n", status, hdma_tim1_ch2.ErrorCode, why);
         panic();
-    }
-}
-
-//----------------------------------------------------------------------------
-// TMS9918 graphics (ColecoVision, etc)
-
-/* actually 682.6_ 14MHz clocks because 5.3MHz TMS9918A pixel clock */
-/* so the last pixel is extended another 1/3 to fill last clock */
-#define TMS9918_MODE_WIDTH 683
-#define TMS9918_MODE_LEFT ((704 - TMS9918_MODE_WIDTH) / 2) 
-#define TMS9918_MODE_TOP 65 
-#define TMS9918_MODE_HEIGHT 192 
-
-uint8_t TMS9918Registers[8];
-uint8_t TMS9918RAM[16384];
-
-uint8_t TMS9918ColorsToNTSC[16][4];
-const uint8_t TMS9918ColorsInRGB[16][3] = {
-    {0, 0, 0}, /* if BACKDROP is 0, supply black */
-    {0, 0, 0},
-    {35, 203, 50},
-    {96, 221, 108},
-    {84, 78, 255},
-    {125, 112, 255},
-    {210, 84, 66},
-    {69, 232, 255},
-    {250, 89, 72},
-    {255, 124, 108},
-    {211, 198, 60},
-    {229, 210, 109},
-    {35, 178, 44},
-    {200, 90, 198},
-    {204, 204, 204},
-    {255, 255, 255},
-};
-
-// XXX TODO: convert original patent waveforms into YIQ
-// May not be able to get the real YIQ values because resistor
-// values are not listed in patent
-void TMS9918Init()
-{
-    for(int color = 0; color < 16; color++) {
-        const uint8_t *c = TMS9918ColorsInRGB[color];
-        float y, i, q;
-        RGBToYIQ(c[0] / 255.0f, c[1] / 255.0f, c[2] / 255.0f, &y, &i, &q);
-
-        TMS9918ColorsToNTSC[color][0] = NTSCYIQToDAC(y, i, q,  .0f);
-        TMS9918ColorsToNTSC[color][1] = NTSCYIQToDAC(y, i, q, .25f);
-        TMS9918ColorsToNTSC[color][2] = NTSCYIQToDAC(y, i, q, .50f);
-        TMS9918ColorsToNTSC[color][3] = NTSCYIQToDAC(y, i, q, .75f);
-    }
-}
-
-extern uint8_t TMS9918AComputeRow(const uint8_t* registers, const uint8_t* memory, int row, uint8_t* row_colors);
-
-__attribute__((hot,flatten)) void TMS9918ModeFillRowBuffer(int frameIndex, int rowNumber, size_t maxSamples, uint8_t* rowBuffer)
-{
-    int rowIndex = (rowNumber - TMS9918_MODE_TOP) / 2;
-    if((rowIndex >= 0) && (rowIndex < 192)) {
-        static uint8_t rowColors[256];
-
-        // fill rowColors in from pattern buffer and sprites
-        TMS9918AComputeRow(TMS9918Registers, TMS9918RAM, rowIndex, rowColors);
-
-        // convert rowColors to NTSC waveform into rowDst 2 2/3 samples at a time.  8-|
-        uint16_t index = TMS9918_MODE_LEFT;
-
-        for(int i = 0; i < 255; i += 3) {
-            // First color covers 2 and 2/3 of a pixel
-            uint8_t *color = TMS9918ColorsToNTSC[rowColors[i]];
-            rowBuffer[index + 0] = color[(index + 0) % 4];
-            rowBuffer[index + 1] = color[(index + 1) % 4];
-            uint8_t carry_over = color[(index + 2) % 4];
-
-            // second color covers 1/3, 2, and 1/3 of a pixel
-            color = TMS9918ColorsToNTSC[rowColors[i + 1]];
-            rowBuffer[index + 2] = (carry_over * 6 + color[(index + 2) % 4] * 3) / 9;
-            rowBuffer[index + 3] = color[(index + 3) % 4];
-            rowBuffer[index + 4] = color[(index + 4) % 4];
-            carry_over = color[(index + 5) % 4];
-
-            // third color covers 2/3 and 2 pixels
-            color = TMS9918ColorsToNTSC[rowColors[i + 2]];
-            rowBuffer[index + 5] = (carry_over * 3 + color[(index + 5) % 4] * 6) / 9;
-            rowBuffer[index + 6] = color[(index + 6) % 4];
-            rowBuffer[index + 7] = color[(index + 7) % 4];
-
-            index += 8;
-        }
-        // And last pixel is special case
-        uint8_t *color = TMS9918ColorsToNTSC[rowColors[255]];
-        rowBuffer[index + 0] = color[(index + 0) % 4];
-        rowBuffer[index + 1] = color[(index + 1) % 4];
-        rowBuffer[index + 2] = color[(index + 2) % 4];
     }
 }
 
@@ -3170,9 +3116,9 @@ int main(void)
   MX_LIBJPEG_Init();
   /* USER CODE BEGIN 2 */
 
+    delay_init();
     SDRAMInit();
     InitializeControllers();
-    TMS9918Init();
 
     if(0){
         GPIO_InitTypeDef GPIO_InitStruct = {0};
@@ -3424,215 +3370,26 @@ int main(void)
         TestControllers();
     }
 
-    if(0) {
-
-        DisplayStringCentered("One second to TMS9918A test");
-        HAL_Delay(1000);
-
-        static const char *testNames[] = {
-            "beamrider_00.vdp",
-            "beamrider_01.vdp",
-            "beamrider_02.vdp",
-            "beamrider_03.vdp",
-            "beamrider_04.vdp",
-            "burgertime_00.vdp",
-            "burgertime_01.vdp",
-            "burgertime_02.vdp",
-            "burgertime_03.vdp",
-            "burgertime_prototype_00.vdp",
-            "burgertime_prototype_01.vdp",
-            "burgertime_prototype_02.vdp",
-            "chiplifter_00.vdp",
-            "chiplifter_01.vdp",
-            "chiplifter_02.vdp",
-            "chiplifter_03.vdp",
-            "chiplifter_04.vdp",
-            "defender_00.vdp",
-            "defender_01.vdp",
-            "defender_02.vdp",
-            "defender_03.vdp",
-            "dig_dug_00.vdp",
-            "dig_dug_01.vdp",
-            "dig_dug_02.vdp",
-            "dig_dug_03.vdp",
-            "donkey_kong_00.vdp",
-            "donkey_kong_01.vdp",
-            "donkey_kong_02.vdp",
-            "donkey_kong_03.vdp",
-            "donkey_kong_jr_00.vdp",
-            "donkey_kong_jr_01.vdp",
-            "donkey_kong_jr_02.vdp",
-            "frogger_00.vdp",
-            "jungle_hunt_00.vdp",
-            "jungle_hunt_01.vdp",
-            "jungle_hunt_02.vdp",
-            "jungle_hunt_03.vdp",
-            "jungle_hunt_04.vdp",
-            "looping_00.vdp",
-            "looping_01.vdp",
-            "looping_02.vdp",
-            "miner_2049er_00.vdp",
-            "miner_2049er_01.vdp",
-            "miner_2049er_02.vdp",
-            "miner_2049er_03.vdp",
-            "moon_patrol_00.vdp",
-            "moon_patrol_01.vdp",
-            "moon_patrol_02.vdp",
-            "moon_patrol_03.vdp",
-            "mr_do_00.vdp",
-            "mr_do_01.vdp",
-            // "mr_do_02.vdp",
-            "mr_do_03.vdp",
-            "pitfall_00.vdp",
-            "pitfall_01.vdp",
-            "pitfall_02.vdp",
-            "pitfall_03.vdp",
-            "pitfall_04.vdp",
-            "pitfall_05.vdp",
-            "pitfall_06.vdp",
-            "pitfall_07.vdp",
-            "pitfall_08.vdp",
-            "pitfall_09.vdp",
-            "pitfall_10.vdp",
-            "pitfall_11.vdp",
-            "pitfall_12.vdp",
-            "pitfall_13.vdp",
-            "pitfall_14.vdp",
-            "pitfall_15.vdp",
-            "pitfall_16.vdp",
-            "pitfall_17.vdp",
-            "pitfall_18.vdp",
-            "pitfall_19.vdp",
-            "pitfall_20.vdp",
-            "pitfall_21.vdp",
-            "pitfall_22.vdp",
-            "pitfall_23.vdp",
-            "pitfall_24.vdp",
-            "pitfall_25.vdp",
-            "pitfall_26.vdp",
-            "pitfall_27.vdp",
-            "pitfall_28.vdp",
-            "pitfall_29.vdp",
-            "pitfall_2_00.vdp",
-            "pitfall_2_01.vdp",
-            "pitfall_2_02.vdp",
-            "pitfall_30.vdp",
-            "pitfall_31.vdp",
-            "pitfall_32.vdp",
-            "pitfall_33.vdp",
-            "pitfall_34.vdp",
-            "pitfall_35.vdp",
-            "pitfall_36.vdp",
-            "pitfall_37.vdp",
-            "pitfall_38.vdp",
-            "pitfall_39.vdp",
-            "pitfall_40.vdp",
-            "pitfall_41.vdp",
-            "pitfall_42.vdp",
-            "pitfall_43.vdp",
-            "pitfall_44.vdp",
-            "pitfall_45.vdp",
-            "pitfall_46.vdp",
-            "pitfall_47.vdp",
-            "pitfall_48.vdp",
-            "pitfall_49.vdp",
-            "pitfall_50.vdp",
-            "pitfall_51.vdp",
-            "pitfall_52.vdp",
-            "pitfall_53.vdp",
-            "pitfall_54.vdp",
-            "pitfall_55.vdp",
-            "pitfall_56.vdp",
-            "pitfall_57.vdp",
-            "pitfall_58.vdp",
-            "pitfall_59.vdp",
-            "pitfall_60.vdp",
-            "pitfall_61.vdp",
-            "pitfall_62.vdp",
-            "pitfall_63.vdp",
-            "pitfall_64.vdp",
-            "pitfall_65.vdp",
-            "pitfall_66.vdp",
-            "pitfall_67.vdp",
-            "pitfall_68.vdp",
-            "pitfall_69.vdp",
-            "popeye_00.vdp",
-            "popeye_01.vdp",
-            "popeye_02.vdp",
-            "qbert_00.vdp",
-            "qbert_01.vdp",
-            "qbert_02.vdp",
-            "roc_n_rope_00.vdp",
-            "roc_n_rope_01.vdp",
-            "roc_n_rope_02.vdp",
-            "roc_n_rope_03.vdp",
-            "slither_00.vdp",
-            "slither_01.vdp",
-            "slither_02.vdp",
-            "slither_03.vdp",
-            "slither_04.vdp",
-            "slither_05.vdp",
-            "slither_06.vdp",
-            "slither_07.vdp",
-            "slither_08.vdp",
-            "slither_09.vdp",
-            "slither_10.vdp",
-            "smurf_00.vdp",
-            "smurf_01.vdp",
-            "smurf_02.vdp",
-            "smurf_03.vdp",
-            "spy_hunter_00.vdp",
-            "spy_hunter_01.vdp",
-            "spy_hunter_02.vdp",
-            "spy_hunter_03.vdp",
-            "spy_hunter_prototype_00.vdp",
-            "spy_hunter_prototype_01.vdp",
-            "spy_hunter_prototype_02.vdp",
-            "spy_hunter_prototype_03.vdp",
-            "spy_hunter_prototype_04.vdp",
-            "super_cross_force_00.vdp",
-            "super_cross_force_01.vdp",
-            "super_cross_force_02.vdp",
-            "zaxxon_00.vdp",
-            "zaxxon_01.vdp",
-            "zaxxon_02.vdp",
-            "zaxxon_03.vdp",
-        };
-        int testCount = sizeof(testNames) / sizeof(testNames[0]);
-
-        NTSCSwitchModeFuncs(TMS9918ModeFillRowBuffer, DefaultNeedsColorburst);
-
-        uint8_t registers[8];
-        uint8_t memory[16384];
-
-        for(int test = 0; test < testCount; test ++) {
-            FILE *vdp_dump_in = fopen(testNames[test], "rb");
-            if(vdp_dump_in == NULL) {
-                printf("failed on %s\n", testNames[test]);
-                continue;
-            }
-            printf("opened %s\n", testNames[test]);
-            static char line[1024];
-            fgets(line, sizeof(line), vdp_dump_in);
-            for(size_t i = 0; i < 8; i++) {
-                int v;
-                fscanf(vdp_dump_in, " %u", &v);
-                registers[i] = v;
-            }
-            for(size_t i = 0; i < 16384; i++) {
-                int v;
-                fscanf(vdp_dump_in, " %u", &v);
-                memory[i] = v;
-            }
-            fclose(vdp_dump_in);
-            printf("success, copying...\n");
-            NTSCWaitFrame();
-            memcpy(TMS9918Registers, registers, sizeof(registers));
-            memcpy(TMS9918RAM, memory, sizeof(memory));
-        }
-    }
-
     if(1) {
+        static const uint8_t TMS9918ColorsInRGB[16][3] = {
+            {0, 0, 0}, /* if BACKDROP is 0, supply black */
+            {0, 0, 0},
+            {35, 203, 50},
+            {96, 221, 108},
+            {84, 78, 255},
+            {125, 112, 255},
+            {210, 84, 66},
+            {69, 232, 255},
+            {250, 89, 72},
+            {255, 124, 108},
+            {211, 198, 60},
+            {229, 210, 109},
+            {35, 178, 44},
+            {200, 90, 198},
+            {204, 204, 204},
+            {255, 255, 255},
+        };
+
         Status status;
         char *fileChosenInDir;
         char fileChosen[512];

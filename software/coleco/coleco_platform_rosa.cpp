@@ -115,6 +115,7 @@ void EnqueueAudioSamples(uint8_t *buf, size_t sz)
 }
 
 std::chrono::time_point<std::chrono::system_clock> previous_event_time;
+std::chrono::time_point<std::chrono::system_clock> start_of_frame;
 
 void Start(uint32_t& audioSampleRate_, size_t& preferredAudioBufferSampleCount_)
 {
@@ -125,6 +126,7 @@ void Start(uint32_t& audioSampleRate_, size_t& preferredAudioBufferSampleCount_)
     preferredAudioBufferSampleCount_ = audioBufferLengthBytes / 2 / 2;
 
     previous_event_time = std::chrono::system_clock::now();
+    start_of_frame = std::chrono::system_clock::now();
 }
 
 bool right_shift_pressed = false;
@@ -330,14 +332,23 @@ void Frame(const uint8_t* vdp_registers, const uint8_t* vdp_ram, uint8_t& vdp_st
     std::chrono::duration<float> elapsed;
     
     elapsed = now - previous_event_time;
-    if(elapsed.count() > .015)
-    {
+    // if(elapsed.count() > .015)
+    // {
         HandleEvents();
-        previous_event_time = now;
-    }
+        // previous_event_time = now;
+    // }
 
-    // NTSCWaitFrame(); // XXX should be doing this - is function bad or is timing bad?
+    std::chrono::time_point<std::chrono::system_clock> end_of_frame = std::chrono::system_clock::now();
+    std::chrono::duration<float> frame_time = end_of_frame - start_of_frame;
+
+    NTSCWaitFrame();
+    std::chrono::time_point<std::chrono::system_clock> end_of_wait = std::chrono::system_clock::now();
+    std::chrono::duration<float> wait_time = end_of_wait - end_of_frame;
+    if(frame_time.count() > .0166) {
+        RoDebugOverlayPrintf("%4d %4d\n", (int)(frame_time.count() * 1000.0), (int)(wait_time.count() * 1000.0));
+    }
     vdp_status_result = TMS9918A::Create4BitPixmap(vdp_registers, vdp_ram, Pixmap256_192_4b_Framebuffer);
+    start_of_frame = std::chrono::system_clock::now();
 }
 
 void MainLoopAndShutdown(MainLoopBodyFunc body)

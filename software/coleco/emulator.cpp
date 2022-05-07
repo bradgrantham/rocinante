@@ -2186,7 +2186,7 @@ int main(int argc, char **argv)
 #if defined(ROSA)
             uint32_t nowTick = HAL_GetTick();
 #warning Setting this to + 16 made USB keyboard stop working.  
-            if(nowTick >= prevTick) {
+            if(nowTick >= prevTick + 16) {
                 main_iterate();
                 prevTick = nowTick;
             }

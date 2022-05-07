@@ -320,7 +320,7 @@ static void DrawPatternFromGraphicsI(const uint8_t* registers, const uint8_t* me
 
                 uint8_t pattern_row_byte = pattern_rows[pattern_row_index];
 
-#pragma unroll 8
+#pragma GCC unroll 8
                 for(int pattern_col = 0; pattern_col < 8; pattern_col++) {
 
                     bool bit = pattern_row_byte & (0x80 >> pattern_col);
@@ -367,7 +367,7 @@ static void DrawPatternFromGraphicsII(const uint8_t* registers, const uint8_t* m
                     color1 = backdrop;
                 }
 
-#pragma unroll 8
+#pragma GCC unroll 8
                 for(int pattern_col = 0; pattern_col < 8; pattern_col++) {
 
                     bool bit = pattern_row_byte & (0x80 >> pattern_col);
@@ -492,7 +492,7 @@ static void DrawSprites(int row, const uint8_t* registers, const uint8_t* memory
                 int quadrant_y = within_sprite_y / 8;
                 int masked_sprite_name = sprite_name & SPRITE_NAME_MASK_SIZE4;
 
-#pragma unroll 8
+#pragma GCC unroll 8
                 for(int x = start_x; x <= end_x; x++) {
 
                     int within_sprite_x = mag2x ? ((x - sprite_x) / 2) : (x - sprite_x);
@@ -509,7 +509,7 @@ static void DrawSprites(int row, const uint8_t* registers, const uint8_t* memory
                 int sprite_pattern_address = GetSpritePatternTableBase(registers) | (sprite_name << SPRITE_NAME_SHIFT) | within_sprite_y;
                 int bitpattern = memory[sprite_pattern_address];
 
-#pragma unroll 8
+#pragma GCC unroll 8
                 for(int x = start_x; x <= end_x; x++) {
 
                     int within_sprite_x = mag2x ? ((x - sprite_x) / 2) : (x - sprite_x);
