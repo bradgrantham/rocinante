@@ -105,8 +105,8 @@ bool quit_requested = false;
 bool enter_debugger = false; 
 
 static constexpr clk_t machine_clock_rate = 3579545;
-static constexpr uint32_t slice_frequency_times_1000 = 59940;
-static constexpr uint32_t clocks_per_retrace = machine_clock_rate * 1000 / slice_frequency_times_1000;
+static constexpr uint32_t slice_frequency_times_1000 = 58000; // 59809; // 59940;
+static constexpr uint32_t clocks_per_retrace = (machine_clock_rate * 1000 + slice_frequency_times_1000 / 2 - 1)/ slice_frequency_times_1000;
 
 static constexpr uint32_t DEBUG_NONE = 0x00;
 [[maybe_unused]] static constexpr uint32_t DEBUG_ROM = 0x01; // Needs to be passed over to z80emu

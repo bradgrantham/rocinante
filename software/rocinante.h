@@ -58,7 +58,7 @@ void RoDebugOverlaySetLine(int line, const char *str, size_t size);
     \param bufferLength Populated with the number of 2-byte (one byte each left and right) unsigned (0-255) samples in the buffer.
     \param stereoBufferU8 Populated with the location of the buffer.
 */
-void RoAudioGetSamplingInfo(float *rate, size_t *bufferLength, uint8_t **stereoBufferU8);
+void RoAudioGetSamplingInfo(float *rate, size_t *chunkSize, uint8_t **stereoBufferU8);
 
 /*! Block until a half-buffer even boundary in the audio stream.  This function is useful for blocking until the system has just finished streaming samples within the half of the audio buffer starting at the return value.
     \return Where application should now fill one half the buffer's worth of audio.
@@ -71,6 +71,13 @@ size_t RoAudioBlockToHalfBuffer();
     \return INVALID_PARAMETER_VALUE if where was outside of the audio buffer
 */
 Status RoAudioSetHalfBufferMonoSamples(size_t where, const uint8_t *monoBufferU8);
+
+/*! Write audio samples.  Block until the write won't overlap the current audio read cursor
+    \param writeSize Size of buffer in bytes.
+    \param buffer The buffer of stereo u8 samples to write into the audio stream buffer.
+    \return The number of bytes that had to be played before writing
+*/
+size_t RoAudioEnqueueSamplesBlocking(size_t writeSize /* in bytes */, uint8_t* buffer);
 
 /*! Clear the audio stream to silence
 */

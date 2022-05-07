@@ -90,40 +90,36 @@ uint8_t GetKeypadState(ControllerIndex controller)
 
 bool audio_needs_start = true;
 float audioSampleRate;
-size_t audioBufferLengthBytes;
+size_t audioChunkLengthBytes;
 size_t audioBufferCurrent;
 
-void EnqueueAudioSamples(uint8_t *buf, size_t sz)
+void EnqueueStereoU8AudioSamples(uint8_t *buf, size_t sz)
 {
     if(audio_needs_start) {
+        RoAudioClear();
         /* give a little data to avoid gaps and to avoid a pop */
-        static uint8_t lead_in[512];
-        size_t sampleCount = std::min(sizeof(lead_in), audioBufferLengthBytes / 2 / 2);
+        static uint8_t lead_in[1024];
+        size_t sampleCount = std::min(sizeof(lead_in), audioChunkLengthBytes) / 2;
         for(uint32_t i = 0; i < sampleCount; i++) {
-            lead_in[i] = 128 + (buf[0] - 128) * i / sampleCount;
+            lead_in[i * 2 + 0] = 128 + (buf[0] - 128) * i / sampleCount;
+            lead_in[i * 2 + 1] = 128 + (buf[0] - 128) * i / sampleCount;
         }
-        size_t where = RoAudioBlockToHalfBuffer();
-        Status success = RoAudioSetHalfBufferMonoSamples(where, lead_in);
-        (void)success;
+        RoAudioEnqueueSamplesBlocking(sampleCount * 2, lead_in);
         audio_needs_start = false;
     }
 
-    size_t where = RoAudioBlockToHalfBuffer();
-    Status success = RoAudioSetHalfBufferMonoSamples(where, buf);
-    (void)success;
-
+    RoAudioEnqueueSamplesBlocking(sz, buf);
 }
 
 std::chrono::time_point<std::chrono::system_clock> previous_event_time;
 std::chrono::time_point<std::chrono::system_clock> start_of_frame;
 
-void Start(uint32_t& audioSampleRate_, size_t& preferredAudioBufferSampleCount_)
+void Start(uint32_t& stereoU8SampleRate_, size_t& preferredAudioBufferSizeBytes_)
 {
     uint8_t *audioBufferPtr; /* ignored */
-    RoAudioGetSamplingInfo(&audioSampleRate, &audioBufferLengthBytes, &audioBufferPtr);
-    audioSampleRate_ = audioSampleRate;
-    // Divide by 2 because Rocinante alternates between blocking at beginning and middle
-    preferredAudioBufferSampleCount_ = audioBufferLengthBytes / 2 / 2;
+    RoAudioGetSamplingInfo(&audioSampleRate, &audioChunkLengthBytes, &audioBufferPtr);
+    stereoU8SampleRate_ = audioSampleRate;
+    preferredAudioBufferSizeBytes_ = audioChunkLengthBytes;
 
     previous_event_time = std::chrono::system_clock::now();
     start_of_frame = std::chrono::system_clock::now();
@@ -345,7 +341,7 @@ void Frame(const uint8_t* vdp_registers, const uint8_t* vdp_ram, uint8_t& vdp_st
     std::chrono::time_point<std::chrono::system_clock> end_of_wait = std::chrono::system_clock::now();
     std::chrono::duration<float> wait_time = end_of_wait - end_of_frame;
     if(frame_time.count() > .0166) {
-        RoDebugOverlayPrintf("%4d %4d\n", (int)(frame_time.count() * 1000.0), (int)(wait_time.count() * 1000.0));
+        // RoDebugOverlayPrintf("%4d %4d\n", (int)(frame_time.count() * 1000.0), (int)(wait_time.count() * 1000.0));
     }
     vdp_status_result = TMS9918A::Create4BitPixmap(vdp_registers, vdp_ram, Pixmap256_192_4b_Framebuffer);
     start_of_frame = std::chrono::system_clock::now();
