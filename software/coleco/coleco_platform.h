@@ -28,8 +28,8 @@ enum ControllerIndex { CONTROLLER_1, CONTROLLER_2 };
 uint8_t GetJoystickState(ControllerIndex controller);
 uint8_t GetKeypadState(ControllerIndex controller);
 
-void Start(uint32_t& audioSampleRate, size_t& preferredAudioBufferSampleCount);
-void EnqueueAudioSamples(uint8_t *buf, size_t sz);
+void Start(uint32_t& stereoU8SampleRate, size_t& preferredAudioBufferSizeBytes);
+void EnqueueStereoU8AudioSamples(uint8_t *buf, size_t sz);
 void Frame(const uint8_t* vdp_registers, const uint8_t* vdp_ram, uint8_t& vdp_status_result, float megahertz);  // update display, update events, and block to retrace
 
 typedef std::function<uint8_t ()> MainLoopBodyFunc;

@@ -153,7 +153,7 @@ struct SN76489A
     static constexpr int CMD_NOISE_CONFIG_SHIFT = 2;
     static constexpr uint8_t CMD_NOISE_FREQ_MASK = 0x03;
 
-    uint32_t sample_rate;
+    uint32_t stereo_u8_sample_rate;
 
     uint32_t tone_lengths[3] = {0, 0, 0};
     uint32_t tone_attenuation[3] = {0, 0, 0};
@@ -173,8 +173,8 @@ struct SN76489A
     clk_t previous_clock{0};
 
     clk_t max_audio_forward;
-    size_t audio_buffer_size;
-    std::vector<uint8_t> audio_buffer;
+    size_t audio_buffer_samples;
+    std::vector<uint8_t> stereo_audio_buffer;
     clk_t audio_buffer_next_sample{0};
 
     void reset()
@@ -194,13 +194,13 @@ struct SN76489A
         noise_flipflop = 0;
     }
 
-    SN76489A(uint32_t clock_rate, uint32_t sample_rate, size_t audio_buffer_size) :
+    SN76489A(uint32_t clock_rate, uint32_t stereo_u8_sample_rate, size_t audio_buffer_size_bytes) :
         clock_rate(clock_rate),
-        sample_rate(sample_rate),
-        audio_buffer_size(audio_buffer_size)
+        stereo_u8_sample_rate(stereo_u8_sample_rate),
+        audio_buffer_samples(audio_buffer_size_bytes / 2)
     {
-        max_audio_forward = machine_clock_rate / sample_rate - 1;
-        audio_buffer.resize(audio_buffer_size);
+        max_audio_forward = machine_clock_rate / stereo_u8_sample_rate - 1;
+        stereo_audio_buffer.resize(audio_buffer_samples * 2);
 
         for(int i = 0; i < 3; i++) {
             tone_counters[i] = 0;
@@ -321,7 +321,7 @@ struct SN76489A
         return value * att_table[att] / 256;
     }
 
-    uint8_t get_level()
+    uint8_t get_level() const
     {
         uint8_t v = 128 + 
             scale_by_attenuation_flags(tone_attenuation[0], tone_bit[0] ? 0 : 64) 
@@ -333,24 +333,25 @@ struct SN76489A
         return v;
     }
 
-    void generate_audio(clk_t clk, audio_flush_func audio_flush)
+    void generate_audio(clk_t clk, audio_flush_func stereo_audio_flush)
     {
-	clk_t current_audio_sample = previous_clock * sample_rate / clock_rate;
+	clk_t current_audio_sample = previous_clock * stereo_u8_sample_rate / clock_rate;
         for(clk_t c = previous_clock + 1; c < clk; c += max_audio_forward) {
 
-            clk_t next_audio_sample = (c + 1) * sample_rate / clock_rate;
+            clk_t next_audio_sample = (c + 1) * stereo_u8_sample_rate / clock_rate;
 
             if(next_audio_sample > current_audio_sample) {
                 advance_to_clock(c);
 
-                audio_buffer[audio_buffer_next_sample] = get_level();
+                stereo_audio_buffer[audio_buffer_next_sample * 2 + 0] = get_level();
+                stereo_audio_buffer[audio_buffer_next_sample * 2 + 1] = get_level();
                 if(dump_some_audio-- > 0) {
-                    printf("audio: %d\n", audio_buffer[audio_buffer_next_sample]);
+                    printf("audio: %d\n", stereo_audio_buffer[audio_buffer_next_sample * 2 + 0]);
                 }
                 audio_buffer_next_sample++;
 
-                if(audio_buffer_next_sample == audio_buffer_size) {
-                    audio_flush(audio_buffer.data(), audio_buffer_size);
+                if(audio_buffer_next_sample == audio_buffer_samples) {
+                    stereo_audio_flush(stereo_audio_buffer.data(), audio_buffer_samples * 2);
                     audio_buffer_next_sample = 0;
                 }
             }
@@ -566,9 +567,9 @@ struct ColecoHW
     std::set<uint16_t> io_reads;
     std::map<uint16_t, uint8_t> io_writes;
 
-    ColecoHW(uint32_t sample_rate, size_t audio_buffer_size, GetControllerStateFunc get_controller_state) :
+    ColecoHW(uint32_t stereo_u8_sample_rate, size_t audio_buffer_size_bytes, GetControllerStateFunc get_controller_state) :
         vdp(vdp_interrupt_status),
-        sound(machine_clock_rate, sample_rate, audio_buffer_size),
+        sound(machine_clock_rate, stereo_u8_sample_rate, audio_buffer_size_bytes),
         get_controller_state(get_controller_state)
     {
     }
@@ -688,9 +689,9 @@ struct ColecoHW
         sound.reset();
     }
 
-    void fill_flush_audio(clk_t clk, audio_flush_func audio_flush)
+    void fill_flush_audio(clk_t clk, audio_flush_func stereo_audio_flush)
     {
-        sound.generate_audio(clk, audio_flush);
+        sound.generate_audio(clk, stereo_audio_flush);
     }
 };
 
@@ -1930,9 +1931,9 @@ int main(int argc, char **argv)
         exit(EXIT_FAILURE);
     }
 
-    uint32_t audioSampleRate;
-    size_t preferredAudioBufferSampleCount;
-    PlatformInterface::Start(audioSampleRate, preferredAudioBufferSampleCount);
+    uint32_t stereoU8SampleRate;
+    size_t preferredAudioBufferSizeBytes;
+    PlatformInterface::Start(stereoU8SampleRate, preferredAudioBufferSizeBytes);
 
     uint8_t rom_temp[32768];
     FILE *fp;
@@ -1953,7 +1954,7 @@ int main(int argc, char **argv)
     fclose(fp);
     ROMboard bios_rom(0, bios_length, rom_temp);
 
-    audio_flush_func audio_flush = [](uint8_t *buf, size_t sz){ PlatformInterface::EnqueueAudioSamples(buf, sz); };
+    audio_flush_func stereo_audio_flush = [](uint8_t *buf, size_t sz){ PlatformInterface::EnqueueStereoU8AudioSamples(buf, sz); };
 
     tms9918_scanout_func platform_scanout = [](const uint8_t *registers, const uint8_t *memory)->uint8_t {
         uint8_t status_result;
@@ -2062,7 +2063,7 @@ int main(int argc, char **argv)
 
     bool save_vdp = false;
 
-    ColecoHW* colecohw = new ColecoHW(audioSampleRate, preferredAudioBufferSampleCount, get_controller_state);
+    ColecoHW* colecohw = new ColecoHW(stereoU8SampleRate, preferredAudioBufferSizeBytes, get_controller_state);
 
     ColecovisionContext *colecovision_context = new ColecovisionContext;
     set_colecovision_context(colecovision_context, RAM, bios_rom, cart_rom, colecohw, &clk, &colecohw->vdp_interrupt_status);
@@ -2089,7 +2090,7 @@ int main(int argc, char **argv)
     prevTick = HAL_GetTick();
 #endif
 
-    PlatformInterface::MainLoopBodyFunc main_loop_body = [colecovision_context, &clk, debugger, colecohw, &save_vdp, audio_flush, platform_scanout, &emulation_start_time, &prevTick, freerun]() {
+    PlatformInterface::MainLoopBodyFunc main_loop_body = [colecovision_context, &clk, debugger, colecohw, &save_vdp, stereo_audio_flush, platform_scanout, &emulation_start_time, &prevTick, freerun]() {
         (void)debugger; // If !PROVIDE_DEBUGGER then debugger is not referenced.
         (void)prevTick; // If !ROSA then prevTick is not referenced. // XXX move iterate call to platform main loop
 
@@ -2153,7 +2154,7 @@ int main(int argc, char **argv)
                     colecohw->vdp.vsync();
                 }
 
-                colecohw->fill_flush_audio(clk, audio_flush);
+                colecohw->fill_flush_audio(clk, stereo_audio_flush);
 
 		// If Z80_PROCESS_CYCLES in z80user.h detects NMI
 		// was asserted (from the VDP vretrace and VDP registers),
