@@ -185,7 +185,8 @@ inline const uint8_t* GetBitmapPatternRows(const uint8_t* registers, const uint8
 {
     uint16_t table_offset = (pattern_name * 8) + sector;
     const uint8_t *bitmap_pattern_generator_table = memory + GetBitmapPatternGeneratorTableBase(registers);
-    return bitmap_pattern_generator_table + table_offset;
+    uint16_t address_mask = ((registers[3] & VR3_ADDRESS_MASK_BITMAP) << VR3_ADDRESS_MASK_SHIFT) | ADDRESS_MASK_FILL;
+    return bitmap_pattern_generator_table + (table_offset & address_mask);
 }
 
 inline uint16_t GetStandardPatternGeneratorTableBase(const uint8_t* registers)
@@ -209,7 +210,8 @@ inline const uint8_t* GetBitmapColorRows(const uint8_t* registers, const uint8_t
 {
     uint16_t table_offset = (pattern_name * 8) + sector;
     const uint8_t *color_table = memory + GetBitmapColorTableBase(registers);
-    return color_table + table_offset;
+    uint16_t address_mask = ((registers[3] & VR3_ADDRESS_MASK_BITMAP) << VR3_ADDRESS_MASK_SHIFT) | ADDRESS_MASK_FILL;
+    return color_table + (table_offset & address_mask);
 }
 
 inline uint16_t GetStandardColorTableBase(const uint8_t* registers)
