@@ -1,8 +1,7 @@
 Coleco
-    Can't render all sprites
     Need to have out-of-scan 5S and C flag calculation according to sprite settings
-    scanout is too slow?
     audio is too slow?
+    audio in Smurf is wrong after jump
 
 Weird USB fail
     works if FRACTAL.A is running *if* I'm using read_regions, write_regions, and repage_regions
