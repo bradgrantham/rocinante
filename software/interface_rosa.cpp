@@ -246,7 +246,7 @@ void poll_events()
                 }
 
                 case Event::MOUSE_BUTTONPRESS: {
-                    const MouseButtonPressEvent& press = ev.u.mouseButtonPress;
+                    const ButtonPressEvent& press = ev.u.buttonPress;
                     if(press.button == 0) {
                         // Enqueue joystick?
                     }

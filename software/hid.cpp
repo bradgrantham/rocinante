@@ -96,10 +96,10 @@ void ConvertUSBMouseToMouseEvent(int dx, int dy, int buttons[3])
         for(int i = 0; i < 3; i++) {
             if(buttons[i] != oldButtons[i]) {
                 if(buttons[i]) {
-                    Event e { Event::MOUSE_BUTTONPRESS }; e.u.mouseButtonPress.button = i;
+                    Event e { Event::MOUSE_BUTTONPRESS }; e.u.buttonPress.button = i;
                     SystemEventEnqueue(e);
                 } else {
-                    Event e { Event::MOUSE_BUTTONRELEASE }; e.u.mouseButtonRelease.button = i;
+                    Event e { Event::MOUSE_BUTTONRELEASE }; e.u.buttonRelease.button = i;
                     SystemEventEnqueue(e);
                 }
             }

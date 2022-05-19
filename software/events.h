@@ -11,13 +11,13 @@ typedef struct MouseMoveEvent {
     int x, y;
 } MouseMoveEvent ;
 
-typedef struct MouseButtonPressEvent {
+typedef struct ButtonPressEvent {
     int button;
-} MouseButtonPressEvent;
+} ButtonPressEvent;
 
-typedef struct MouseButtonReleaseEvent {
+typedef struct ButtonReleaseEvent {
     int button;
-} MouseButtonReleaseEvent;
+} ButtonReleaseEvent;
 
 typedef struct KeyboardRawEvent {
     int isPress;
@@ -65,11 +65,13 @@ typedef struct Event
         WINDOW_REDRAW_RECT,
         WINDOW_REPAIR_METADATA,
         WINDOW_STATUS,
+        CONSOLE_BUTTONPRESS,
+        CONSOLE_BUTTONRELEASE,
     } eventType;
     union {
         MouseMoveEvent mouseMove;
-        MouseButtonPressEvent mouseButtonPress;
-        MouseButtonReleaseEvent mouseButtonRelease;
+        ButtonPressEvent buttonPress;
+        ButtonReleaseEvent buttonRelease;
         KeyboardRawEvent keyboardRaw;
         WindowResizeEvent windowResize;
         WindowRedrawRectEvent windowRedrawRect;

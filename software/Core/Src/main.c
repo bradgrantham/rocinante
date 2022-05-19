@@ -2385,7 +2385,7 @@ void HGRModeTest()
                     break;
                 }
                 case MOUSE_BUTTONPRESS: {
-                    const struct MouseButtonPressEvent press = ev.u.mouseButtonPress;
+                    const struct ButtonPressEvent press = ev.u.buttonPress;
                     if(press.button == 0) {
                         clear = 1;
                     } else {
