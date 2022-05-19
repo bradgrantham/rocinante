@@ -43,10 +43,22 @@ struct ProcessEventQueue
 {
     int processId = -1;
     bool eventsLost = false;
-    StaticQueue<Event, 32> eventQueue;
+    StaticQueue<Event, 16> eventQueue;
 };
 
 constexpr int MaxProcesses = 8;
+
+// Events detected in scanout line ISR, e.g. three console buttons
+ProcessEventQueue gConsoleEventQueue;
+
+void ConsoleEventEnqueue(const Event& ev)
+{
+    if(gConsoleEventQueue.eventQueue.isFull()) {
+        gConsoleEventQueue.eventsLost = true;
+    } else {
+        gConsoleEventQueue.eventQueue.enqNoCheck(ev);
+    }
+}
 
 std::array<ProcessEventQueue,MaxProcesses> gEventsByProcess = { {0, false, {} } };
 
@@ -70,6 +82,19 @@ int RoEventPoll(Event* ev)
     /* Determine processId */
     int processId = 0; /* hack until process table exists */
 
+    // Handle system-wide events 
+    if(gConsoleEventQueue.eventsLost) {
+        ev->eventType = Event::EVENTS_LOST;
+        gConsoleEventQueue.eventsLost = false;
+        return 1;
+    }
+
+    if(!gConsoleEventQueue.eventQueue.isEmpty()) {
+        gConsoleEventQueue.eventQueue.deqNoCheck(*ev);
+        return 1;
+    }
+
+    // Handle events assigned for this process
     auto found = std::find_if(gEventsByProcess.begin(), gEventsByProcess.end(), [&](const ProcessEventQueue& p){ return p.processId == processId; });
     if(found == gEventsByProcess.end()) {
         // System internal error

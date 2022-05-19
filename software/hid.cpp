@@ -86,6 +86,19 @@ void ConvertUSBKeysToKeyEvent(int keys[6])
     std::copy_n(keys, 6, oldKeys.begin());
 }
 
+void ConvertConsoleButtonToEvent(int button, int pressed)
+{
+    Event e;
+    if(pressed) {
+        e.u.buttonPress.button = button;
+        e.eventType = Event::CONSOLE_BUTTONPRESS;
+    } else {
+        e.u.buttonRelease.button = button;
+        e.eventType = Event::CONSOLE_BUTTONRELEASE;
+    }
+    ConsoleEventEnqueue(e);
+}
+
 void ConvertUSBMouseToMouseEvent(int dx, int dy, int buttons[3])
 {
     static std::array<int, 3> oldButtons = {0};
