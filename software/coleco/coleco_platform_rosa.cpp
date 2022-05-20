@@ -292,6 +292,13 @@ void HandleEvents()
                     break;
                 }
 
+                case ::Event::CONSOLE_BUTTONPRESS: {
+                    const ButtonPressEvent& press = ev.u.buttonPress;
+                    if(press.button == 0) {
+                        event_queue.push_back({RESET, 0});
+                    }
+                }
+
                 case ::Event::MOUSE_BUTTONPRESS: {
                     const ButtonPressEvent& press = ev.u.buttonPress;
                     if(press.button == 0) {
