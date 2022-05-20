@@ -104,7 +104,7 @@ void ConvertUSBModifiersToKeyEvent(int modifiers[8]);
 void ConvertUSBKeysToKeyEvent(int keys[6]);
 void ConvertUSBMouseToMouseEvent(int dx, int dy, int buttons[3]);
 
-void ConvertConsoleButtonToEvent(int button, int pressed);
+void ConvertConsoleButtonPressToEvent(int button);
 
 #ifdef __cplusplus
 };

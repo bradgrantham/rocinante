@@ -86,16 +86,11 @@ void ConvertUSBKeysToKeyEvent(int keys[6])
     std::copy_n(keys, 6, oldKeys.begin());
 }
 
-void ConvertConsoleButtonToEvent(int button, int pressed)
+void ConvertConsoleButtonPressToEvent(int button)
 {
     Event e;
-    if(pressed) {
-        e.u.buttonPress.button = button;
-        e.eventType = Event::CONSOLE_BUTTONPRESS;
-    } else {
-        e.u.buttonRelease.button = button;
-        e.eventType = Event::CONSOLE_BUTTONRELEASE;
-    }
+    e.u.buttonPress.button = button;
+    e.eventType = Event::CONSOLE_BUTTONPRESS;
     ConsoleEventEnqueue(e);
 }
 

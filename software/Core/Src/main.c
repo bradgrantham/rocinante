@@ -1547,9 +1547,7 @@ void CheckConsoleButtons()
                     // Do something KEWL
                     RoDebugOverlayPrintf("Long press %d\n", b);
                 } else if(now - button_pressed_millis[b] > CONSOLE_BUTTON_PRESS_DEBOUNCE) {
-                    RoDebugOverlayPrintf("Press %d\n", b);
-                    // ConsoleEnqueueEvent(...)
-
+                    ConvertConsoleButtonPressToEvent(b);
                 } else {
                     // Nothing
                 }

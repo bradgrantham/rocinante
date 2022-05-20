@@ -65,8 +65,7 @@ typedef struct Event
         WINDOW_REDRAW_RECT,
         WINDOW_REPAIR_METADATA,
         WINDOW_STATUS,
-        CONSOLE_BUTTONPRESS,
-        CONSOLE_BUTTONRELEASE,
+        CONSOLE_BUTTONPRESS, // There's no release.
     } eventType;
     union {
         MouseMoveEvent mouseMove;
