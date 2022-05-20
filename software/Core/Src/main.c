@@ -1510,6 +1510,55 @@ void NTSCWaitFrame()
     } while(!field0_vblank && !field1_vblank); // Wait for VBLANK; should do something smarter
 }
 
+#define CONSOLE_BUTTON_START_REPEAT_DELAY 600
+#define CONSOLE_BUTTON_REPEAT_DELTA 20
+#define CONSOLE_BUTTON_LONGPRESS_DELAY 400
+#define CONSOLE_BUTTON_PRESS_DEBOUNCE 10
+
+void CheckConsoleButtons()
+{
+    static int button_pressed[3] = {0, 0, 0};
+    static uint32_t button_pressed_millis[3];
+    static GPIO_TypeDef* button_ports[3] = {USER1_GPIO_Port, USER2_GPIO_Port, USER3_GPIO_Port};
+    static const int button_pins[3] = {USER1_Pin, USER2_Pin, USER3_Pin};
+
+    uint32_t now = HAL_GetTick();
+
+    for(int b = 0; b < 3; b++) {
+        if(HAL_GPIO_ReadPin(button_ports[b], button_pins[b])) {
+            if(!button_pressed[b]) { 
+                // Initial press; record the start
+                button_pressed[b] = 1;
+                button_pressed_millis[b] = now;
+            } else {
+                // If has exceeded the repeat time, issue a repeated press
+                if(now - button_pressed_millis[b] > CONSOLE_BUTTON_START_REPEAT_DELAY) {
+                    // Do something KEWL
+                    RoDebugOverlayPrintf("Repeat button %d\n", b);
+                    button_pressed_millis[b] += CONSOLE_BUTTON_REPEAT_DELTA;
+                }
+            }
+        } else {
+            if(button_pressed[b]) {
+                if(now - button_pressed_millis[b] > CONSOLE_BUTTON_START_REPEAT_DELAY) {
+                    RoDebugOverlayPrintf("Stop Repeat %d\n", b);
+                    // Nothing
+                } else if(now - button_pressed_millis[b] > CONSOLE_BUTTON_LONGPRESS_DELAY) {
+                    // Do something KEWL
+                    RoDebugOverlayPrintf("Long press %d\n", b);
+                } else if(now - button_pressed_millis[b] > CONSOLE_BUTTON_PRESS_DEBOUNCE) {
+                    RoDebugOverlayPrintf("Press %d\n", b);
+                    // ConsoleEnqueueEvent(...)
+
+                } else {
+                    // Nothing
+                }
+                button_pressed[b] = 0;
+            }
+        }
+    }
+}
+
 void NTSCRowHandler(void)
 {
     NTSCRowNumber = (NTSCRowNumber + 1) % 525;
@@ -1544,6 +1593,8 @@ void NTSCRowHandler(void)
         NTSCFillRowDebugOverlay(NTSCFrameNumber, NTSCRowNumber, rowDest);
     }
     SCB_CleanDCache();
+
+    CheckConsoleButtons();
 
     // A little pulse so we know where we are on the line when we finished
     if(markHandlerInSamples) {
