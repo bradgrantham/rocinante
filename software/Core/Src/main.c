@@ -2335,6 +2335,7 @@ void ImageFillRowBuffer2(int frameIndex, int rowNumber, size_t maxSamples, uint8
 
 int apple2_main(int argc, const char **argv);
 int coleco_main(int argc, const char **argv);
+int mp3player_main(int argc, const char **argv);
 
 int writeLEDColors = 1;
 // set these no higher than 32, maybe after getting a case and light
@@ -3464,6 +3465,22 @@ int main(void)
 
     if(0) {
         TestControllers();
+    }
+
+    if(1) {
+        Status status;
+        char *fileChosenInDir;
+        char fileChosen[512];
+
+        status = PromptUserToChooseFile("Choose an MP3 File", "/", CHOOSE_FILE_IGNORE_DOTFILES, NULL /* ".mp3" */, &fileChosenInDir);
+        sprintf(fileChosen, "/%s", fileChosenInDir);
+        if(status == RO_SUCCESS) {
+            const char *args[] = {
+                "mp3player",
+                fileChosen,
+            };
+            mp3player_main(sizeof(args) / sizeof(args[0]), args); /* doesn't return */
+        }
     }
 
     if(1) {

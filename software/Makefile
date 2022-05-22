@@ -155,6 +155,7 @@ CXX_SOURCES = \
 	coleco/tms9918.cpp \
 	coleco/emulator.cpp \
 	coleco/coleco_platform_rosa.cpp \
+        mp3player/mp3player.cpp \
         $(NULL)
 
 
