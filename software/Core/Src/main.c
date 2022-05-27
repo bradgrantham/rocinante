@@ -873,6 +873,10 @@ size_t RoAudioEnqueueSamplesBlocking(size_t writeSize /* in bytes */, uint8_t* b
         memcpy(audioBuffer, buffer + toCopy, remaining);
     }
 
+    if(audioReadNext == audioWriteNext) {
+        audioReadNext = (audioReadNext + 2) % sizeof(audioBuffer);
+    }
+
     audioWriteNext = (audioWriteNext + writeSize) % AUDIO_BUFFER_SIZE;
 
     return waitSampleCount;
@@ -2687,7 +2691,7 @@ Status FillFilenameList(const char* dirName, uint32_t flags, const char* optiona
     return status;
 }
 
-void ShowListOfItems(const char *title, char **items, size_t itemsSize, int whichAtTop, int whichSelected)
+void ShowListOfItems(const char *title, const char **items, size_t itemsSize, int whichAtTop, int whichSelected)
 {
     int w, h;
     TextModeGetSize(&w, &h);
@@ -2747,22 +2751,12 @@ void DisplayStringAndWaitForEnter(const char *message)
     }
 }
 
-Status PromptUserToChooseFile(const char *title, const char *dirName, uint32_t flags, const char *optionalFilterSuffix, char** fileChosen)
+Status PromptUserToChooseFromList(const char *title, const char **items, size_t itemCount, int *itemChosen)
 {
     NTSCSwitchModeFuncs(TextModeFillRowBuffer, TextModeNeedsColorburst);
 
-    char *filenames[256];
-    size_t filenamesSize = 0;
-    int whichFilenameAtTop = 0;
-    int whichFilenameSelected = 0;
-
-    Status result = FillFilenameList(dirName, flags, optionalFilterSuffix, 256, filenames, &filenamesSize);
-    if(RO_FAILURE(result)) {
-        // XXX show some kind of failure
-        DisplayStringAndWaitForEnter("Filename chooser failure!");
-        return RO_RESOURCE_NOT_FOUND;
-    }
-
+    int whichItemAtTop = 0;
+    int whichItemSelected = 0;
     int done = 0;
     int redraw = 1;
     Status status = RO_SUCCESS;
@@ -2778,7 +2772,7 @@ Status PromptUserToChooseFile(const char *title, const char *dirName, uint32_t f
         int selectCurrentLine = 0;
 
         if(redraw) {
-            ShowListOfItems(title, filenames, filenamesSize, whichFilenameAtTop, whichFilenameSelected);
+            ShowListOfItems(title, items, itemCount, whichItemAtTop, whichItemSelected);
             redraw = 0;
         }
 
@@ -2818,7 +2812,7 @@ Status PromptUserToChooseFile(const char *title, const char *dirName, uint32_t f
 
                         if(raw.key == KEYCAP_ESCAPE) {
 
-                            *fileChosen = strdup("");
+                            *itemChosen = -1;
                             status = RO_USER_DECLINED;
                             done = 1;
 
@@ -2844,16 +2838,16 @@ Status PromptUserToChooseFile(const char *title, const char *dirName, uint32_t f
         }
 
         if(selectCurrentLine) {
-            *fileChosen = strdup(filenames[whichFilenameSelected]);
+            *itemChosen = whichItemSelected;
             status = RO_SUCCESS;
             done = 1;
         }
 
         if(moveUpOne) {
 
-            whichFilenameSelected = (whichFilenameSelected - 1 < 0) ? 0 : (whichFilenameSelected - 1);
-            if(whichFilenameAtTop > whichFilenameSelected) {
-                whichFilenameAtTop = whichFilenameSelected;
+            whichItemSelected = (whichItemSelected - 1 < 0) ? 0 : (whichItemSelected - 1);
+            if(whichItemAtTop > whichItemSelected) {
+                whichItemAtTop = whichItemSelected;
             }
             redraw = 1;
 
@@ -2862,12 +2856,12 @@ Status PromptUserToChooseFile(const char *title, const char *dirName, uint32_t f
             int w, h;
             TextModeGetSize(&w, &h);
             int availableLines = h - 4;
-            whichFilenameSelected = whichFilenameSelected + 1;
-            if((whichFilenameSelected + 1) > filenamesSize - 1) {
-                whichFilenameSelected = filenamesSize - 1;
+            whichItemSelected = whichItemSelected + 1;
+            if((whichItemSelected + 1) > itemCount - 1) {
+                whichItemSelected = itemCount - 1;
             }
-            if(whichFilenameSelected > whichFilenameAtTop + (availableLines - 1)) {
-                whichFilenameAtTop = whichFilenameSelected - (availableLines - 1);
+            if(whichItemSelected > whichItemAtTop + (availableLines - 1)) {
+                whichItemAtTop = whichItemSelected - (availableLines - 1);
             }
             redraw = 1;
         }
@@ -2875,11 +2869,35 @@ Status PromptUserToChooseFile(const char *title, const char *dirName, uint32_t f
         main_iterate(); // XXX
     }
 
-    for(size_t i = 0; i < filenamesSize; i++) {
+    return status;
+}
+
+Status PromptUserToChooseFile(const char *title, const char *dirName, uint32_t flags, const char *optionalFilterSuffix, char** fileChosen)
+{
+    char *filenames[256];
+    size_t filenamesCount = 0;
+
+    Status result = FillFilenameList(dirName, flags, optionalFilterSuffix, 256, filenames, &filenamesCount);
+    if(RO_FAILURE(result)) {
+        // XXX show some kind of failure
+        DisplayStringAndWaitForEnter("Filename chooser failure!");
+        return RO_RESOURCE_NOT_FOUND;
+    }
+
+    int whichItemSelected;
+    result = PromptUserToChooseFromList(title, filenames, filenamesCount, &whichItemSelected);
+
+    if(result == RO_SUCCESS) {
+        *fileChosen = strdup(filenames[whichItemSelected]);
+    } else {
+        *fileChosen = strdup("");
+    }
+
+    for(size_t i = 0; i < filenamesCount; i++) {
         free(filenames[i]);
     }
 
-    return status;
+    return result;
 }
 
 static void VGA_TIM1_Init(void)
@@ -3467,82 +3485,94 @@ int main(void)
         TestControllers();
     }
 
-    if(1) {
-        Status status;
-        char *fileChosenInDir;
-        char fileChosen[512];
+    while(1) {
+        const char* applications[] = {"MP3 Player", "Colecovision Emulator", "Apple //e Emulator"};
+        int whichApplication;
+        Status result = PromptUserToChooseFromList("Choose an application", applications, 3, &whichApplication);
 
-        status = PromptUserToChooseFile("Choose an MP3 File", "/", CHOOSE_FILE_IGNORE_DOTFILES, NULL /* ".mp3" */, &fileChosenInDir);
-        sprintf(fileChosen, "/%s", fileChosenInDir);
-        if(status == RO_SUCCESS) {
-            const char *args[] = {
-                "mp3player",
-                fileChosen,
-            };
-            mp3player_main(sizeof(args) / sizeof(args[0]), args); /* doesn't return */
+        if(result != RO_SUCCESS) {
+            continue;
         }
-    }
 
-    if(1) {
-        static const uint8_t TMS9918ColorsInRGB[16][3] = {
-            {0, 0, 0}, /* if BACKDROP is 0, supply black */
-            {0, 0, 0},
-            {35, 203, 50},
-            {96, 221, 108},
-            {84, 78, 255},
-            {125, 112, 255},
-            {210, 84, 66},
-            {69, 232, 255},
-            {250, 89, 72},
-            {255, 124, 108},
-            {211, 198, 60},
-            {229, 210, 109},
-            {35, 178, 44},
-            {200, 90, 198},
-            {204, 204, 204},
-            {255, 255, 255},
-        };
+        switch(whichApplication) {
 
-        Status status;
-        char *fileChosenInDir;
-        char fileChosen[512];
+            case 0: {
+                Status status;
+                char *fileChosenInDir;
+                char fileChosen[512];
 
-        status = PromptUserToChooseFile("Choose a Coleco Cartridge", "/coleco", CHOOSE_FILE_IGNORE_DOTFILES, NULL /* ".dsk" */, &fileChosenInDir);
-        sprintf(fileChosen, "/coleco/%s", fileChosenInDir);
-        if(status == RO_SUCCESS) {
-            const char *args[] = {
-                "emulator",
-                "coleco/COLECO.ROM",
-                fileChosen,
-            };
-            for(int i = 0; i < 16; i++) {
-                const uint8_t *c = TMS9918ColorsInRGB[i];
-                Pixmap256_192_4b_SetPaletteEntry(i, c[0], c[1], c[2]);
+                status = PromptUserToChooseFile("Choose an MP3 File", "/", CHOOSE_FILE_IGNORE_DOTFILES, ".mp3", &fileChosenInDir);
+                sprintf(fileChosen, "/%s", fileChosenInDir);
+                if(status == RO_SUCCESS) {
+                    const char *args[] = {
+                        "mp3player",
+                        fileChosen,
+                    };
+                    mp3player_main(sizeof(args) / sizeof(args[0]), args); /* doesn't return */
+                }
+                break;
             }
-            NTSCSwitchModeFuncs(Pixmap256_192_4b_ModeFillRowBuffer, DefaultNeedsColorburst);
-            coleco_main(sizeof(args) / sizeof(args[0]), args); /* doesn't return */
-        }
-    }
 
-    if(1) {
+            case 1: {
+                static const uint8_t TMS9918ColorsInRGB[16][3] = {
+                    {0, 0, 0}, /* if BACKDROP is 0, supply black */
+                    {0, 0, 0},
+                    {35, 203, 50},
+                    {96, 221, 108},
+                    {84, 78, 255},
+                    {125, 112, 255},
+                    {210, 84, 66},
+                    {69, 232, 255},
+                    {250, 89, 72},
+                    {255, 124, 108},
+                    {211, 198, 60},
+                    {229, 210, 109},
+                    {35, 178, 44},
+                    {200, 90, 198},
+                    {204, 204, 204},
+                    {255, 255, 255},
+                };
 
-        printf("Starting Apple ][ emulation menu\n"); // console_flush();
+                Status status;
+                char *fileChosenInDir;
+                char fileChosen[512];
 
-        Status status;
-        char *fileChosenInDir;
-        char fileChosen[512];
+                status = PromptUserToChooseFile("Choose a Coleco Cartridge", "/coleco", CHOOSE_FILE_IGNORE_DOTFILES, NULL /* ".dsk" */, &fileChosenInDir);
+                sprintf(fileChosen, "/coleco/%s", fileChosenInDir);
+                if(status == RO_SUCCESS) {
+                    const char *args[] = {
+                        "emulator",
+                        "coleco/COLECO.ROM",
+                        fileChosen,
+                    };
+                    for(int i = 0; i < 16; i++) {
+                        const uint8_t *c = TMS9918ColorsInRGB[i];
+                        Pixmap256_192_4b_SetPaletteEntry(i, c[0], c[1], c[2]);
+                    }
+                    NTSCSwitchModeFuncs(Pixmap256_192_4b_ModeFillRowBuffer, DefaultNeedsColorburst);
+                    coleco_main(sizeof(args) / sizeof(args[0]), args); /* doesn't return */
+                }
+                break;
+            }
 
-        status = PromptUserToChooseFile("Choose an Apple ][ boot disk", "/floppies", CHOOSE_FILE_IGNORE_DOTFILES, NULL /* ".dsk" */, &fileChosenInDir);
-        sprintf(fileChosen, "/floppies/%s", fileChosenInDir);
-        if(status == RO_SUCCESS) {
-            const char *args[] = {
-                "apple2e",
-                // "-fast",
-                "-diskII", "diskII.c600.c6ff.bin", fileChosen, "none",
-                "apple2e.rom",
-            };
-            NTSCSwitchModeFuncs(WozModeFillRowBuffer, WozModeNeedsColorburst);
-            const char* programString = R"(
+            case 2: {
+                printf("Starting Apple ][ emulation menu\n"); // console_flush();
+
+                Status status;
+                char *fileChosenInDir;
+                char fileChosen[512];
+
+                status = PromptUserToChooseFile("Choose an Apple ][ boot disk", "/floppies", CHOOSE_FILE_IGNORE_DOTFILES, NULL /* ".dsk" */, &fileChosenInDir);
+                sprintf(fileChosen, "/floppies/%s", fileChosenInDir);
+                if(status == RO_SUCCESS) {
+                    const char *args[] = {
+                        "apple2e",
+                        // "-fast",
+                        "-diskII", "diskII.c600.c6ff.bin", fileChosen, "none",
+                        "apple2e.rom",
+                    };
+                    NTSCSwitchModeFuncs(WozModeFillRowBuffer, WozModeNeedsColorburst);
+                    const char* programString = R"(
 10  HGR : POKE  - 16302,0
 11 MX = 280
 12 MY = 192
@@ -3570,23 +3600,26 @@ REM 6 END
 RUN
 )";
 #if 0
-            programString = R"(
+                    programString = R"(
 CALL -151
 70: 2C 50 C0 2C 52 C0 20 70 FC A9 FF 91 2A 88 10 FB A9 16 85 25 20 22 FC A0 27 68 F0 05 0A F0 04 90 02 49 1D 48 30 09 B1 28 29 07 AA B5 A8 91 28 88 10 E7 C6 25 10 DE 30 CE 00 BB 00 AA 00 99 00 DD
 70G
 )";
 #endif
-            if(0) {
-                for(size_t s = 0; s < strlen(programString); s++) {
-                    enqueue_ascii(programString[s]);
+                    if(0) {
+                        for(size_t s = 0; s < strlen(programString); s++) {
+                            enqueue_ascii(programString[s]);
+                        }
+                    }
+
+                    apple2_main(sizeof(args) / sizeof(args[0]), args); /* doesn't return */
+
+                } else {
+
+                    // declined or error
                 }
+                break;
             }
-
-            apple2_main(sizeof(args) / sizeof(args[0]), args); /* doesn't return */
-
-        } else {
-
-            // declined or error
         }
     }
 
