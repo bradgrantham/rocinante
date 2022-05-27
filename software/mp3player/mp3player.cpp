@@ -4,6 +4,7 @@
 #include <cmath>
 #include <array>
 #include <algorithm>
+#include <memory>
 
 #if !defined(ROSA)
 
@@ -12,6 +13,10 @@
 #else /* defined(ROSA) */
 
 #include "rocinante.h"
+#include "events.h"
+#include "hid.h"
+
+#define printf RoDebugOverlayPrintf
 
 #endif
 
@@ -55,7 +60,6 @@ ao_device *open_ao(int rate)
 bool audio_needs_start = true;
 float audioSampleRate;
 size_t audioChunkLengthBytes;
-size_t audioBufferCurrent;
 
 void EnqueueStereoU8AudioSamples(uint8_t *buf, size_t sz)
 {
@@ -120,9 +124,9 @@ struct Resampler
         samples[1] = 0;
         samplesEmpty = true;
     }
-
+    
     template <typename EnqueueStereoU8>
-    void resample_stereo_s16_u8(int16_t *pcm, int sampleCount, int rate, EnqueueStereoU8 enqueue)
+    void resample_stereo_s16_u8(int16_t *pcm, size_t sampleCount, int rate, EnqueueStereoU8 enqueue)
     {
         uint32_t nextInputSampleIndex = 0;
         timeType inputSampleLength = 1.0 / rate;
@@ -215,7 +219,11 @@ int main(int argc, char **argv)
 #endif
 
     bool try_again;
-    Resampler resampler(rate);
+    auto resampler = std::make_unique<Resampler>(rate);
+    if(!resampler) {
+        printf("couldn't allocate\n");
+        while(1);
+    }
 
 #if !defined(ROSA)
 
@@ -225,7 +233,8 @@ int main(int argc, char **argv)
     auto enqueue = [aodev, &pcmu8stereo, &cursor](const uint8_t samples[2]) {
         pcmu8stereo[cursor * 2 + 0] = samples[0];
         pcmu8stereo[cursor * 2 + 1] = samples[1];
-        if(cursor++ >= pcmu8stereo_count ) {
+        cursor++;
+        if(cursor >= pcmu8stereo_count ) {
             ao_play(aodev, (char*)pcmu8stereo, sizeof(pcmu8stereo));
             cursor = 0;
         }
@@ -239,12 +248,12 @@ int main(int argc, char **argv)
     auto enqueue = [&pcmu8stereo, &cursor](const uint8_t samples[2]) {
         pcmu8stereo[cursor * 2 + 0] = samples[0];
         pcmu8stereo[cursor * 2 + 1] = samples[1];
-        if(cursor++ >= pcmu8stereo_count ) {
+        cursor++;
+        if(cursor >= pcmu8stereo_count) {
             EnqueueStereoU8AudioSamples(pcmu8stereo, sizeof(pcmu8stereo));
             cursor = 0;
         }
     };
-
 
 #endif
 
@@ -267,18 +276,19 @@ int main(int argc, char **argv)
             in_buffer -= info.frame_bytes;
 
             if(samples > 0) {
+                // printf("%d bytes, %dx%d samples, %d hz\n", info.frame_bytes, samples, info.channels, info.hz);
                 if(info.channels == 2) {
-                    resampler.resample_stereo_s16_u8(pcm, samples, info.hz, enqueue);
+                    resampler->resample_stereo_s16_u8(pcm, samples, info.hz, enqueue);
                 } else {
                     // ???
                 }
 
-                // printf("decoded %d bytes into %d samples of %d channels at %d hz\n", info.frame_bytes, samples, info.channels, info.hz);
                 try_again = true;
             }
         }
 
 #if defined(ROSA)
+
         uint32_t nowTick = HAL_GetTick();
 #warning Setting this to + 16 made USB keyboard stop working.  
         if(nowTick >= prevTick + 16) {
@@ -286,6 +296,31 @@ int main(int argc, char **argv)
             prevTick = nowTick;
         }
 #endif
+
+        Event ev;
+        int haveEvent = RoEventPoll(&ev);
+
+        if(haveEvent) {
+            switch(ev.eventType) {
+                case ::Event::KEYBOARD_RAW: {
+                    const struct KeyboardRawEvent raw = ev.u.keyboardRaw;
+                    if(raw.isPress) {
+                        try_again = false;
+                    }
+                    break;
+                }
+                case ::Event::CONSOLE_BUTTONPRESS: {
+                    const ButtonPressEvent& press = ev.u.buttonPress;
+                    if(press.button == 2) {
+                        try_again = false;
+                    }
+                }
+
+                default:
+                    // pass;
+                    break;
+            }
+        }
 
     } while(try_again);
 
