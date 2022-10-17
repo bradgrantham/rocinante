@@ -131,7 +131,7 @@ void KeyRepeatPress(KeyRepeatManager *mgr, int pressed)
     if(mgr->key != pressed) {
         mgr->key = pressed;
         mgr->state = KeyRepeatManager::PRESSED;
-        mgr->lastTick = HAL_GetTick();
+        mgr->lastMilli = HAL_GetTick();
     }
 }
 
@@ -168,9 +168,9 @@ int KeyRepeatUpdate(KeyRepeatManager *mgr, int haveEvent, Event* ev)
     } else {
         switch(mgr->state) {
             case KeyRepeatManager::PRESSED:
-                if(now - mgr->lastTick > 500) {
+                if(now - mgr->lastMilli > 500) {
                     mgr->state = KeyRepeatManager::REPEATING;
-                    mgr->lastTick = now;
+                    mgr->lastMilli = now;
                     ev->eventType = Event::KEYBOARD_RAW;
                     ev->u.keyboardRaw.isPress = 1;
                     ev->u.keyboardRaw.key = mgr->key;
@@ -178,8 +178,8 @@ int KeyRepeatUpdate(KeyRepeatManager *mgr, int haveEvent, Event* ev)
                 }
                 break;
             case KeyRepeatManager::REPEATING:
-                if(now - mgr->lastTick > 20) {
-                    mgr->lastTick = now;
+                if(now - mgr->lastMilli > 20) {
+                    mgr->lastMilli = now;
                     ev->eventType = Event::KEYBOARD_RAW;
                     ev->u.keyboardRaw.isPress = 1;
                     ev->u.keyboardRaw.key = mgr->key;

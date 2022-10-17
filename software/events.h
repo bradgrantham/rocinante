@@ -24,35 +24,6 @@ typedef struct KeyboardRawEvent {
     int key;
 } KeyboardRawEvent;
 
-typedef struct WindowResizeEvent {
-    int window;
-    int width, height;
-} WindowResizeEvent;
-
-typedef struct WindowRedrawRectEvent {
-    int window;
-    int left, top;
-    int width, height;
-} WindowRedrawRectEvent;
-
-typedef struct WindowRepairMetadataEvent {
-    int window;
-} WindowRepairMetadataEvent;
-
-enum WindowStatusFlag
-{
-    FRONT = 0x0001,
-    BEHIND = 0x0002,
-    CLOSE = 0x0004,
-    FULLSCREEN = 0x0008,
-    WINDOWED = 0x0010,
-};
-
-typedef struct WindowStatusEvent {
-    int window;
-    uint16_t flags;
-} WindowStatusEvent;
-
 typedef struct Event
 {
     enum {
@@ -61,10 +32,6 @@ typedef struct Event
         MOUSE_BUTTONPRESS,
         MOUSE_BUTTONRELEASE,
         KEYBOARD_RAW,
-        WINDOW_RESIZE,
-        WINDOW_REDRAW_RECT,
-        WINDOW_REPAIR_METADATA,
-        WINDOW_STATUS,
         CONSOLE_BUTTONPRESS, // There's no release.
     } eventType;
     union {
@@ -72,10 +39,6 @@ typedef struct Event
         ButtonPressEvent buttonPress;
         ButtonReleaseEvent buttonRelease;
         KeyboardRawEvent keyboardRaw;
-        WindowResizeEvent windowResize;
-        WindowRedrawRectEvent windowRedrawRect;
-        WindowRepairMetadataEvent windowRepairMetadata;
-        WindowStatusEvent windowStatus;
         uint8_t reserved[64];
     } u;
 } Event;
@@ -86,7 +49,7 @@ typedef struct KeyRepeatManager
 {
     int key;
     enum { NONE, PRESSED, REPEATING } state;
-    uint32_t lastTick;
+    uint32_t lastMilli;
 } KeyRepeatManager;
 
 void KeyRepeatRelease(KeyRepeatManager *mgr, int released);
