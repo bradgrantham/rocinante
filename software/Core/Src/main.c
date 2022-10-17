@@ -2521,6 +2521,8 @@ void TextModeTest()
 
 extern void enqueue_ascii(int s);
 
+//----------------------------------------------------------------------------
+
 int doCommandLS(int wordCount, char **words)
 {
     FRESULT res;
@@ -2548,6 +2550,8 @@ int doCommandLS(int wordCount, char **words)
     }
     return 0;
 }
+
+//----------------------------------------------------------------------------
 
 extern int errno;
 
@@ -2627,6 +2631,7 @@ int playAudio(int argc, const char **argv)
     return 0;
 }
 
+//----------------------------------------------------------------------------
 // File chooser and UI routines
 
 enum {
@@ -2899,6 +2904,9 @@ Status PromptUserToChooseFile(const char *title, const char *dirName, uint32_t f
 
     return result;
 }
+
+// ----------------------------------------------------------------------------
+
 
 static void VGA_TIM1_Init(void)
 {
