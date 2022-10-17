@@ -250,7 +250,7 @@ inline void SetColor(uint8_t *color, uint8_t r, uint8_t g, uint8_t b)
     color[2] = b;
 }
 
-static uint8_t Colors[16][3] = {
+[[maybe_unused]] static uint8_t Colors[16][3] = {
     {0, 0, 0}, /* if BACKDROP is 0, supply black */
     {0, 0, 0},
     {62, 184, 73},
@@ -270,7 +270,7 @@ static uint8_t Colors[16][3] = {
 };
 
 // Assumes X is increasing from 0.
-static void Set4BitPixmapColorIncrementingX(uint8_t pixmap[128 * 192], int x, int y, uint8_t color)
+[[maybe_unused]] static void Set4BitPixmapColorIncrementingX(uint8_t pixmap[128 * 192], int x, int y, uint8_t color)
 {
     if((x & 0b1) == 0) {
         pixmap[x / 2 + y * 128] = color;
@@ -279,7 +279,7 @@ static void Set4BitPixmapColorIncrementingX(uint8_t pixmap[128 * 192], int x, in
     }
 }
 
-static void Set4BitPixmapColor(uint8_t pixmap[128 * 192], int x, int y, uint8_t color)
+[[maybe_unused]] static void Set4BitPixmapColor(uint8_t pixmap[128 * 192], int x, int y, uint8_t color)
 {
     uint8_t& pixelpair = pixmap[x / 2 + y * 128];
     uint8_t shift = (x % 2) * 4;
@@ -287,7 +287,7 @@ static void Set4BitPixmapColor(uint8_t pixmap[128 * 192], int x, int y, uint8_t 
     pixelpair = nybble_cleared | (color << shift);
 }
 
-static void Clear4BitPixmap(uint8_t pixmap[128 * 192], uint8_t color)
+[[maybe_unused]] static void Clear4BitPixmap(uint8_t pixmap[128 * 192], uint8_t color)
 {
     for(int index = 0; index < 128 * 192; index++) {
         pixmap[index] = (color << 4) | color;
@@ -295,7 +295,7 @@ static void Clear4BitPixmap(uint8_t pixmap[128 * 192], uint8_t color)
 }
 
 template <typename SetPixelFunc>
-static void DrawPatternFromGraphicsI(const uint8_t* registers, const uint8_t* memory, SetPixelFunc SetPixel)
+[[maybe_unused]] static void DrawPatternFromGraphicsI(const uint8_t* registers, const uint8_t* memory, SetPixelFunc SetPixel)
 {
     uint8_t backdrop = GetBackdropColor(registers);
 

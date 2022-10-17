@@ -1772,7 +1772,7 @@ uint32_t HAL_GetTick();
 namespace ColecovisionEmulator
 {
 
-static void sleep_for(int32_t millis)
+[[maybe_unused]] static void sleep_for(int32_t millis)
 {
     if(millis < 0) {
         return;
