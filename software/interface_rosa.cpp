@@ -54,7 +54,7 @@ deque<event> event_queue;
 bool force_caps_on = true;
 
 float audioSampleRate;
-size_t audioBufferLengthBytes;
+size_t audioChunkLengthBytes;
 size_t audioBufferCurrent;
 // uint8_t *audioBuffer;
 
@@ -83,7 +83,7 @@ tuple<float,bool> get_paddle(int num)
 void start(bool run_fast, bool add_floppies, bool floppy0_inserted, bool floppy1_inserted)
 {
     uint8_t *audioBufferPtr; /* ignored */
-    RoAudioGetSamplingInfo(&audioSampleRate, &audioBufferLengthBytes, &audioBufferPtr);
+    RoAudioGetSamplingInfo(&audioSampleRate, &audioChunkLengthBytes, &audioBufferPtr);
     // audioBuffer = new uint8_t[audioBufferLength];
     // audioBufferCurrent = 0;
     event_queue.push_back({KEYDOWN, CAPS_LOCK});
@@ -459,15 +459,26 @@ int get_audio_sample_rate()
 size_t get_preferred_audio_buffer_size_samples()
 {
     // Divide by 2 because Rocinante alternates between blocking at beginning and middle
-    return audioBufferLengthBytes / 2 / 2;
+    return audioChunkLengthBytes / 2;
 }
+
+bool audio_needs_start = true;
 
 void enqueue_audio_samples(uint8_t *buf, size_t count)
 {
-    // while(count > 
-    size_t where = RoAudioBlockToHalfBuffer();
-    Status success = RoAudioSetHalfBufferMonoSamples(where, buf);
-    (void)success;
+    if(audio_needs_start) {
+        RoAudioClear();
+        /* give a little data to avoid gaps and to avoid a pop */
+        static uint8_t lead_in[1024];
+        size_t sampleCount = std::min(sizeof(lead_in), audioChunkLengthBytes) / 2;
+        for(uint32_t i = 0; i < sampleCount; i++) {
+            lead_in[i * 2 + 0] = 128 + (buf[0] - 128) * i / sampleCount;
+            lead_in[i * 2 + 1] = 128 + (buf[0] - 128) * i / sampleCount;
+        }
+        RoAudioEnqueueSamplesBlocking(count * 2, lead_in);
+        audio_needs_start = false;
+    }
+    (void)RoAudioEnqueueSamplesBlocking(count * 2, buf);
 }
 
 };
