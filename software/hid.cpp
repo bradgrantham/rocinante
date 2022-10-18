@@ -9,8 +9,8 @@
 
 enum KeyModifier
 {
-    MOD_LEFTCTRL,
-    MOD_LEFTSHIFT = 0,
+    MOD_LEFTCTRL = 0,
+    MOD_LEFTSHIFT,
     MOD_LEFTALT,
     MOD_LEFTGUI,
     MOD_RIGHTCTRL,
@@ -19,16 +19,16 @@ enum KeyModifier
     MOD_RIGHTGUI,
 };
 
-const static std::array<KeyCap,8> KeyModifierToKey =
+const static std::array<RoKeyCap,8> KeyModifierToKey =
 {
-    KeyCap::KEYCAP_LEFTCONTROL,
-    KeyCap::KEYCAP_LEFTSHIFT,
-    KeyCap::KEYCAP_LEFTALT,
-    KeyCap::KEYCAP_LEFTGUI,
-    KeyCap::KEYCAP_RIGHTCONTROL,
-    KeyCap::KEYCAP_RIGHTSHIFT,
-    KeyCap::KEYCAP_RIGHTALT,
-    KeyCap::KEYCAP_RIGHTGUI,
+    RoKeyCap::KEYCAP_LEFTCONTROL,
+    RoKeyCap::KEYCAP_LEFTSHIFT,
+    RoKeyCap::KEYCAP_LEFTALT,
+    RoKeyCap::KEYCAP_LEFTGUI,
+    RoKeyCap::KEYCAP_RIGHTCONTROL,
+    RoKeyCap::KEYCAP_RIGHTSHIFT,
+    RoKeyCap::KEYCAP_RIGHTALT,
+    RoKeyCap::KEYCAP_RIGHTGUI,
 };
 
 void ConvertUSBModifiersToKeyEvent(int modifiers[8])
