@@ -66,6 +66,11 @@ typedef enum RoControllerIndex { CONTROLLER_1, CONTROLLER_2 } RoControllerIndex;
 uint8_t RoGetJoystickState(RoControllerIndex which);
 uint8_t RoGetKeypadState(RoControllerIndex which);
 
+typedef void (*NTSCModeFillRowBufferFunc)(int frameIndex, int rowNumber, size_t maxSamples, uint8_t* rowBuffer);
+typedef int (*NTSCModeNeedsColorburstFunc)();
+void RoNTSCSetMode(int interlaced, NTSCModeFillRowBufferFunc fillBufferFunc, NTSCModeNeedsColorburstFunc needsColorBurstFunc);
+void RoNTSCGetValueRange(unsigned char *black, unsigned char *white);
+
 void panic(void);
 
 #ifdef __cplusplus
