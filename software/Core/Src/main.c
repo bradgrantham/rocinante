@@ -1245,22 +1245,30 @@ void NTSCSetModeFuncs(int interlaced, NTSCModeFillRowBufferFunc fillBufferFunc, 
     NTSCModeFuncsValid = 1;
 }
 
+// NTSC interlaced is made up of "odd" and "even" fields.  For NTSC, the first field is
+// odd, which means it's #1.
+
 void NTSCFillRowBuffer(int frameNumber, int lineNumber, unsigned char *rowBuffer)
 {
     // XXX could optimize these by having one branch be lines < 21
+
     /*
      * Rows 0 through 8 are equalizing pulse, then vsync, then equalizing pulse
      */
+
     if(lineNumber < NTSC_EQPULSE_LINES) {
 
+        // odd field equalizing pulse
         memcpy(rowBuffer, NTSCEqSyncPulseLine, sizeof(NTSCEqSyncPulseLine));
 
     } else if(lineNumber - NTSC_EQPULSE_LINES < NTSC_VSYNC_LINES) {
 
+        // odd field VSYNC
         memcpy(rowBuffer, NTSCVSyncLine, sizeof(NTSCVSyncLine));
 
     } else if(lineNumber - (NTSC_EQPULSE_LINES + NTSC_VSYNC_LINES) < NTSC_EQPULSE_LINES) {
 
+        // odd field equalizing pulse
         memcpy(rowBuffer, NTSCEqSyncPulseLine, sizeof(NTSCEqSyncPulseLine));
 
     } else if(lineNumber - (NTSC_EQPULSE_LINES + NTSC_VSYNC_LINES + NTSC_EQPULSE_LINES) < NTSC_VBLANK_LINES) {
@@ -1269,37 +1277,38 @@ void NTSCFillRowBuffer(int frameNumber, int lineNumber, unsigned char *rowBuffer
          * Rows 9 through 2X are other part of vertical blank
          */
 
+        // odd field vblank
         if(NTSCModeFuncsValid) {
             memcpy(rowBuffer, NTSCModeNeedsColorburst() ? NTSCBlankLineColor : NTSCBlankLineBW, ROW_SAMPLES);
         } else {
             memcpy(rowBuffer, NTSCBlankLineBW, ROW_SAMPLES);
         }
 
-
     } else if(lineNumber >= 263 && lineNumber <= 271) {
-        // Interlacing handling weird lines
+
+        // Handle interlace half line and vertical retrace and sync.
         if(lineNumber <= 264) {
-            //lines 263, 264 - last 405 of eq pulse then first 405 of eq pulse
+            // lines 263, 264 - last 405 of even field eq pulse then first 405 of eq pulse
             memcpy(rowBuffer, NTSCEqSyncPulseLine + ROW_SAMPLES / 2, ROW_SAMPLES / 2);
             memcpy(rowBuffer + ROW_SAMPLES / 2, NTSCEqSyncPulseLine, ROW_SAMPLES / 2);
         } else if(lineNumber == 265) {
-            //line 265 - last 405 of eq pulse then first 405 of vsync
+            // line 265 - last 405 of even field eq pulse then first 405 of vsync
             memcpy(rowBuffer, NTSCEqSyncPulseLine + ROW_SAMPLES / 2, ROW_SAMPLES / 2);
             memcpy(rowBuffer + ROW_SAMPLES / 2, NTSCVSyncLine, ROW_SAMPLES / 2);
         } else if(lineNumber <= 267) {
-            //lines 266, 267 - last 405 of vsync then first 405 of vsync
+            // lines 266, 267 - last 405 of even field vsync then first 405 of vsync
             memcpy(rowBuffer, NTSCVSyncLine + ROW_SAMPLES / 2, ROW_SAMPLES / 2);
             memcpy(rowBuffer + ROW_SAMPLES / 2, NTSCVSyncLine, ROW_SAMPLES / 2);
         } else if(lineNumber == 268) {
-            //lines 268 - last 405 of vsync then first 405 of eq pulse
+            // even vield lines 268 - last 405 of even field vsync then first 405 of eq pulse
             memcpy(rowBuffer, NTSCVSyncLine + ROW_SAMPLES / 2, ROW_SAMPLES / 2);
             memcpy(rowBuffer + ROW_SAMPLES / 2, NTSCEqSyncPulseLine, ROW_SAMPLES / 2);
         } else if(lineNumber <= 270) {
-            //lines 269, 270 - last 405 of eq pulse then first 405 of eq pulse
+            // lines 269, 270 - last 405 of even field eq pulse then first 405 of eq pulse
             memcpy(rowBuffer, NTSCEqSyncPulseLine + ROW_SAMPLES / 2, ROW_SAMPLES / 2);
             memcpy(rowBuffer + ROW_SAMPLES / 2, NTSCEqSyncPulseLine, ROW_SAMPLES / 2);
         } else if(lineNumber == 271) {
-            //line 271 - last 405 of eq pulse then 405 of SyncPorch
+            // line 271 - last 405 of even field eq pulse then 405 of SyncPorch
             memcpy(rowBuffer, NTSCEqSyncPulseLine + ROW_SAMPLES / 2, ROW_SAMPLES / 2);
             memset(rowBuffer + ROW_SAMPLES / 2, NTSCSyncPorch, ROW_SAMPLES / 2);
         }
@@ -1310,6 +1319,7 @@ void NTSCFillRowBuffer(int frameNumber, int lineNumber, unsigned char *rowBuffer
          * Rows 272 through 2XX are other part of vertical blank
          */
 
+        // even field vertical safe area
         if(NTSCModeFuncsValid) {
             memcpy(rowBuffer, NTSCModeNeedsColorburst() ? NTSCBlankLineColor : NTSCBlankLineBW, ROW_SAMPLES);
         } else {
@@ -1329,11 +1339,11 @@ void NTSCFillRowBuffer(int frameNumber, int lineNumber, unsigned char *rowBuffer
             NTSCModeFillRowBuffer(frameNumber, rowWithinFrame, 704, rowBuffer + 164);
         }
 
-        if(lineNumber == 262) {
-            //line 262 - overwrite last 405 samples with first 405 samples of EQ pulse
+        if((lineNumber == 262) && NTSCModeInterlaced) {
+            // interlacing, line 262 - overwrite last 405 samples with first 405 samples of EQ pulse
             memcpy(rowBuffer + ROW_SAMPLES / 2, NTSCEqSyncPulseLine, ROW_SAMPLES / 2);
-        } else if(lineNumber == 282) {
-            //special line 282 - write SyncPorch from BackPorch to middle of line after mode's fillRow()
+        } else if((lineNumber == 282) && NTSCModeInterlaced) {
+            // interlacing, special line 282 - write SyncPorch from BackPorch to middle of line after mode's fillRow()
             memset(rowBuffer + NTSCHSyncClocks + NTSCBackPorchClocks, NTSCSyncPorch, ROW_SAMPLES / 2 - (NTSCHSyncClocks + NTSCBackPorchClocks));
         }
     }
@@ -1540,7 +1550,17 @@ void CheckConsoleButtons()
 
 void NTSCRowHandler(void)
 {
-    NTSCRowNumber = (NTSCRowNumber + 1) % 525;
+    NTSCRowNumber = NTSCRowNumber + 1;
+    if(NTSCModeInterlaced) {
+        if(NTSCRowNumber == 525) {
+            NTSCRowNumber = 0;
+        }
+    } else {
+        if(NTSCRowNumber == 262) {
+            NTSCRowNumber = 0;
+        }
+    }
+
     if(NTSCRowNumber == 0) {
         NTSCFrameNumber ++;
     }
@@ -2501,7 +2521,7 @@ void ShowListOfItems(const char *title, const char **items, size_t itemsSize, in
 void DisplayStringCentered(const char *message)
 {
     int w, h;
-    NTSCSetModeFuncs(1, TextModeFillRowBuffer, TextModeNeedsColorburst);
+    NTSCSetModeFuncs(0, TextModeFillRowBuffer, TextModeNeedsColorburst);
     TextModeGetSize(&w, &h);
     TextModeClearDisplay();
 
@@ -2534,7 +2554,7 @@ void DisplayStringAndWaitForEnter(const char *message)
 
 Status PromptUserToChooseFromList(const char *title, const char **items, size_t itemCount, int *itemChosen)
 {
-    NTSCSetModeFuncs(1, TextModeFillRowBuffer, TextModeNeedsColorburst);
+    NTSCSetModeFuncs(0, TextModeFillRowBuffer, TextModeNeedsColorburst);
 
     int whichItemAtTop = 0;
     int whichItemSelected = 0;
@@ -3319,7 +3339,7 @@ int main(void)
                         const uint8_t *c = TMS9918ColorsInRGB[i];
                         Pixmap256_192_4b_SetPaletteEntry(i, c[0], c[1], c[2]);
                     }
-                    NTSCSetModeFuncs(1, Pixmap256_192_4b_ModeFillRowBuffer, DefaultNeedsColorburst);
+                    NTSCSetModeFuncs(0, Pixmap256_192_4b_ModeFillRowBuffer, DefaultNeedsColorburst);
                     coleco_main(sizeof(args) / sizeof(args[0]), args); /* doesn't return */
                 }
                 break;
@@ -3341,7 +3361,7 @@ int main(void)
                         "-diskII", "diskII.c600.c6ff.bin", fileChosen, "none",
                         "apple2e.rom",
                     };
-                    NTSCSetModeFuncs(1, WozModeFillRowBuffer, WozModeNeedsColorburst);
+                    NTSCSetModeFuncs(0, WozModeFillRowBuffer, WozModeNeedsColorburst);
                     apple2_main(sizeof(args) / sizeof(args[0]), args); /* doesn't return */
 
                 } else {
