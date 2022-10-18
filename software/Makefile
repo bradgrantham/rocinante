@@ -149,6 +149,8 @@ Middlewares/Third_Party/LibJPEG/source/jmemnobs.c
 CXX_SOURCES = \
 	events.cpp \
 	hid.cpp \
+	rosa-kit/key-repeat.cpp \
+	rosa-kit/text-mode.cpp \
 	rosa-apps/apple2e/apple2e.cpp \
 	rosa-apps/apple2e/dis6502.cpp \
 	rosa-apps/apple2e/interface_rosa.cpp \
@@ -216,10 +218,10 @@ C_DEFS =  \
 AS_INCLUDES = 
 
 # C includes
-# -Irosa-apps/coleco \
 
 C_INCLUDES =  \
 -I. \
+-Irosa-kit \
 -ICore/Inc \
 -IDrivers/STM32H7xx_HAL_Driver/Inc \
 -IDrivers/STM32H7xx_HAL_Driver/Inc/Legacy \

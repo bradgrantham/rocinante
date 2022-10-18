@@ -35,6 +35,7 @@
 #include "rocinante.h"
 #include "hid.h"
 #include "events.h"
+#include "text-mode.h"
 
 /* USER CODE END Includes */
 
@@ -1215,7 +1216,6 @@ void NTSCFillRowBuffer(int frameNumber, int lineNumber, unsigned char *rowBuffer
 // always the same line on screen) for debug output for system or other
 // continuous output, and then a way to scroll debug output logging
 
-
 #include "8x16.h"
 // static int font8x16Width = 8, font8x16Height = 16;
 // static unsigned char font8x16Bits[] = /* was a bracket here */
@@ -1554,88 +1554,6 @@ void startNTSCScanout()
 }
 
 //----------------------------------------------------------------------------
-// Text Mode
-
-#define TextModeLeftTick 64
-#define TextModeTopTick (NTSC_EQPULSE_LINES + NTSC_VSYNC_LINES + NTSC_EQPULSE_LINES + NTSC_VBLANK_LINES + 10)
-#define TextModeFontWidthScale 2
-#define TextModeCharGapPixels 1
-#define TextModeFontHeightScale 1
-#define TextModeWidth (604 / (font8x16Width * TextModeFontWidthScale + TextModeCharGapPixels))
-#define TextModeHeight ((218 - 6) / font8x16Height)
-
-enum {
-    TEXT_NO_ATTRIBUTES = 0x00,
-    TEXT_INVERSE       = 0x01,
-};
-uint8_t TextModeAttributes[TextModeHeight * TextModeWidth];
-char TextModeBuffer[TextModeHeight * TextModeWidth];
-
-__attribute__((hot,flatten)) void TextModeFillRowBuffer(int frameIndex, int rowNumber, size_t maxSamples, uint8_t* rowBuffer)
-{
-    int fontScanlineHeight = font8x16Height * TextModeFontHeightScale;
-
-    int rowWithinTextArea = rowNumber / 2 - TextModeTopTick;
-
-    int charRow = rowWithinTextArea / fontScanlineHeight;
-    int charPixelY = (rowWithinTextArea % fontScanlineHeight) / TextModeFontHeightScale;
-
-// XXX this code assumes font width <= 8 and each row padded out to a byte
-    if((rowWithinTextArea >= 0) && (charRow < TextModeHeight)) {
-
-        uint8_t *rowDst = rowBuffer + TextModeLeftTick;
-
-        for(int charCol = 0; charCol < TextModeWidth; charCol++) {
-
-            uint8_t character = TextModeBuffer[charRow * TextModeWidth + charCol];
-            int inverse = (TextModeAttributes[charRow * TextModeWidth + charCol] & TEXT_INVERSE) ? 0xFF : 0;
-            uint8_t charRowBits = font8x16Bits[character * font8x16Height + charPixelY] ^ inverse;
-
-            for(int charPixelX = 0; charPixelX < font8x16Width; charPixelX++) {
-
-                int pixel = (charRowBits & (0x80 >> charPixelX));
-
-                for(int col = 0; col < TextModeFontWidthScale; col++) {
-                    *rowDst++ = pixel ? NTSCWhite : NTSCBlack;
-                }
-            }
-        }
-    }
-}
-
-void TextModeClearDisplay()
-{
-    memset(TextModeBuffer, ' ', sizeof(TextModeBuffer));
-}
-
-void TextModeGetSize(int *w, int *h)
-{
-    *w = TextModeWidth;
-    *h = TextModeHeight;
-}
-
-int TextModeNeedsColorburst()
-{
-    return 0;
-}
-
-void TextModeClearArea(int column, int w, int row, int h, uint8_t attributes)
-{
-    for(int y = row; y < row + h; y++) {
-        memset(TextModeBuffer + y * TextModeWidth + column, ' ', w);
-        memset(TextModeAttributes + y * TextModeWidth + column, attributes, w);
-    }
-}
-
-void TextModeSetLine(int row, int column, uint8_t attributes, const char *string)
-{
-    int stringExceedsWidth = strlen(string) > TextModeWidth - column;
-    size_t toCopy = stringExceedsWidth ? TextModeWidth - column : strlen(string);
-    memcpy(TextModeBuffer + row * TextModeWidth + column, string, toCopy);
-    memset(TextModeAttributes + row * TextModeWidth + column, attributes, toCopy);
-}
-
-//----------------------------------------------------------------------------
 // FillRowBuffer tests
 
 void ImageFillRowBuffer(int frameIndex, int rowNumber, size_t maxSamples, uint8_t* rowBuffer)
@@ -1812,37 +1730,36 @@ Status FillFilenameList(const char* dirName, uint32_t flags, const char* optiona
 void ShowListOfItems(const char *title, const char **items, size_t itemsSize, int whichAtTop, int whichSelected)
 {
     int w, h;
-    TextModeGetSize(&w, &h);
-    TextModeClearDisplay();
+    RoTextModeGetSize(&w, &h);
+    RoTextModeClearDisplay();
 
     int titleIndent = (w - strlen(title)) / 2;
-    TextModeSetLine(0, titleIndent, TEXT_NO_ATTRIBUTES, title);
+    RoTextModeSetLine(0, titleIndent, TEXT_NO_ATTRIBUTES, title);
 
     int tooManyRows = itemsSize - whichAtTop > (h - 4);
     int rowsToDisplay = tooManyRows ? (h - 4) : (itemsSize - whichAtTop);
     for(int i = 0; i < rowsToDisplay; i++) {
         if(i == whichSelected - whichAtTop) {
-            TextModeClearArea(0, w, i + 2, 1, TEXT_INVERSE);
-            TextModeSetLine(i + 2, 0, TEXT_INVERSE, items[whichAtTop + i]);
+            RoTextModeClearArea(0, w, i + 2, 1, TEXT_INVERSE);
+            RoTextModeSetLine(i + 2, 0, TEXT_INVERSE, items[whichAtTop + i]);
         } else {
-            TextModeClearArea(0, w, i + 2, 1, TEXT_NO_ATTRIBUTES);
-            TextModeSetLine(i + 2, 0, TEXT_NO_ATTRIBUTES, items[whichAtTop + i]);
+            RoTextModeClearArea(0, w, i + 2, 1, TEXT_NO_ATTRIBUTES);
+            RoTextModeSetLine(i + 2, 0, TEXT_NO_ATTRIBUTES, items[whichAtTop + i]);
         }
     }
 
     static const char* prompt = "ESC - Cancel, ENTER - Choose";
     int promptIndent = (w - strlen(prompt)) / 2;
-    TextModeSetLine(h - 1, promptIndent, TEXT_NO_ATTRIBUTES, prompt);
+    RoTextModeSetLine(h - 1, promptIndent, TEXT_NO_ATTRIBUTES, prompt);
 }
 
 void DisplayStringCentered(const char *message)
 {
     int w, h;
-    RoNTSCSetMode(0, TextModeFillRowBuffer, TextModeNeedsColorburst);
-    TextModeGetSize(&w, &h);
-    TextModeClearDisplay();
+    RoTextModeGetSize(&w, &h);
+    RoTextModeClearDisplay();
 
-    TextModeSetLine(h / 2, (w - strlen(message)) / 2, TEXT_NO_ATTRIBUTES, message);
+    RoTextModeSetLine(h / 2, (w - strlen(message)) / 2, TEXT_NO_ATTRIBUTES, message);
 }
 
 void DisplayStringAndWaitForEnter(const char *message)
@@ -1871,8 +1788,6 @@ void DisplayStringAndWaitForEnter(const char *message)
 
 Status PromptUserToChooseFromList(const char *title, const char **items, size_t itemCount, int *itemChosen)
 {
-    RoNTSCSetMode(0, TextModeFillRowBuffer, TextModeNeedsColorburst);
-
     int whichItemAtTop = 0;
     int whichItemSelected = 0;
     int done = 0;
@@ -1972,7 +1887,7 @@ Status PromptUserToChooseFromList(const char *title, const char **items, size_t 
         } else if(moveDownOne) {
 
             int w, h;
-            TextModeGetSize(&w, &h);
+            RoTextModeGetSize(&w, &h);
             int availableLines = h - 4;
             whichItemSelected = whichItemSelected + 1;
             if((whichItemSelected + 1) > itemCount - 1) {
@@ -2608,6 +2523,7 @@ int main(void)
                 char *fileChosenInDir;
                 char fileChosen[512];
 
+                RoTextMode();
                 status = PromptUserToChooseFile("Choose an MP3 File", "/", CHOOSE_FILE_IGNORE_DOTFILES, ".mp3", &fileChosenInDir);
                 sprintf(fileChosen, "/%s", fileChosenInDir);
                 if(status == RO_SUCCESS) {
