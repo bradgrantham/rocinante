@@ -36,6 +36,8 @@
 #include "hid.h"
 #include "events.h"
 #include "text-mode.h"
+#include "ui.h"
+#include "8x16.h"
 
 /* USER CODE END Includes */
 
@@ -596,25 +598,6 @@ const gpio joystick_2_south = { GPIOH, 13, 1U << 13};
 const gpio joystick_2_west = { GPIOH, 14, 1U << 14};
 const gpio joystick_2_east = { GPIOH, 15, 1U << 15};
 const gpio joystick_2_fire = { GPIOI, 11, 1U << 11};
-
-const int CONTROLLER_FIRE_BIT = 0x40;
-const int CONTROLLER_NORTH_BIT = 0x01;
-const int CONTROLLER_EAST_BIT = 0x02;
-const int CONTROLLER_SOUTH_BIT = 0x04;
-const int CONTROLLER_WEST_BIT = 0x08;
-const int CONTROLLER_KEYPAD_MASK = 0x0F;
-const int CONTROLLER_KEYPAD_0 = 0x05;
-const int CONTROLLER_KEYPAD_1 = 0x02;
-const int CONTROLLER_KEYPAD_2 = 0x08;
-const int CONTROLLER_KEYPAD_3 = 0x03;
-const int CONTROLLER_KEYPAD_4 = 0x0D;
-const int CONTROLLER_KEYPAD_5 = 0x0C;
-const int CONTROLLER_KEYPAD_6 = 0x01;
-const int CONTROLLER_KEYPAD_7 = 0x0A;
-const int CONTROLLER_KEYPAD_8 = 0x0E;
-const int CONTROLLER_KEYPAD_9 = 0x04;
-const int CONTROLLER_KEYPAD_asterisk = 0x09;
-const int CONTROLLER_KEYPAD_pound = 0x06;
 
 void InitializeControllers(void)
 {
@@ -1216,10 +1199,6 @@ void NTSCFillRowBuffer(int frameNumber, int lineNumber, unsigned char *rowBuffer
 // always the same line on screen) for debug output for system or other
 // continuous output, and then a way to scroll debug output logging
 
-#include "8x16.h"
-// static int font8x16Width = 8, font8x16Height = 16;
-// static unsigned char font8x16Bits[] = /* was a bracket here */
-
 int debugOverlayEnabled = 0;
 
 #define debugDisplayLeftTick (NTSCHSyncClocks + NTSCBackPorchClocks + 64)
@@ -1634,43 +1613,7 @@ int main_iterate(void)
 
 //----------------------------------------------------------------------------
 
-int doCommandLS(int wordCount, char **words)
-{
-    FRESULT res;
-    DIR dir;
-    static FILINFO fno;
-
-    res = f_opendir(&dir, "/");                       /* Open the directory */
-    if (res == FR_OK) {
-        for (;;) {
-            res = f_readdir(&dir, &fno);                   /* Read a directory item */
-            if(res != FR_OK) {
-                printf("failed to readdir - %d\n", res);
-                break;
-            }
-            if (fno.fname[0] == 0) break;  /* Break on end of dir */
-            if (fno.fattrib & AM_DIR) {                    /* It is a directory */
-                printf("%s/\n", fno.fname);
-            } else {                                       /* It is a file. */
-                printf("%s\n", fno.fname);
-            }
-        }
-        f_closedir(&dir);
-    } else {
-        printf("failed to f_opendir - %d\n", res);
-    }
-    return 0;
-}
-
-//----------------------------------------------------------------------------
-// File chooser and UI routines
-
-enum {
-    CHOOSE_FILE_NO_FLAGS = 0,
-    CHOOSE_FILE_IGNORE_DOTFILES = 0x01,
-};
-
-Status FillFilenameList(const char* dirName, uint32_t flags, const char* optionalFilterSuffix, size_t maxNames, char **filenames, size_t* filenamesSize)
+Status RoFillFilenameList(const char* dirName, uint32_t flags, const char* optionalFilterSuffix, size_t maxNames, char **filenames, size_t* filenamesSize)
 {
     Status status;
 
@@ -1727,210 +1670,33 @@ Status FillFilenameList(const char* dirName, uint32_t flags, const char* optiona
     return status;
 }
 
-void ShowListOfItems(const char *title, const char **items, size_t itemsSize, int whichAtTop, int whichSelected)
+
+int doCommandLS(int wordCount, char **words)
 {
-    int w, h;
-    RoTextModeGetSize(&w, &h);
-    RoTextModeClearDisplay();
+    FRESULT res;
+    DIR dir;
+    static FILINFO fno;
 
-    int titleIndent = (w - strlen(title)) / 2;
-    RoTextModeSetLine(0, titleIndent, TEXT_NO_ATTRIBUTES, title);
-
-    int tooManyRows = itemsSize - whichAtTop > (h - 4);
-    int rowsToDisplay = tooManyRows ? (h - 4) : (itemsSize - whichAtTop);
-    for(int i = 0; i < rowsToDisplay; i++) {
-        if(i == whichSelected - whichAtTop) {
-            RoTextModeClearArea(0, w, i + 2, 1, TEXT_INVERSE);
-            RoTextModeSetLine(i + 2, 0, TEXT_INVERSE, items[whichAtTop + i]);
-        } else {
-            RoTextModeClearArea(0, w, i + 2, 1, TEXT_NO_ATTRIBUTES);
-            RoTextModeSetLine(i + 2, 0, TEXT_NO_ATTRIBUTES, items[whichAtTop + i]);
-        }
-    }
-
-    static const char* prompt = "ESC - Cancel, ENTER - Choose";
-    int promptIndent = (w - strlen(prompt)) / 2;
-    RoTextModeSetLine(h - 1, promptIndent, TEXT_NO_ATTRIBUTES, prompt);
-}
-
-void DisplayStringCentered(const char *message)
-{
-    int w, h;
-    RoTextModeGetSize(&w, &h);
-    RoTextModeClearDisplay();
-
-    RoTextModeSetLine(h / 2, (w - strlen(message)) / 2, TEXT_NO_ATTRIBUTES, message);
-}
-
-void DisplayStringAndWaitForEnter(const char *message)
-{
-    DisplayStringCentered(message);
-    int done = 0;
-    while(!done) {
-        RoEvent ev;
-        int haveEvent = RoEventPoll(&ev);
-        
-        if(haveEvent) {
-            switch(ev.eventType) {
-                case KEYBOARD_RAW: {
-                    // const struct KeyboardRawEvent raw = ev.u.keyboardRaw;
-                    done = 1;
-                    break;
-                }
-                default:
-                    // pass;
-                    break;
+    res = f_opendir(&dir, "/");                       /* Open the directory */
+    if (res == FR_OK) {
+        for (;;) {
+            res = f_readdir(&dir, &fno);                   /* Read a directory item */
+            if(res != FR_OK) {
+                printf("failed to readdir - %d\n", res);
+                break;
+            }
+            if (fno.fname[0] == 0) break;  /* Break on end of dir */
+            if (fno.fattrib & AM_DIR) {                    /* It is a directory */
+                printf("%s/\n", fno.fname);
+            } else {                                       /* It is a file. */
+                printf("%s\n", fno.fname);
             }
         }
-        main_iterate(); // XXX
-    }
-}
-
-Status PromptUserToChooseFromList(const char *title, const char **items, size_t itemCount, int *itemChosen)
-{
-    int whichItemAtTop = 0;
-    int whichItemSelected = 0;
-    int done = 0;
-    int redraw = 1;
-    Status status = RO_SUCCESS;
-
-    RoKeyRepeatManager keyRepeat;
-    uint8_t wasPressed = 0;
-    uint32_t debounceStart = 0;
-
-    while(!done) {
-
-        int moveUpOne = 0;
-        int moveDownOne = 0;
-        int selectCurrentLine = 0;
-
-        if(redraw) {
-            ShowListOfItems(title, items, itemCount, whichItemAtTop, whichItemSelected);
-            redraw = 0;
-        }
-
-        uint8_t joystick1 = RoGetJoystickState(CONTROLLER_1);
-        int northPressed = joystick1 & CONTROLLER_NORTH_BIT;
-        int southPressed = joystick1 & CONTROLLER_SOUTH_BIT;
-        int firePressed = joystick1 & CONTROLLER_FIRE_BIT;
-        if(northPressed || southPressed || firePressed) {
-            wasPressed = joystick1;
-            debounceStart = HAL_GetTick();
-        }
-        uint32_t now = HAL_GetTick();
-        if(wasPressed && (joystick1 == 0) && ((now - debounceStart) > 20)) {
-            if(wasPressed & CONTROLLER_NORTH_BIT) {
-                moveUpOne = 1;
-            }
-            if(wasPressed & CONTROLLER_SOUTH_BIT) {
-                moveDownOne = 1;
-            }
-            if(wasPressed & CONTROLLER_FIRE_BIT) {
-                selectCurrentLine = 1;
-            }
-            wasPressed = 0;
-        }
-
-        RoEvent ev;
-        int haveEvent = RoEventPoll(&ev);
-
-        haveEvent = RoKeyRepeatUpdate(&keyRepeat, haveEvent, &ev);
-
-        if(haveEvent) {
-            switch(ev.eventType) {
-                case KEYBOARD_RAW: {
-                    const struct KeyboardRawEvent raw = ev.u.keyboardRaw;
-
-                    if(raw.isPress) {
-
-                        if(raw.key == KEYCAP_ESCAPE) {
-
-                            *itemChosen = -1;
-                            status = RO_USER_DECLINED;
-                            done = 1;
-
-                        } else if(raw.key == KEYCAP_ENTER) {
-
-                            selectCurrentLine = 1;
-
-                        } else if(raw.key == KEYCAP_UP) {
-
-                            moveUpOne = 1;
-
-                        } else if(raw.key == KEYCAP_DOWN) {
-
-                            moveDownOne = 1;
-                        }
-                    }
-                    break;
-                }
-                default:
-                    // pass;
-                    break;
-            }
-        }
-
-        if(selectCurrentLine) {
-            *itemChosen = whichItemSelected;
-            status = RO_SUCCESS;
-            done = 1;
-        }
-
-        if(moveUpOne) {
-
-            whichItemSelected = (whichItemSelected - 1 < 0) ? 0 : (whichItemSelected - 1);
-            if(whichItemAtTop > whichItemSelected) {
-                whichItemAtTop = whichItemSelected;
-            }
-            redraw = 1;
-
-        } else if(moveDownOne) {
-
-            int w, h;
-            RoTextModeGetSize(&w, &h);
-            int availableLines = h - 4;
-            whichItemSelected = whichItemSelected + 1;
-            if((whichItemSelected + 1) > itemCount - 1) {
-                whichItemSelected = itemCount - 1;
-            }
-            if(whichItemSelected > whichItemAtTop + (availableLines - 1)) {
-                whichItemAtTop = whichItemSelected - (availableLines - 1);
-            }
-            redraw = 1;
-        }
-
-        main_iterate(); // XXX
-    }
-
-    return status;
-}
-
-Status PromptUserToChooseFile(const char *title, const char *dirName, uint32_t flags, const char *optionalFilterSuffix, char** fileChosen)
-{
-    char *filenames[256];
-    size_t filenamesCount = 0;
-
-    Status result = FillFilenameList(dirName, flags, optionalFilterSuffix, 256, filenames, &filenamesCount);
-    if(RO_FAILURE(result)) {
-        // XXX show some kind of failure
-        DisplayStringAndWaitForEnter("Filename chooser failure!");
-        return RO_RESOURCE_NOT_FOUND;
-    }
-
-    int whichItemSelected;
-    result = PromptUserToChooseFromList(title, filenames, filenamesCount, &whichItemSelected);
-
-    if(result == RO_SUCCESS) {
-        *fileChosen = strdup(filenames[whichItemSelected]);
+        f_closedir(&dir);
     } else {
-        *fileChosen = strdup("");
+        printf("failed to f_opendir - %d\n", res);
     }
-
-    for(size_t i = 0; i < filenamesCount; i++) {
-        free(filenames[i]);
-    }
-
-    return result;
+    return 0;
 }
 
 // ----------------------------------------------------------------------------
@@ -2510,7 +2276,7 @@ int main(void)
     while(1) {
         const char* applications[] = {"MP3 Player", "Colecovision Emulator", "Apple //e Emulator"};
         int whichApplication;
-        Status result = PromptUserToChooseFromList("Choose an application", applications, 3, &whichApplication);
+        Status result = RoPromptUserToChooseFromList("Choose an application", applications, 3, &whichApplication);
 
         if(result != RO_SUCCESS) {
             continue;
@@ -2524,7 +2290,7 @@ int main(void)
                 char fileChosen[512];
 
                 RoTextMode();
-                status = PromptUserToChooseFile("Choose an MP3 File", "/", CHOOSE_FILE_IGNORE_DOTFILES, ".mp3", &fileChosenInDir);
+                status = RoPromptUserToChooseFile("Choose an MP3 File", "/", CHOOSE_FILE_IGNORE_DOTFILES, ".mp3", &fileChosenInDir);
                 sprintf(fileChosen, "/%s", fileChosenInDir);
                 if(status == RO_SUCCESS) {
                     const char *args[] = {
@@ -2541,7 +2307,7 @@ int main(void)
                 char *fileChosenInDir;
                 char fileChosen[512];
 
-                status = PromptUserToChooseFile("Choose a Coleco Cartridge", "/coleco", CHOOSE_FILE_IGNORE_DOTFILES, NULL /* ".dsk" */, &fileChosenInDir);
+                status = RoPromptUserToChooseFile("Choose a Coleco Cartridge", "/coleco", CHOOSE_FILE_IGNORE_DOTFILES, NULL /* ".dsk" */, &fileChosenInDir);
                 sprintf(fileChosen, "/coleco/%s", fileChosenInDir);
                 if(status == RO_SUCCESS) {
                     const char *args[] = {
@@ -2561,7 +2327,7 @@ int main(void)
                 char *fileChosenInDir;
                 char fileChosen[512];
 
-                status = PromptUserToChooseFile("Choose an Apple ][ boot disk", "/floppies", CHOOSE_FILE_IGNORE_DOTFILES, NULL /* ".dsk" */, &fileChosenInDir);
+                status = RoPromptUserToChooseFile("Choose an Apple ][ boot disk", "/floppies", CHOOSE_FILE_IGNORE_DOTFILES, NULL /* ".dsk" */, &fileChosenInDir);
                 sprintf(fileChosen, "/floppies/%s", fileChosenInDir);
                 if(status == RO_SUCCESS) {
                     const char *args[] = {
@@ -2581,7 +2347,7 @@ int main(void)
         }
     }
 
-    int user1 = 0;
+    [[maybe_unused]] int user1 = 0;
     int user2 = 0;
     int user3 = 0;
 

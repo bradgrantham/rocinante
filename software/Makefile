@@ -152,6 +152,7 @@ CXX_SOURCES = \
 	rosa-kit/key-repeat.cpp \
 	rosa-kit/text-mode.cpp \
 	rosa-kit/8x16.cpp \
+	rosa-kit/ui.cpp \
 	rosa-apps/apple2e/apple2e.cpp \
 	rosa-apps/apple2e/dis6502.cpp \
 	rosa-apps/apple2e/interface_rosa.cpp \
