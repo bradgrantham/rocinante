@@ -232,6 +232,16 @@ void panic()
     }
 }
 
+void RoDelayMillis(uint32_t millis)
+{
+    HAL_Delay(millis);
+}
+
+uint32_t RoGetMillis()
+{
+    return HAL_GetTick();
+}
+
 void RoPanic()
 {
     panic();
