@@ -31,15 +31,6 @@ typedef enum Status {
 
 #define RO_FAILURE(status) ((status) < 0)
 
-/*! Set colors on the 3 RGB LEDs.
-    \param which Index of the LED to set; 0, 1, or 2.
-    \param red Red component, 0 to 255.
-    \param green Green component, 0 to 255.
-    \param blue Blue component, 0 to 255.
-    \return RO_SUCCESS, or INVALID_PARAMETER_VALUE for LED > 2
-*/
-int RoLEDSet(int which, uint8_t red, uint8_t green, uint8_t blue);
-
 /*! Add a line to the debug overlay.  The actual formatting function is vsnprintf.
     \param fmt The printf-style format.
     \param ... Arguments used in the format.
@@ -56,21 +47,8 @@ void RoDebugOverlaySetLine(int line, const char *str, size_t size);
 /*! Get stereo audio stream info.
     \param rate Populated with the sampling rate (samples per second).
     \param bufferLength Populated with the number of 2-byte (one byte each left and right) unsigned (0-255) samples in the buffer.
-    \param stereoBufferU8 Populated with the location of the buffer.
 */
-void RoAudioGetSamplingInfo(float *rate, size_t *chunkSize, uint8_t **stereoBufferU8);
-
-/*! Block until a half-buffer even boundary in the audio stream.  This function is useful for blocking until the system has just finished streaming samples within the half of the audio buffer starting at the return value.
-    \return Where application should now fill one half the buffer's worth of audio.
-*/
-size_t RoAudioBlockToHalfBuffer();
-
-/*! Write audio samples.  This function will copy a mono U8 buffer with half the samples reported by RoAudioGetSamplingInfo into the audio stream.
-    \param where Where to write samples (returned from RoAudioBlockToHalfBuffer).
-    \param monoBufferU8 The buffer of mono unsigned samples to write into the audio stream buffer.
-    \return INVALID_PARAMETER_VALUE if where was outside of the audio buffer
-*/
-Status RoAudioSetHalfBufferMonoSamples(size_t where, const uint8_t *monoBufferU8);
+void RoAudioGetSamplingInfo(float *rate, size_t *chunkSize);
 
 /*! Write audio samples.  Block until the write won't overlap the current audio read cursor
     \param writeSize Size of buffer in bytes.
@@ -82,8 +60,6 @@ size_t RoAudioEnqueueSamplesBlocking(size_t writeSize /* in bytes */, uint8_t* b
 /*! Clear the audio stream to silence
 */
 void RoAudioClear();
-
-void RoProcessYield(void);
 
 typedef enum RoControllerIndex { CONTROLLER_1, CONTROLLER_2 } RoControllerIndex;
 

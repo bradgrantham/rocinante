@@ -116,8 +116,7 @@ std::chrono::time_point<std::chrono::system_clock> start_of_frame;
 
 void Start(uint32_t& stereoU8SampleRate_, size_t& preferredAudioBufferSizeBytes_)
 {
-    uint8_t *audioBufferPtr; /* ignored */
-    RoAudioGetSamplingInfo(&audioSampleRate, &audioChunkLengthBytes, &audioBufferPtr);
+    RoAudioGetSamplingInfo(&audioSampleRate, &audioChunkLengthBytes);
     stereoU8SampleRate_ = audioSampleRate;
     preferredAudioBufferSizeBytes_ = audioChunkLengthBytes;
 

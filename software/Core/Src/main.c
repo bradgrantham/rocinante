@@ -824,12 +824,11 @@ volatile size_t audioReadNext = 0;
 volatile size_t audioWriteNext = AUDIO_CHUNK_SIZE * AUDIO_CHUNK_COUNT / 2;
 volatile size_t missedAudioSamples = 0;
 
-void RoAudioGetSamplingInfo(float *rate, size_t *recommendedChunkSize, uint8_t **stereoBufferU8)
+void RoAudioGetSamplingInfo(float *rate, size_t *recommendedChunkSize)
 {
-    // If NTSC line ISR is providing audio, we would have a sampling rate of 15.6998 KHz
+    // If NTSC line ISR is providing audio, we will have a sampling rate of 15.6998 KHz
     *rate = 15699.76074561403508;
     *recommendedChunkSize = AUDIO_CHUNK_SIZE;
-    *stereoBufferU8 = audioBuffer;
 }
 
 size_t WriteOverlapsRead(size_t audioWriteNext, size_t writeSize, size_t audioReadNext)
@@ -880,30 +879,6 @@ size_t RoAudioEnqueueSamplesBlocking(size_t writeSize /* in bytes */, uint8_t* b
     audioWriteNext = (audioWriteNext + writeSize) % AUDIO_BUFFER_SIZE;
 
     return waitSampleCount;
-}
-
-
-// I'd prefer an API where:
-//
-// 1) apps could allocate a real-time buffer that is composited with
-// other apps' buffers, at the system rate, and blocking would occur on
-// the buffer, or
-//
-// 2) apps could submit a one-time clip for play, and the system
-// would block until the clip is played.
-
-// Returns where one should write a half-buffer's worth of data to
-// stay ahead of the audio streamer
-size_t RoAudioBlockToHalfBuffer()
-{
-    RoDebugOverlayPrintf("Use of RoAudioBlockToHalfBuffer failed\n");
-    while(1);
-}
-
-Status RoAudioSetHalfBufferMonoSamples(size_t where, const uint8_t *monoBufferU8)
-{
-    RoDebugOverlayPrintf("Use of RoAudioSetHalfBufferMonoSamples failed\n");
-    while(1);
 }
 
 void RoAudioClear()
@@ -1257,14 +1232,16 @@ void DefaultFillRowBuffer(int frameIndex, int rowNumber, size_t maxSamples, uint
 typedef void (*NTSCModeFillRowBufferFunc)(int frameIndex, int rowNumber, size_t maxSamples, uint8_t* rowBuffer);
 typedef int (*NTSCModeNeedsColorburstFunc)();
 int NTSCModeFuncsValid = 0;
+int NTSCModeInterlaced = 1;
 NTSCModeFillRowBufferFunc NTSCModeFillRowBuffer = DefaultFillRowBuffer;
 NTSCModeNeedsColorburstFunc NTSCModeNeedsColorburst = DefaultNeedsColorburst;
 
-void NTSCSwitchModeFuncs(NTSCModeFillRowBufferFunc fillBufferFunc, NTSCModeNeedsColorburstFunc needsColorBurstFunc)
+void NTSCSetModeFuncs(int interlaced, NTSCModeFillRowBufferFunc fillBufferFunc, NTSCModeNeedsColorburstFunc needsColorBurstFunc)
 {
     NTSCModeFuncsValid = 0;
     NTSCModeNeedsColorburst = needsColorBurstFunc;
     NTSCModeFillRowBuffer = fillBufferFunc;
+    NTSCModeInterlaced = interlaced;
     NTSCModeFuncsValid = 1;
 }
 
@@ -2228,11 +2205,6 @@ void WozModeFillRowBuffer(int frameIndex, int rowNumber, size_t maxSamples, uint
     }
 }
 
-int AlwaysColorburst()
-{
-    return 1;
-}
-
 //----------------------------------------------------------------------------
 // Text Mode
 
@@ -2405,122 +2377,6 @@ int main_iterate(void)
     return 0;
 }
 
-void HGRModeTest()
-{
-    printf("HGR Mode Test\n");
-
-    memset(WozModeHGRBuffers, 0, sizeof(WozModeHGRBuffers));
-    WozModeDisplayMode = HIRES;
-    NTSCSwitchModeFuncs(WozModeFillRowBuffer, WozModeNeedsColorburst);
-
-    static int x = 140;
-    static int y = 96;
-
-    struct Event ev;
-    int done = 0;
-    int palette = 0x00;
-
-    KeyRepeatManager keyRepeat;
-
-    while(!done) {
-        int haveEvent = RoEventPoll(&ev);
-        
-        haveEvent = KeyRepeatUpdate(&keyRepeat, haveEvent, &ev);
-
-        if(haveEvent) {
-            int draw = 0;
-            int clear = 0;
-            switch(ev.eventType) {
-                case MOUSE_MOVE: {
-                    const struct MouseMoveEvent move = ev.u.mouseMove;
-                    x += move.x;
-                    y += move.y;
-                    draw = 1;
-                    break;
-                }
-                case MOUSE_BUTTONPRESS: {
-                    const struct ButtonPressEvent press = ev.u.buttonPress;
-                    if(press.button == 0) {
-                        clear = 1;
-                    } else {
-                        palette ^= 0x80;
-                    }
-                }
-                case KEYBOARD_RAW: {
-                    const struct KeyboardRawEvent raw = ev.u.keyboardRaw;
-                    if(raw.isPress) {
-
-                        if(raw.key == KEYCAP_UP) {
-                            y -= 1;
-                            draw = 1;
-                        } else if(raw.key == KEYCAP_DOWN) {
-                            y += 1;
-                            draw = 1;
-                        } else if(raw.key == KEYCAP_LEFT) {
-                            x -= 1;
-                            draw = 1;
-                        } else if(raw.key == KEYCAP_RIGHT) {
-                            x += 1;
-                            draw = 1;
-                        } else if(raw.key == KEYCAP_1_EXCLAMATION) {
-                            palette = 0x00;
-                            draw = 1;
-                        } else if(raw.key == KEYCAP_2_AT) {
-                            palette = 0x80;
-                            draw = 1;
-                        } else if(raw.key == KEYCAP_END) {
-                            clear = 1;
-                        }
-                    }
-                    break;
-                }
-                default:
-                    // pass;
-                    break;
-            }
-            if(draw) {
-                if((x >= 0) && (y >= 0) && (x < 280) && (y < 192)) {
-                    WozModeHGRBuffers[0][0][y * 40 + x / 7] |= (1 << (x % 7)) | palette;
-                }
-            } 
-            if(clear) {
-                memset(WozModeHGRBuffers, 0, sizeof(WozModeHGRBuffers));
-            }
-        }
-
-        main_iterate();
-    }
-}
-
-void TextModeTest()
-{
-    printf("Text Mode Text\n");
-
-    memset(WozModeTextBuffers, 248, sizeof(WozModeTextBuffers));
-    NTSCSwitchModeFuncs(WozModeFillRowBuffer, WozModeNeedsColorburst);
-    // fill with ONE TWO THREE FOUR over and over again
-
-    const char *str = "ONE TWO FREE FOUR ";
-    int stringIndex = 0;
-
-    char *buffer = malloc(sizeof(WozModeTextBuffers[0][0]) * 2);
-    for(size_t s = 0; s < sizeof(WozModeTextBuffers[0][0]) * 2; s++) {
-        buffer[s] = str[stringIndex];
-        stringIndex = (stringIndex + 1) % strlen(str);
-    }
-
-    int bufferIndex = 0;
-    while(1) {
-        memcpy(WozModeTextBuffers[0][0], buffer + bufferIndex, sizeof(WozModeTextBuffers[0][0]));
-        bufferIndex = (bufferIndex + 1) % sizeof(WozModeTextBuffers[0][0]);
-        char *foobar = malloc(bufferIndex * 667 % 513);
-        free(foobar);
-        main_iterate();
-    }
-}
-
-extern void enqueue_ascii(int s);
-
 //----------------------------------------------------------------------------
 
 int doCommandLS(int wordCount, char **words)
@@ -2548,86 +2404,6 @@ int doCommandLS(int wordCount, char **words)
     } else {
         printf("failed to f_opendir - %d\n", res);
     }
-    return 0;
-}
-
-//----------------------------------------------------------------------------
-
-extern int errno;
-
-int playAudio(int argc, const char **argv)
-{
-    float rate;
-    size_t chunkSize;
-    uint8_t *stereoBuffer;
-
-    RoAudioGetSamplingInfo(&rate, &chunkSize, &stereoBuffer);
-    size_t chunkMonoSamples = chunkSize / 2;
-    uint8_t *monoTrack = malloc(chunkMonoSamples);
-
-    const char *filename = argv[1];
-    FILE *fp = fopen (filename, "rb");
-    if(fp == NULL) {
-        printf("ERROR: couldn't open \"%s\" for reading, errno %d\n", filename, errno);
-        return 1;
-    }
-
-    size_t where;
-    size_t samplesRead = 0, total_samples = 0;
-    int quit = 0;
-    do {
-        // Wait for audio to get at least half a buffer past us
-        samplesRead = fread(monoTrack, 1, chunkMonoSamples, fp);
-        if(samplesRead < 1) {
-            printf("ERROR: couldn't read block of audio from \"%s\", read %d\n", filename, samplesRead);
-            return 1;
-        }
-        where = RoAudioBlockToHalfBuffer();
-        for(int i = 0; i < samplesRead; i++) {
-            int v = monoTrack[i];
-            audioBuffer[where + i * 2 + 0] = v; // 128 + (v - 128) * a;
-            audioBuffer[where + i * 2 + 1] = v; // 128 + (v - 128) * (1 - a);
-        }
-
-        Event ev;
-        int haveEvent = RoEventPoll(&ev);
-
-        if(haveEvent) {
-            switch(ev.eventType) {
-                case KEYBOARD_RAW: {
-                    const struct KeyboardRawEvent raw = ev.u.keyboardRaw;
-                    if(raw.isPress) {
-                        quit = 1;
-                    }
-                    break;
-                }
-                default:
-                    // pass;
-                    break;
-            }
-        }
-        main_iterate(); // XXX
-        total_samples += samplesRead;
-    } while(!quit && (samplesRead == chunkMonoSamples));
-
-    // fill any part not read from file to silence
-    for(int i = samplesRead; i < chunkMonoSamples; i++) {
-        audioBuffer[where + i * 2 + 0] = 128;
-        audioBuffer[where + i * 2 + 1] = 128;
-    }
-
-    // Wait until audio is playing our final half and clear the other half
-    where = RoAudioBlockToHalfBuffer();
-    memset(audioBuffer + where, 128, chunkSize);
-
-    // Wait until audio is done with our final half then clear it
-    where = RoAudioBlockToHalfBuffer();
-    memset(audioBuffer + where, 128, chunkSize);
-
-    free(monoTrack);
-
-    fclose(fp);
-
     return 0;
 }
 
@@ -2725,7 +2501,7 @@ void ShowListOfItems(const char *title, const char **items, size_t itemsSize, in
 void DisplayStringCentered(const char *message)
 {
     int w, h;
-    NTSCSwitchModeFuncs(TextModeFillRowBuffer, TextModeNeedsColorburst);
+    NTSCSetModeFuncs(1, TextModeFillRowBuffer, TextModeNeedsColorburst);
     TextModeGetSize(&w, &h);
     TextModeClearDisplay();
 
@@ -2758,7 +2534,7 @@ void DisplayStringAndWaitForEnter(const char *message)
 
 Status PromptUserToChooseFromList(const char *title, const char **items, size_t itemCount, int *itemChosen)
 {
-    NTSCSwitchModeFuncs(TextModeFillRowBuffer, TextModeNeedsColorburst);
+    NTSCSetModeFuncs(1, TextModeFillRowBuffer, TextModeNeedsColorburst);
 
     int whichItemAtTop = 0;
     int whichItemSelected = 0;
@@ -3475,20 +3251,6 @@ int main(void)
         startNTSCScanout();
     }
 
-    if(0) TextModeTest();
-
-    if(0) HGRModeTest();
-
-    if(0) {
-        const char *args[] = {
-            "play",
-            "inside-out.u8",
-            // "deeper_understanding.u8",
-        };
-        playAudio(sizeof(args) / sizeof(args[0]), args);
-    }
-
-
     if(0) {
         TestControllers();
     }
@@ -3557,7 +3319,7 @@ int main(void)
                         const uint8_t *c = TMS9918ColorsInRGB[i];
                         Pixmap256_192_4b_SetPaletteEntry(i, c[0], c[1], c[2]);
                     }
-                    NTSCSwitchModeFuncs(Pixmap256_192_4b_ModeFillRowBuffer, DefaultNeedsColorburst);
+                    NTSCSetModeFuncs(1, Pixmap256_192_4b_ModeFillRowBuffer, DefaultNeedsColorburst);
                     coleco_main(sizeof(args) / sizeof(args[0]), args); /* doesn't return */
                 }
                 break;
@@ -3579,47 +3341,7 @@ int main(void)
                         "-diskII", "diskII.c600.c6ff.bin", fileChosen, "none",
                         "apple2e.rom",
                     };
-                    NTSCSwitchModeFuncs(WozModeFillRowBuffer, WozModeNeedsColorburst);
-                    const char* programString = R"(
-10  HGR : POKE  - 16302,0
-11 MX = 280
-12 MY = 192
-20  FOR X = 0 TO MX - 1
-30 CX = X / MX * 3 - 2
-40  FOR Y = 0 TO MY / 2 - 1
-50 CY = Y / MY * 3 - 1.5
-60 C = 0
-70 XX = 0:YY = 0
-80  IF XX * XX + YY * YY > 4 OR C > 15 THEN 200
-90 OX = XX
-100 XX = XX * XX - YY * YY + CX
-110 YY = 2 * OX * YY + CY
-120 C = C + 1
-130  GOTO 80
-200  IF C > 7 THEN C = C - 8: GOTO 200
-205  HCOLOR= C
-210  HPLOT X,Y
-215  HPLOT X,MY - 1 - Y
-220  NEXT Y
-230  NEXT X
-REM 5 FOR X = 1 TO 100 : PRINT X : NEXT X
-REM 5 GOTO 5
-REM 6 END
-RUN
-)";
-#if 0
-                    programString = R"(
-CALL -151
-70: 2C 50 C0 2C 52 C0 20 70 FC A9 FF 91 2A 88 10 FB A9 16 85 25 20 22 FC A0 27 68 F0 05 0A F0 04 90 02 49 1D 48 30 09 B1 28 29 07 AA B5 A8 91 28 88 10 E7 C6 25 10 DE 30 CE 00 BB 00 AA 00 99 00 DD
-70G
-)";
-#endif
-                    if(0) {
-                        for(size_t s = 0; s < strlen(programString); s++) {
-                            enqueue_ascii(programString[s]);
-                        }
-                    }
-
+                    NTSCSetModeFuncs(1, WozModeFillRowBuffer, WozModeNeedsColorburst);
                     apple2_main(sizeof(args) / sizeof(args[0]), args); /* doesn't return */
 
                 } else {

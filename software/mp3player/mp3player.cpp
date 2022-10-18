@@ -212,8 +212,7 @@ int main(int argc, char **argv)
     uint32_t prevTick;
     prevTick = HAL_GetTick();
 
-    uint8_t *audioBufferPtr; /* ignored */
-    RoAudioGetSamplingInfo(&audioSampleRate, &audioChunkLengthBytes, &audioBufferPtr);
+    RoAudioGetSamplingInfo(&audioSampleRate, &audioChunkLengthBytes);
     rate = trunc(audioSampleRate + 0.5f);
 
 #endif

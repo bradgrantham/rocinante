@@ -82,8 +82,7 @@ tuple<float,bool> get_paddle(int num)
 
 void start(bool run_fast, bool add_floppies, bool floppy0_inserted, bool floppy1_inserted)
 {
-    uint8_t *audioBufferPtr; /* ignored */
-    RoAudioGetSamplingInfo(&audioSampleRate, &audioChunkLengthBytes, &audioBufferPtr);
+    RoAudioGetSamplingInfo(&audioSampleRate, &audioChunkLengthBytes);
     // audioBuffer = new uint8_t[audioBufferLength];
     // audioBufferCurrent = 0;
     event_queue.push_back({KEYDOWN, CAPS_LOCK});
@@ -445,9 +444,9 @@ bool write(uint16_t addr, bool aux, uint8_t data)
 void show_floppy_activity(int number, bool activity)
 {
     if(activity) {
-        RoLEDSet(1 + number, 255, 0, 0);
+        // RoLEDSet(1 + number, 255, 0, 0);
     } else {
-        RoLEDSet(1 + number, 0, 0, 0);
+        // RoLEDSet(1 + number, 0, 0, 0);
     }
 }
 
