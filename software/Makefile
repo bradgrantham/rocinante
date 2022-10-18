@@ -39,7 +39,7 @@ BUILD_DIR = build
 C_SOURCES =  \
 syscalls.c \
 picture.c \
-coleco/z80emu.c \
+rosa-apps/coleco/z80emu.c \
 Core/Src/main.c \
 Core/Src/stm32h7xx_it.c \
 Core/Src/stm32h7xx_hal_msp.c \
@@ -216,9 +216,10 @@ C_DEFS =  \
 AS_INCLUDES = 
 
 # C includes
+# -Irosa-apps/coleco \
+
 C_INCLUDES =  \
 -I. \
--Icoleco \
 -ICore/Inc \
 -IDrivers/STM32H7xx_HAL_Driver/Inc \
 -IDrivers/STM32H7xx_HAL_Driver/Inc/Legacy \
