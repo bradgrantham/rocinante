@@ -49,7 +49,7 @@ caddr_t _sbrk(int incr)
 	{
             static const char failed[] = "sbrk() failed!";
             RoDebugOverlaySetLine(9, failed, sizeof(failed));
-            panic();
+            RoPanic();
 //		write(1, "Heap and stack collision\n", 25);
 //		abort();
 		errno = ENOMEM;

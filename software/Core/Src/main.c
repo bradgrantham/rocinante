@@ -32,9 +32,10 @@
 #include <stdio.h>
 #include <stdarg.h>
 
-#include "rocinante.h" // XXX Should not include, should be target API
-#include "hid.h" // XXX Should not include, should be target API
-#include "events.h" // XXX Should Not Include, should be target API
+#include "rocinante.h"
+#include "hid.h"
+#include "events.h"
+#include "ntsc-constants.h"
 
 /* USER CODE END Includes */
 
@@ -227,6 +228,11 @@ void panic()
         HAL_Delay(200);
         HAL_GPIO_WritePin(DEBUG_LED_GPIO_Port, DEBUG_LED_Pin, GPIO_PIN_RESET);
     }
+}
+
+void RoPanic()
+{
+    panic();
 }
 
 char sprintfBuffer[512];
@@ -899,39 +905,6 @@ void AudioStart()
 // NTSC output
 
 //----------------------------------------------------------------------------
-// DAC
-
-#define DAC_VALUE_LIMIT 0xFF
-
-#define MAX_DAC_VOLTAGE 1.32f
-#define MAX_DAC_VOLTAGE_F16 (132 * 65536 / 100)
-
-#define INLINE 
-//inline
-
-INLINE unsigned char voltageToDACValue(float voltage)
-{
-    if(voltage < 0.0f) {
-        return 0x0;
-    }
-    uint32_t value = (uint32_t)(voltage / MAX_DAC_VOLTAGE * 255);
-    if(value >= DAC_VALUE_LIMIT) {
-        return DAC_VALUE_LIMIT;
-    }
-    return value;
-}
-
-INLINE unsigned char voltageToDACValueNoBounds(float voltage)
-{
-    return (uint32_t)(voltage / MAX_DAC_VOLTAGE * 255);
-}
-
-INLINE int voltageToDACValueFixed16NoBounds(int voltage)
-{
-    return (uint32_t)(voltage * 65535 / MAX_DAC_VOLTAGE_F16) * 256;
-}
-
-//----------------------------------------------------------------------------
 // VGA timing 
 
 #if 0 // 800x600
@@ -979,122 +952,6 @@ INLINE int voltageToDACValueFixed16NoBounds(int voltage)
 #define VGA_TOTAL_ROWS          (VGA_VSYNC_BACK_PORCH + VGA_TOP_BORDER_ROWS + VGA_VISIBLE_ROWS + VGA_BOTTOM_BORDER_ROWS + VGA_VSYNC_FRONT_PORCH + VGA_VSYNC_ROWS)
 
 
-//----------------------------------------------------------------------------
-// NTSC timing and voltage levels
-
-#define NTSC_COLORBURST_FREQUENCY       3579545
-
-// Number of samples we target; if we're doing 4x colorburst at 228 cycles, that's 912 samples at 14.318180MHz
-
-#define ROW_SAMPLES        912
-#define NTSC_EQPULSE_LINES	3
-#define NTSC_VSYNC_LINES	3
-#define NTSC_VBLANK_LINES	11
-#define NTSC_FRAME_LINES	525
-
-/* these are in units of one scanline */
-#define NTSC_EQ_PULSE_INTERVAL	.04
-#define NTSC_VSYNC_BLANK_INTERVAL	.43
-#define NTSC_HOR_SYNC_DUR	.075
-#define NTSC_FRONTPORCH		.02
-/* BACKPORCH including COLORBURST */
-#define NTSC_BACKPORCH		.075
-
-#define NTSC_COLORBURST_CYCLES  9
-
-#define NTSC_FRAMES		(59.94 / 2)
-
-#define NTSC_SYNC_TIP_VOLTAGE   0.0f
-#define NTSC_SYNC_PORCH_VOLTAGE   .285f
-#define NTSC_SYNC_BLACK_VOLTAGE   .339f
-#define NTSC_SYNC_WHITE_VOLTAGE   1.0f  /* VCR had .912v */
-
-#define NTSC_SYNC_BLACK_VOLTAGE_F16   22217
-#define NTSC_SYNC_WHITE_VOLTAGE_F16   65536
-
-typedef uint32_t ntsc_wave_t;
-
-INLINE unsigned char NTSCYIQToDAC(float y, float i, float q, float tcycles)
-{
-// This is transcribed from the NTSC spec, double-checked.
-    float w_t = tcycles * M_PI * 2;
-    float sine = sinf(w_t + 33.0f / 180.0f * M_PI);
-    float cosine = cosf(w_t + 33.0f / 180.0f * M_PI);
-    float signal = y + q * sine + i * cosine;
-// end of transcription
-
-    return voltageToDACValue(NTSC_SYNC_BLACK_VOLTAGE + signal * (NTSC_SYNC_WHITE_VOLTAGE - NTSC_SYNC_BLACK_VOLTAGE));
-}
-
-INLINE unsigned char NTSCYIQDegreesToDAC(float y, float i, float q, int degrees)
-{
-    float sine, cosine;
-    if(degrees == 0) {
-        sine = 0.544638f;
-        cosine = 0.838670f;
-    } else if(degrees == 90) {
-        sine = 0.838670f;
-        cosine = -0.544638f;
-    } else if(degrees == 180) {
-        sine = -0.544638f;
-        cosine = -0.838670f;
-    } else if(degrees == 270) {
-        sine = -0.838670f;
-        cosine = 0.544638f;
-    } else {
-        sine = 0;
-        cosine = 0;
-    }
-    float signal = y + q * sine + i * cosine;
-
-    return voltageToDACValueNoBounds(NTSC_SYNC_BLACK_VOLTAGE + signal * (NTSC_SYNC_WHITE_VOLTAGE - NTSC_SYNC_BLACK_VOLTAGE));
-}
-
-INLINE ntsc_wave_t NTSCYIQToWave(float y, float i, float q)
-{
-    unsigned char b0 = NTSCYIQToDAC(y, i, q,  .0f);
-    unsigned char b1 = NTSCYIQToDAC(y, i, q, .25f);
-    unsigned char b2 = NTSCYIQToDAC(y, i, q, .50f);
-    unsigned char b3 = NTSCYIQToDAC(y, i, q, .75f);
-
-    return (b0 << 0) | (b1 << 8) | (b2 << 16) | (b3 << 24);
-}
-
-// This is transcribed from the NTSC spec, double-checked.
-INLINE void RGBToYIQ(float r, float g, float b, float *y, float *i, float *q)
-{
-    *y = .30f * r + .59f * g + .11f * b;
-    *i = -.27f * (b - *y) + .74f * (r - *y);
-    *q = .41f * (b - *y) + .48f * (r - *y);
-}
-
-// Alternatively, a 3x3 matrix transforming [r g b] to [y i q] is:
-// (untested - computed from equation above)
-// 0.300000 0.590000 0.110000
-// 0.599000 -0.277300 -0.321700
-// 0.213000 -0.525100 0.312100
-
-// A 3x3 matrix transforming [y i q] back to [r g b] is:
-// (untested - inverse of 3x3 matrix above)
-// 1.000000 0.946882 0.623557
-// 1.000000 -0.274788 -0.635691
-// 1.000000 -1.108545 1.709007
-
-// Using inverse 3x3 matrix above.  Tested numerically to be the inverse of RGBToYIQ
-INLINE void YIQToRGB(float y, float i, float q, float *r, float *g, float *b)
-{
-    *r = 1.0f * y + .946882f * i + 0.623557f * q;
-    *g = 1.000000f * y + -0.274788f * i + -0.635691f * q;
-    *b = 1.000000f * y + -1.108545f * i + 1.709007f * q;
-}
-
-INLINE ntsc_wave_t NTSCRGBToWave(float r, float g, float b)
-{
-    float y, i, q;
-    RGBToYIQ(r, g, b, &y, &i, &q);
-    return NTSCYIQToWave(y, i, q);
-}
-
 #define SECTION_CCMRAM
 
 // These should be in CCM to reduce contention with SRAM1 during DMA 
@@ -1137,10 +994,10 @@ void NTSCCalculateParameters()
     NTSCEqPulseClocks = NTSCLineClocks * NTSC_EQ_PULSE_INTERVAL;
     NTSCVSyncClocks = NTSCLineClocks * NTSC_VSYNC_BLANK_INTERVAL;
 
-    NTSCSyncTip = voltageToDACValue(NTSC_SYNC_TIP_VOLTAGE);
-    NTSCSyncPorch = voltageToDACValue(NTSC_SYNC_PORCH_VOLTAGE);
-    NTSCBlack = voltageToDACValue(NTSC_SYNC_BLACK_VOLTAGE);
-    NTSCWhite = voltageToDACValue(NTSC_SYNC_WHITE_VOLTAGE);
+    NTSCSyncTip = RoDACVoltageToValue(NTSC_SYNC_TIP_VOLTAGE);
+    NTSCSyncPorch = RoDACVoltageToValue(NTSC_SYNC_PORCH_VOLTAGE);
+    NTSCBlack = RoDACVoltageToValue(NTSC_SYNC_BLACK_VOLTAGE);
+    NTSCWhite = RoDACVoltageToValue(NTSC_SYNC_WHITE_VOLTAGE);
 
     // Calculate the four values for the colorburst that we'll repeat to make a wave
     // The waveform is defined as sine in the FCC broadcast doc, but for
@@ -1237,10 +1094,10 @@ void DefaultFillRowBuffer(int frameIndex, int rowNumber, size_t maxSamples, uint
 
 int NTSCModeFuncsValid = 0;
 int NTSCModeInterlaced = 1;
-NTSCModeFillRowBufferFunc NTSCModeFillRowBuffer = DefaultFillRowBuffer;
-NTSCModeNeedsColorburstFunc NTSCModeNeedsColorburst = DefaultNeedsColorburst;
+RoNTSCModeFillRowBufferFunc NTSCModeFillRowBuffer = DefaultFillRowBuffer;
+RoNTSCModeNeedsColorburstFunc NTSCModeNeedsColorburst = DefaultNeedsColorburst;
 
-void RoNTSCSetMode(int interlaced, NTSCModeFillRowBufferFunc fillBufferFunc, NTSCModeNeedsColorburstFunc needsColorBurstFunc)
+void RoNTSCSetMode(int interlaced, RoNTSCModeFillRowBufferFunc fillBufferFunc, RoNTSCModeNeedsColorburstFunc needsColorBurstFunc)
 {
     NTSCModeFuncsValid = 0;
     NTSCModeNeedsColorburst = needsColorBurstFunc;
@@ -1494,7 +1351,7 @@ int why = 0;
 
 enum DisplayMode { DISPLAY_MODE_NONE, DISPLAY_MODE_NTSC, DISPLAY_MODE_VGA } currentDisplayMode = DISPLAY_MODE_NONE;
 
-void NTSCWaitFrame()
+void RoNTSCWaitFrame()
 {
     // NTSC won't actually go lineNumber >= 525...
     int field0_vblank;
@@ -1694,82 +1551,6 @@ void startNTSCScanout()
     if(status != HAL_OK){
         printf("DMA error %08d, error code %08lX, line %d\n", status, hdma_tim1_ch2.ErrorCode, why);
         panic();
-    }
-}
-
-//----------------------------------------------------------------------------
-// 4-bit 256x192 pixmap mode, can support rasterized TMS9918 screen
-
-/* actually 682.6_ 14MHz clocks because 5.3MHz TMS9918A pixel clock */
-/* so the last pixel is extended another 1/3 to fill last clock */
-#define Pixmap256_192_4b_MODE_WIDTH 683
-#define Pixmap256_192_4b_MODE_LEFT ((704 - Pixmap256_192_4b_MODE_WIDTH) / 2) 
-#define Pixmap256_192_4b_MODE_TOP 65 
-#define Pixmap256_192_4b_MODE_HEIGHT 192 
-
-uint8_t Pixmap256_192_4b_Framebuffer[256 / 2 * 192];
-
-uint8_t Pixmap256_192_4b_ColorsToNTSC[16][4];
-
-// XXX TODO: convert original patent waveforms into YIQ
-// May not be able to get the real YIQ values because resistor
-// values are not listed in patent
-void Pixmap256_192_4b_SetPaletteEntry(int color, uint8_t r, uint8_t g, uint8_t b)
-{
-    float y, i, q;
-    RGBToYIQ(r / 255.0f, g / 255.0f, b / 255.0f, &y, &i, &q);
-
-    Pixmap256_192_4b_ColorsToNTSC[color][0] = NTSCYIQToDAC(y, i, q,  .0f);
-    Pixmap256_192_4b_ColorsToNTSC[color][1] = NTSCYIQToDAC(y, i, q, .25f);
-    Pixmap256_192_4b_ColorsToNTSC[color][2] = NTSCYIQToDAC(y, i, q, .50f);
-    Pixmap256_192_4b_ColorsToNTSC[color][3] = NTSCYIQToDAC(y, i, q, .75f);
-}
-
-uint8_t Pixmap256_192_4b_GetColorIndex(int x, uint8_t *rowColors)
-{
-    if((x & 0b1) == 0) {
-        return rowColors[x / 2] & 0xF;
-    } else {
-        return (rowColors[x / 2] & 0xF0) >> 4;
-    }
-}
-
-__attribute__((hot,flatten)) void Pixmap256_192_4b_ModeFillRowBuffer(int frameIndex, int rowNumber, size_t maxSamples, uint8_t* rowBuffer)
-{
-    int rowIndex = (rowNumber - Pixmap256_192_4b_MODE_TOP) / 2;
-    if((rowIndex >= 0) && (rowIndex < 192)) {
-        uint8_t* rowColors = Pixmap256_192_4b_Framebuffer + rowIndex * 128;
-
-        // convert rowColors to NTSC waveform into rowDst 2 2/3 samples at a time.  8-|
-        uint16_t index = Pixmap256_192_4b_MODE_LEFT;
-
-        for(int i = 0; i < 255; i += 3) {
-            // First color covers 2 and 2/3 of a pixel
-            uint8_t *color = Pixmap256_192_4b_ColorsToNTSC[Pixmap256_192_4b_GetColorIndex(i, rowColors)];
-            rowBuffer[index + 0] = color[(index + 0) % 4];
-            rowBuffer[index + 1] = color[(index + 1) % 4];
-            uint8_t carry_over = color[(index + 2) % 4];
-
-            // second color covers 1/3, 2, and 1/3 of a pixel
-            color = Pixmap256_192_4b_ColorsToNTSC[Pixmap256_192_4b_GetColorIndex(i + 1, rowColors)];
-            rowBuffer[index + 2] = (carry_over * 6 + color[(index + 2) % 4] * 3) / 9;
-            rowBuffer[index + 3] = color[(index + 3) % 4];
-            rowBuffer[index + 4] = color[(index + 4) % 4];
-            carry_over = color[(index + 5) % 4];
-
-            // third color covers 2/3 and 2 pixels
-            color = Pixmap256_192_4b_ColorsToNTSC[Pixmap256_192_4b_GetColorIndex(i + 2, rowColors)];
-            rowBuffer[index + 5] = (carry_over * 3 + color[(index + 5) % 4] * 6) / 9;
-            rowBuffer[index + 6] = color[(index + 6) % 4];
-            rowBuffer[index + 7] = color[(index + 7) % 4];
-
-            index += 8;
-        }
-        // And last pixel is special case
-        uint8_t *color = Pixmap256_192_4b_ColorsToNTSC[Pixmap256_192_4b_GetColorIndex(255, rowColors)];
-        rowBuffer[index + 0] = color[(index + 0) % 4];
-        rowBuffer[index + 1] = color[(index + 1) % 4];
-        rowBuffer[index + 2] = color[(index + 2) % 4];
     }
 }
 
@@ -2841,25 +2622,6 @@ int main(void)
             }
 
             case 1: {
-                static const uint8_t TMS9918ColorsInRGB[16][3] = {
-                    {0, 0, 0}, /* if BACKDROP is 0, supply black */
-                    {0, 0, 0},
-                    {35, 203, 50},
-                    {96, 221, 108},
-                    {84, 78, 255},
-                    {125, 112, 255},
-                    {210, 84, 66},
-                    {69, 232, 255},
-                    {250, 89, 72},
-                    {255, 124, 108},
-                    {211, 198, 60},
-                    {229, 210, 109},
-                    {35, 178, 44},
-                    {200, 90, 198},
-                    {204, 204, 204},
-                    {255, 255, 255},
-                };
-
                 Status status;
                 char *fileChosenInDir;
                 char fileChosen[512];
@@ -2872,11 +2634,6 @@ int main(void)
                         "coleco/COLECO.ROM",
                         fileChosen,
                     };
-                    for(int i = 0; i < 16; i++) {
-                        const uint8_t *c = TMS9918ColorsInRGB[i];
-                        Pixmap256_192_4b_SetPaletteEntry(i, c[0], c[1], c[2]);
-                    }
-                    RoNTSCSetMode(0, Pixmap256_192_4b_ModeFillRowBuffer, DefaultNeedsColorburst);
                     coleco_main(sizeof(args) / sizeof(args[0]), args); /* doesn't return */
                 }
                 break;
