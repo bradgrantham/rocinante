@@ -970,11 +970,6 @@ unsigned char NTSCColorburst90;
 unsigned char NTSCColorburst180;
 unsigned char NTSCColorburst270;
 
-void RoNTSCGetValueRange(unsigned char *black, unsigned char *white)
-{
-    *black = NTSCBlack;
-    *white = NTSCWhite;
-}
 
 void NTSCCalculateParameters()
 {
@@ -1090,13 +1085,19 @@ int NTSCModeInterlaced = 1;
 RoNTSCModeFillRowBufferFunc NTSCModeFillRowBuffer = DefaultFillRowBuffer;
 RoNTSCModeNeedsColorburstFunc NTSCModeNeedsColorburst = DefaultNeedsColorburst;
 
-void RoNTSCSetMode(int interlaced, RoNTSCModeFillRowBufferFunc fillBufferFunc, RoNTSCModeNeedsColorburstFunc needsColorBurstFunc)
+void RoNTSCSetMode(int interlaced, RoNTSCModeFillRowBufferFunc fillBufferFunc, RoNTSCModeNeedsColorburstFunc needsColorBurstFunc, unsigned char *black, unsigned char *white)
 {
     NTSCModeFuncsValid = 0;
     NTSCModeNeedsColorburst = needsColorBurstFunc;
     NTSCModeFillRowBuffer = fillBufferFunc;
     NTSCModeInterlaced = interlaced;
     NTSCModeFuncsValid = 1;
+    if(black != NULL) {
+        *black = NTSCBlack;
+    }
+    if(white != NULL) {
+        *white = NTSCWhite;
+    }
 }
 
 // NTSC interlaced is made up of "odd" and "even" fields.  For NTSC, the first field is
