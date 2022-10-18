@@ -2274,6 +2274,7 @@ int main(void)
     }
 
     while(1) {
+        RoTextMode();
         const char* applications[] = {"MP3 Player", "Colecovision Emulator", "Apple //e Emulator"};
         int whichApplication;
         Status result = RoPromptUserToChooseFromList("Choose an application", applications, 3, &whichApplication);
@@ -2289,7 +2290,6 @@ int main(void)
                 char *fileChosenInDir;
                 char fileChosen[512];
 
-                RoTextMode();
                 status = RoPromptUserToChooseFile("Choose an MP3 File", "/", CHOOSE_FILE_IGNORE_DOTFILES, ".mp3", &fileChosenInDir);
                 sprintf(fileChosen, "/%s", fileChosenInDir);
                 if(status == RO_SUCCESS) {
