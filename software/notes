@@ -1,7 +1,70 @@
+RoExec simple recursive lookup and call - try to make adaptable to task-switched loader later
+    mark what files, video modes, etc are open
+    close files, pop video modes, etc when child returns / exits
+
+Video
+    Could interface be SDL-compatible?
+        windowing
+        audio
+        keyboard and mouse
+        need to do an experiment maybe
+    New thingy
+        C++ constructor loads a "video mode"
+        All of RAM2 is available to video modes - faster?
+        fopen / ioctl style somehow?
+            no newlib ioctl - implement ioctl yourself
+        what is the point of an API in this case?
+            app needs to specify mode, provide framebuffer contents, change palette
+            slightly less awkward to call function than to set array directly?
+            there's no real enumeration to do or changeable resolutions or aspect
+                except for RGB/palettized mode
+        result = Video::Open(enum mode, Video::Context* &context);
+            hardcoded
+            reinterpret_cast<Pixmap256x192x4bit::Context>(context);
+    current modes
+        PIXMAP_256_192_4 256x192x4bit (TMS9918A) 
+            colorburst
+            256 * 192 / 2 bytes and 16-entry palette
+            potentially single-field
+            proposed Pixmap256x192x4bit
+                setPaletteEntry(uint8_t color, uint8_t r, uint8_t g, uint8_t b);
+                setRowColors(int row, uint8_t row_colors[256]); // 4 bits padded with high nybble 0
+                setColor(int col, int row, uint8_t color);
+        WOZ mode
+            may do colorburst or not
+            {Main,Aux} x {Page1,Page2} x 7680 hires
+            {Main,Aux} x {Page1,Page2} x 960 text
+            and flags for setting modes
+            potentially single-field
+        Low-res Text mode
+            monochrome
+            595 * 208 bytes (35x13 text)
+            potentially single-field
+    desirable future modes
+        640*400 pure YUV signal - can 4-bit work?
+            640*400*4bit = 128K, would fit in D2; even overscan
+            704*460*4bit = 158+1/4K (overscan from firmware.old)
+            slideshow
+        "Text80x24" 80x24 text mode
+            CP/M
+            monochrome, potentially single-field
+        Pixmap128x64x8bit 128*64 8-bit palettized
+            CHIP-8, XO-Chip
+        Channel F - ?
+        TIA mode
+            Atari 2600
+            potentially single-field
+        X*Y 8-bit palettized color
+            interlaced on NTSC
+            640*400 - 256000 bytes would fit in currently unused 288K D2 RAM
+            use for graphical menu
+    possible future modes
+        X*Y*8bit grayscale
+        X*Y*R5G6B5 (1024x768 would be 1.5MB so definitely needs SDRAM)
+            need to query resolution, aspect ratio
+
 Coleco
-    Need to have out-of-scan 5S and C flag calculation according to sprite settings
-    audio is too slow?
-    audio in Smurf is wrong after jump
+    audio in Smurf is wrong after jumping?
 
 Weird USB fail
     works if FRACTAL.A is running *if* I'm using read_regions, write_regions, and repage_regions
