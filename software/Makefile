@@ -149,13 +149,13 @@ Middlewares/Third_Party/LibJPEG/source/jmemnobs.c
 CXX_SOURCES = \
 	events.cpp \
 	hid.cpp \
-	apple2e.cpp \
-	dis6502.cpp \
-	interface_rosa.cpp \
-	coleco/tms9918.cpp \
-	coleco/emulator.cpp \
-	coleco/coleco_platform_rosa.cpp \
-        mp3player/mp3player.cpp \
+	rosa-apps/apple2e/apple2e.cpp \
+	rosa-apps/apple2e/dis6502.cpp \
+	rosa-apps/apple2e/interface_rosa.cpp \
+	rosa-apps/coleco/tms9918.cpp \
+	rosa-apps/coleco/emulator.cpp \
+	rosa-apps/coleco/coleco_platform_rosa.cpp \
+        rosa-apps/mp3player/mp3player.cpp \
         $(NULL)
 
 
