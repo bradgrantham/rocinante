@@ -1850,7 +1850,7 @@ void DisplayStringAndWaitForEnter(const char *message)
     DisplayStringCentered(message);
     int done = 0;
     while(!done) {
-        Event ev;
+        RoEvent ev;
         int haveEvent = RoEventPoll(&ev);
         
         if(haveEvent) {
@@ -1879,7 +1879,7 @@ Status PromptUserToChooseFromList(const char *title, const char **items, size_t 
     int redraw = 1;
     Status status = RO_SUCCESS;
 
-    KeyRepeatManager keyRepeat;
+    RoKeyRepeatManager keyRepeat;
     uint8_t wasPressed = 0;
     uint32_t debounceStart = 0;
 
@@ -1916,10 +1916,10 @@ Status PromptUserToChooseFromList(const char *title, const char **items, size_t 
             wasPressed = 0;
         }
 
-        Event ev;
+        RoEvent ev;
         int haveEvent = RoEventPoll(&ev);
 
-        haveEvent = KeyRepeatUpdate(&keyRepeat, haveEvent, &ev);
+        haveEvent = RoKeyRepeatUpdate(&keyRepeat, haveEvent, &ev);
 
         if(haveEvent) {
             switch(ev.eventType) {

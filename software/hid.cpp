@@ -40,13 +40,13 @@ void ConvertUSBModifiersToKeyEvent(int modifiers[8])
         if(modifiers[i] && !oldModifiers.test(i)) {
 
             int key = KeyModifierToKey.at(i);
-            Event e{ Event::KEYBOARD_RAW }; e.u.keyboardRaw = { 1, key };
+            RoEvent e{ RoEvent::KEYBOARD_RAW }; e.u.keyboardRaw = { 1, key };
             SystemEventEnqueue(e);
 
         } else if(!modifiers[i] && oldModifiers.test(i)) {
 
             int key = KeyModifierToKey.at(i);
-            Event e{ Event::KEYBOARD_RAW }; e.u.keyboardRaw = { 0, key };
+            RoEvent e{ RoEvent::KEYBOARD_RAW }; e.u.keyboardRaw = { 0, key };
             SystemEventEnqueue(e);
         }
 
@@ -70,13 +70,13 @@ void ConvertUSBKeysToKeyEvent(int keys[6])
 
         if((keys[i] != 0) && !oldKeyStatus.test(keys[i])) {
             // if a key is reported as pressed but wasn't before,
-            Event e { Event::KEYBOARD_RAW }; e.u.keyboardRaw = {1, keys[i] };
+            RoEvent e { RoEvent::KEYBOARD_RAW }; e.u.keyboardRaw = {1, keys[i] };
             SystemEventEnqueue(e);
         }
 
         if((oldKeys[i] != 0) && !newKeyStatus.test(oldKeys[i])) {
             // if a key was reported as pressed before but isn't any longer,
-            Event e { Event::KEYBOARD_RAW }; e.u.keyboardRaw = {0, oldKeys[i] };
+            RoEvent e { RoEvent::KEYBOARD_RAW }; e.u.keyboardRaw = {0, oldKeys[i] };
             SystemEventEnqueue(e);
         }
 
@@ -88,9 +88,9 @@ void ConvertUSBKeysToKeyEvent(int keys[6])
 
 void ConvertConsoleButtonPressToEvent(int button)
 {
-    Event e;
+    RoEvent e;
     e.u.buttonPress.button = button;
-    e.eventType = Event::CONSOLE_BUTTONPRESS;
+    e.eventType = RoEvent::CONSOLE_BUTTONPRESS;
     ConsoleEventEnqueue(e);
 }
 
@@ -98,16 +98,16 @@ void ConvertUSBMouseToMouseEvent(int dx, int dy, int buttons[3])
 {
     static std::array<int, 3> oldButtons = {0};
     if((dx != 0) && (dy != 0)) {
-        Event e { Event::MOUSE_MOVE }; e.u.mouseMove = { dx, dy };
+        RoEvent e { RoEvent::MOUSE_MOVE }; e.u.mouseMove = { dx, dy };
         SystemEventEnqueue(e);
     } else {
         for(int i = 0; i < 3; i++) {
             if(buttons[i] != oldButtons[i]) {
                 if(buttons[i]) {
-                    Event e { Event::MOUSE_BUTTONPRESS }; e.u.buttonPress.button = i;
+                    RoEvent e { RoEvent::MOUSE_BUTTONPRESS }; e.u.buttonPress.button = i;
                     SystemEventEnqueue(e);
                 } else {
-                    Event e { Event::MOUSE_BUTTONRELEASE }; e.u.buttonRelease.button = i;
+                    RoEvent e { RoEvent::MOUSE_BUTTONRELEASE }; e.u.buttonRelease.button = i;
                     SystemEventEnqueue(e);
                 }
             }

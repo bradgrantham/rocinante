@@ -43,7 +43,7 @@ struct ProcessEventQueue
 {
     int processId = -1;
     bool eventsLost = false;
-    StaticQueue<Event, 16> eventQueue;
+    StaticQueue<RoEvent, 16> eventQueue;
 };
 
 constexpr int MaxProcesses = 8;
@@ -51,7 +51,7 @@ constexpr int MaxProcesses = 8;
 // Events detected in scanout line ISR, e.g. three console buttons
 ProcessEventQueue gConsoleEventQueue;
 
-void ConsoleEventEnqueue(const Event& ev)
+void ConsoleEventEnqueue(const RoEvent& ev)
 {
     if(gConsoleEventQueue.eventQueue.isFull()) {
         gConsoleEventQueue.eventsLost = true;
@@ -62,7 +62,7 @@ void ConsoleEventEnqueue(const Event& ev)
 
 std::array<ProcessEventQueue,MaxProcesses> gEventsByProcess = { {0, false, {} } };
 
-static void enqueueOrSetEventsLost(int processId, const Event& ev)
+static void enqueueOrSetEventsLost(int processId, const RoEvent& ev)
 {
     auto found = std::find_if(gEventsByProcess.begin(), gEventsByProcess.end(), [&](const ProcessEventQueue& p){ return p.processId == processId; });
     if(found == gEventsByProcess.end()) {
@@ -77,14 +77,14 @@ static void enqueueOrSetEventsLost(int processId, const Event& ev)
     }
 }
 
-int RoEventPoll(Event* ev)
+int RoEventPoll(RoEvent* ev)
 {
     /* Determine processId */
     int processId = 0; /* hack until process table exists */
 
     // Handle system-wide events 
     if(gConsoleEventQueue.eventsLost) {
-        ev->eventType = Event::EVENTS_LOST;
+        ev->eventType = RoEvent::EVENTS_LOST;
         gConsoleEventQueue.eventsLost = false;
         return 1;
     }
@@ -103,7 +103,7 @@ int RoEventPoll(Event* ev)
     }
 
     if(found->eventsLost) {
-        ev->eventType = Event::EVENTS_LOST;
+        ev->eventType = RoEvent::EVENTS_LOST;
         found->eventsLost = false;
         return 1;
     }
@@ -114,7 +114,7 @@ int RoEventPoll(Event* ev)
     return 1;
 }
 
-void SystemEventEnqueue(const Event& ev)
+void SystemEventEnqueue(const RoEvent& ev)
 {
     int processId = 0; /* hack until process table exists */
 
@@ -125,37 +125,37 @@ extern "C" {
 uint32_t HAL_GetTick(); // XXX grantham bringup
 };
 
-// XXX don't repeat modifier keys!
-void KeyRepeatPress(KeyRepeatManager *mgr, int pressed)
+// TODO don't repeat modifier keys!
+void RoKeyRepeatPress(RoKeyRepeatManager *mgr, int pressed)
 {
     if(mgr->key != pressed) {
         mgr->key = pressed;
-        mgr->state = KeyRepeatManager::PRESSED;
+        mgr->state = RoKeyRepeatManager::PRESSED;
         mgr->lastMilli = HAL_GetTick();
     }
 }
 
-void KeyRepeatRelease(KeyRepeatManager *mgr, int released)
+void RoKeyRepeatRelease(RoKeyRepeatManager *mgr, int released)
 {
     if(mgr->key == released) {
-        mgr->state = KeyRepeatManager::NONE;
+        mgr->state = RoKeyRepeatManager::NONE;
         mgr->key = KEYCAP_NONE;
     }
 }
 
-int KeyRepeatUpdate(KeyRepeatManager *mgr, int haveEvent, Event* ev)
+int RoKeyRepeatUpdate(RoKeyRepeatManager *mgr, int haveEvent, RoEvent* ev)
 {
     int now = HAL_GetTick();
 
     if(haveEvent) {
         switch(ev->eventType) {
 
-            case Event::KEYBOARD_RAW: {
+            case RoEvent::KEYBOARD_RAW: {
                 const KeyboardRawEvent& raw = ev->u.keyboardRaw;
                 if(raw.isPress) {
-                    KeyRepeatPress(mgr, raw.key);
+                    RoKeyRepeatPress(mgr, raw.key);
                 } else {
-                    KeyRepeatRelease(mgr, raw.key);
+                    RoKeyRepeatRelease(mgr, raw.key);
                 }
                 // printf("received raw %s for %d\n", raw.isPress ? "press" : "release", raw.key);
                 break;
@@ -167,20 +167,20 @@ int KeyRepeatUpdate(KeyRepeatManager *mgr, int haveEvent, Event* ev)
         }
     } else {
         switch(mgr->state) {
-            case KeyRepeatManager::PRESSED:
+            case RoKeyRepeatManager::PRESSED:
                 if(now - mgr->lastMilli > 500) {
-                    mgr->state = KeyRepeatManager::REPEATING;
+                    mgr->state = RoKeyRepeatManager::REPEATING;
                     mgr->lastMilli = now;
-                    ev->eventType = Event::KEYBOARD_RAW;
+                    ev->eventType = RoEvent::KEYBOARD_RAW;
                     ev->u.keyboardRaw.isPress = 1;
                     ev->u.keyboardRaw.key = mgr->key;
                     haveEvent = 1;
                 }
                 break;
-            case KeyRepeatManager::REPEATING:
+            case RoKeyRepeatManager::REPEATING:
                 if(now - mgr->lastMilli > 20) {
                     mgr->lastMilli = now;
-                    ev->eventType = Event::KEYBOARD_RAW;
+                    ev->eventType = RoEvent::KEYBOARD_RAW;
                     ev->u.keyboardRaw.isPress = 1;
                     ev->u.keyboardRaw.key = mgr->key;
                     haveEvent = 1;
@@ -194,5 +194,3 @@ int KeyRepeatUpdate(KeyRepeatManager *mgr, int haveEvent, Event* ev)
 
     return haveEvent;
 }
-
-

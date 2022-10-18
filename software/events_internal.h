@@ -6,8 +6,8 @@ extern "C" {
 #endif /* __cplusplus */
 
 // System API for enqueuing new events
-void SystemEventEnqueue(const Event& ev);
-void ConsoleEventEnqueue(const Event& ev);
+void SystemEventEnqueue(const RoEvent& ev);
+void ConsoleEventEnqueue(const RoEvent& ev);
 
 #ifdef __cplusplus
 };

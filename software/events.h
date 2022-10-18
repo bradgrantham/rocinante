@@ -119,7 +119,7 @@ typedef struct KeyboardRawEvent {
     int key;
 } KeyboardRawEvent;
 
-typedef struct Event
+typedef struct RoEvent
 {
     enum {
         EVENTS_LOST,
@@ -136,20 +136,20 @@ typedef struct Event
         KeyboardRawEvent keyboardRaw;
         uint8_t reserved[64];
     } u;
-} Event;
+} RoEvent;
 
-int RoEventPoll(Event *event); /* 0 if none, 1 if filled */
+int RoEventPoll(RoEvent *event); /* 0 if none, 1 if filled */
 
-typedef struct KeyRepeatManager
+typedef struct RoKeyRepeatManager
 {
     int key;
     enum { NONE, PRESSED, REPEATING } state;
     uint32_t lastMilli;
-} KeyRepeatManager;
+} RoKeyRepeatManager;
 
-void KeyRepeatRelease(KeyRepeatManager *mgr, int released);
-void KeyRepeatPress(KeyRepeatManager *mgr, int pressed);
-int KeyRepeatUpdate(KeyRepeatManager *mgr, int haveEvent, Event* ev);
+void RoKeyRepeatRelease(RoKeyRepeatManager *mgr, int released);
+void RoKeyRepeatPress(RoKeyRepeatManager *mgr, int pressed);
+int RoKeyRepeatUpdate(RoKeyRepeatManager *mgr, int haveEvent, RoEvent* ev);
 
 #ifdef __cplusplus
 };
