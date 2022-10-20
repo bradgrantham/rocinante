@@ -120,8 +120,3 @@ void SystemEventEnqueue(const RoEvent& ev)
 
     enqueueOrSetEventsLost(processId, ev);
 }
-
-extern "C" {
-uint32_t HAL_GetTick(); // XXX grantham bringup
-};
-
