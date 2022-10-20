@@ -1080,24 +1080,20 @@ void DefaultFillRowBuffer(int frameIndex, int rowNumber, size_t maxSamples, uint
     }
 }
 
+uint8_t NTSCVideoMemory[65536];
 int NTSCModeFuncsValid = 0;
 int NTSCModeInterlaced = 1;
 RoNTSCModeFillRowBufferFunc NTSCModeFillRowBuffer = DefaultFillRowBuffer;
 RoNTSCModeNeedsColorburstFunc NTSCModeNeedsColorburst = DefaultNeedsColorburst;
 
-void RoNTSCSetMode(int interlaced, RoNTSCModeFillRowBufferFunc fillBufferFunc, RoNTSCModeNeedsColorburstFunc needsColorBurstFunc, unsigned char *black, unsigned char *white)
+void RoNTSCSetMode(int interlaced, RoNTSCModeInitVideoMemoryFunc initFunc, RoNTSCModeFillRowBufferFunc fillBufferFunc, RoNTSCModeNeedsColorburstFunc needsColorBurstFunc)
 {
     NTSCModeFuncsValid = 0;
     NTSCModeNeedsColorburst = needsColorBurstFunc;
     NTSCModeFillRowBuffer = fillBufferFunc;
     NTSCModeInterlaced = interlaced;
+    initFunc(NTSCVideoMemory, sizeof(NTSCVideoMemory), NTSCBlack, NTSCWhite);
     NTSCModeFuncsValid = 1;
-    if(black != NULL) {
-        *black = NTSCBlack;
-    }
-    if(white != NULL) {
-        *white = NTSCWhite;
-    }
 }
 
 // NTSC interlaced is made up of "odd" and "even" fields.  For NTSC, the first field is
