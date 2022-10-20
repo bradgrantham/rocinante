@@ -1189,7 +1189,12 @@ void NTSCFillRowBuffer(int frameNumber, int lineNumber, unsigned char *rowBuffer
             memcpy(rowBuffer, NTSCBlankLineBW, ROW_SAMPLES);
         }
 
-        int rowWithinFrame = (lineNumber % 263) * 2 + lineNumber / 263 - 22;
+        int rowWithinFrame;
+        if(NTSCModeInterlaced) {
+            rowWithinFrame = (lineNumber % 263) * 2 + lineNumber / 263 - 22;
+        } else {
+            rowWithinFrame = lineNumber % 263 - 22;
+        }
         if(NTSCModeFuncsValid) {
             NTSCModeFillRowBuffer(frameNumber, rowWithinFrame, 704, rowBuffer + 164);
         }
