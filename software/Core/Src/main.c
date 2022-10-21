@@ -1081,18 +1081,34 @@ void DefaultFillRowBuffer(int frameIndex, int rowNumber, size_t maxSamples, uint
 }
 
 uint8_t NTSCVideoMemory[65536];
+uint8_t /*  __attribute__((section (".ram_d1"))) */ NTSCRowDoubleBuffer[ROW_SAMPLES * 2];
+volatile int NTSCRowNumber = 0;
+volatile int NTSCFrameNumber = 0;
+volatile int markHandlerInSamples = 0;
 int NTSCModeFuncsValid = 0;
 int NTSCModeInterlaced = 1;
 RoNTSCModeFillRowBufferFunc NTSCModeFillRowBuffer = DefaultFillRowBuffer;
+RoNTSCModeInitVideoMemoryFunc NTSCModeInitVideoMemory = NULL;
 RoNTSCModeNeedsColorburstFunc NTSCModeNeedsColorburst = DefaultNeedsColorburst;
 
 void RoNTSCSetMode(int interlaced, RoNTSCModeInitVideoMemoryFunc initFunc, RoNTSCModeFillRowBufferFunc fillBufferFunc, RoNTSCModeNeedsColorburstFunc needsColorBurstFunc)
 {
+    if((NTSCModeInterlaced == interlaced) &&
+        (initFunc == NTSCModeInitVideoMemory) &&
+        (fillBufferFunc == NTSCModeFillRowBuffer) &&
+        (needsColorBurstFunc == NTSCModeNeedsColorburst))
+    {
+        return;
+    }
+
     NTSCModeFuncsValid = 0;
     NTSCModeNeedsColorburst = needsColorBurstFunc;
+    NTSCModeInitVideoMemory = initFunc;
     NTSCModeFillRowBuffer = fillBufferFunc;
     NTSCModeInterlaced = interlaced;
     initFunc(NTSCVideoMemory, sizeof(NTSCVideoMemory), NTSCBlack, NTSCWhite);
+    NTSCRowNumber = 0;
+    NTSCFrameNumber = 0;
     NTSCModeFuncsValid = 1;
 }
 
@@ -1331,11 +1347,6 @@ void VGAFillRowBuffer(int frameNumber, int lineNumber, uint16_t *rowBuffer)
         memcpy_fast_16byte_multiple(rowBuffer + VGA_HSYNC_BACK_PORCH + VGA_LEFT_BORDER_COLUMNS, SDRAM_image + VGA_VISIBLE_COLUMNS * visibleLineNumber, VGA_VISIBLE_COLUMNS * sizeof(uint16_t));
     }
 }
-
-uint8_t /*  __attribute__((section (".ram_d1"))) */ NTSCRowDoubleBuffer[ROW_SAMPLES * 2];
-volatile int NTSCRowNumber = 0;
-volatile int NTSCFrameNumber = 0;
-volatile int markHandlerInSamples = 0;
 
 int why = 0;
 
