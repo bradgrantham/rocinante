@@ -1,6 +1,3 @@
-[submodule "software/rosa-apps"]
-	path = software/rosa-apps
-	url = https://github.com/bradgrantham/rosa-apps.git
-[submodule "software/rosa-kit"]
-	path = software/rosa-kit
-	url = https://github.com/bradgrantham/rosa-kit.git
+[submodule "software/rosa"]
+	path = software/rosa
+	url = https://github.com/bradgrantham/rosa.git

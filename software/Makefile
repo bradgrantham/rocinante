@@ -39,7 +39,8 @@ BUILD_DIR = build
 C_SOURCES =  \
 syscalls.c \
 picture.c \
-rosa-apps/coleco/z80emu.c \
+rosa/apps/coleco/z80emu-cv.c \
+rosa/apps/trs80/z80emu.c \
 Core/Src/main.c \
 Core/Src/stm32h7xx_it.c \
 Core/Src/stm32h7xx_hal_msp.c \
@@ -149,18 +150,20 @@ Middlewares/Third_Party/LibJPEG/source/jmemnobs.c
 CXX_SOURCES = \
 	events.cpp \
 	hid.cpp \
-	rosa-kit/key-repeat.cpp \
-	rosa-kit/text-mode.cpp \
-	rosa-kit/8x16.cpp \
-	rosa-kit/ui.cpp \
-	rosa-apps/launcher/launcher.cpp \
-	rosa-apps/apple2e/apple2e.cpp \
-	rosa-apps/apple2e/dis6502.cpp \
-	rosa-apps/apple2e/interface_rosa.cpp \
-	rosa-apps/coleco/tms9918.cpp \
-	rosa-apps/coleco/emulator.cpp \
-	rosa-apps/coleco/coleco_platform_rosa.cpp \
-        rosa-apps/mp3player/mp3player.cpp \
+	rosa/api/key-repeat.cpp \
+	rosa/api/text-mode.cpp \
+	rosa/api/8x16.cpp \
+	rosa/api/ui.cpp \
+	rosa/apps/trs80/fonts.cpp \
+	rosa/apps/trs80/trs80.cpp \
+	rosa/apps/launcher/launcher.cpp \
+	rosa/apps/apple2e/apple2e.cpp \
+	rosa/apps/apple2e/dis6502.cpp \
+	rosa/apps/apple2e/interface_rosa.cpp \
+	rosa/apps/coleco/tms9918.cpp \
+	rosa/apps/coleco/emulator.cpp \
+	rosa/apps/coleco/coleco_platform_rosa.cpp \
+        rosa/apps/mp3player/mp3player.cpp \
         $(NULL)
 
 
@@ -224,7 +227,7 @@ AS_INCLUDES =
 
 C_INCLUDES =  \
 -I. \
--Irosa-kit \
+-Irosa/api \
 -ICore/Inc \
 -IDrivers/STM32H7xx_HAL_Driver/Inc \
 -IDrivers/STM32H7xx_HAL_Driver/Inc/Legacy \
