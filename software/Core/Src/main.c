@@ -1620,7 +1620,7 @@ void LEDTestIterate()
   
 int RoDoHousekeeping(void)
 {
-    // XXX MX_USB_HOST_Process();
+    MX_USB_HOST_Process();
 
     // LEDTestIterate();
 
