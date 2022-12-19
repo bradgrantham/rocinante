@@ -26,19 +26,19 @@ pushbutton_diameter = 3.37;
 
 // spring-button connectors for BOOT0, RESET
 boot0_height = pushbutton_height;
-boot0_center = [32.82, 78.39] ; // from left, from front
+boot0_center = [32.82, 78.39, 0] ; // from left, from front
 boot0_diameter = pushbutton_diameter;
 
 reset_height = pushbutton_height;
-reset_center = [32.82, 67.51] ; // from left, from front
+reset_center = [32.82, 67.51, 0] ; // from left, from front
 reset_diameter = pushbutton_diameter;
 
 // audio out connector
-audio_out_center = [44.68, 8.47]; // from left, from board top
+audio_out_center = [44.68, board_depth, 8.47]; // from left, from board top
 audio_out_diameter = 6;
 
 // audio in connector
-audio_in_center = [66.59, 8.47]; // from left, from board top
+audio_in_center = [66.59, board_depth, 8.47]; // from left, from board top
 audio_in_diameter = 6;
 
 // composite connector
@@ -168,11 +168,59 @@ module shell_inner_walls()
         cube(shell_inner_dimensions);
 }
 
+module microusb()
+{
+    translate([microusb_left, board_depth - 10, 0])
+        cube([microusb_right - microusb_left, 20, microusb_top]);
+}
+
+module audio_out()
+{
+    translate(audio_out_center)
+        translate([0, -10, 0])
+            rotate([-90, 0, 0])
+                cylinder(r = audio_out_diameter / 2, h=20, $fn=50);
+}
+
+module audio_in()
+{
+    translate(audio_in_center)
+        translate([0, -10, 0])
+            rotate([-90, 0, 0])
+                cylinder(r = audio_in_diameter / 2, h=20, $fn=50);
+}
+
+module composite_video()
+{
+    translate([comp_left, board_depth - 10, 0])
+        cube([comp_width, 20, comp_top]);
+}
+
+module connector_solids()
+{
+    microusb();
+    audio_out();
+    audio_in();
+    composite_video();
+    // VGA
+    // ctrl2
+    // ctrl1
+    // SD card
+    // serial board
+    // cutout for SWD cable
+    // power barrel jack
+}
+
 module shell()
 {
-    difference() {
-        shell_outer_walls();
-        shell_inner_walls();
+    difference()
+    {
+        difference()
+        {
+            shell_outer_walls();
+            shell_inner_walls();
+        }
+        connector_solids();
     }
 }
 
