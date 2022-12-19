@@ -8,11 +8,11 @@ board_thickness = 1.6;
 shell_upper_half_space = 1;
 shell_lower_half_space = 1;
 
-max_component_height_above_board = 16.30 - board_thickness; // populated ESP-01.  Calipers include board
-max_component_height_below_board = 10.74 - board_thickness; // Power barrel.  Calipers include board
+max_component_height_above_board = 16.30 - board_thickness; // populated ESP-01.  CALIPERS INCLUDED BOARD
+max_component_height_below_board = 10.74 - board_thickness; // Power barrel.  CALIPERS INCLUDED BOARD
 
 shell_side_space = .5; // space between boards and box sides
-shell_wall_thickness = 1;
+shell_wall_thickness = 2;
 
 // clockwise from left far corner
 
@@ -176,11 +176,45 @@ module shell()
     }
 }
 
+lip_height = 1;
+lip_width = shell_wall_thickness / 2;
+
+module lip(fudge)
+{
+    split_lower_left_front = [
+        - shell_wall_thickness / 2 - shell_side_space - fudge,
+        - shell_wall_thickness / 2 - shell_side_space - fudge,
+        - max_component_height_below_board - shell_lower_half_space
+        ];
+    echo(fudge);
+
+    split_upper_right_rear = [
+        shell_wall_thickness / 2 + shell_side_space + board_width,
+        shell_wall_thickness / 2 + shell_side_space + board_depth,
+        board_thickness + max_component_height_above_board + shell_upper_half_space
+        ];
+
+    split_dimensions = split_upper_right_rear - split_lower_left_front;
+
+    intersection() {
+        difference() {
+            translate(split_lower_left_front)
+                cube(split_dimensions);
+            shell_inner_walls();
+        }
+        translate([split_lower_left_front.x, split_lower_left_front.z, 0])
+            cube([1000, 1000, lip_height]);
+    }
+}
+
 module top_half()
 {
-    intersection() {
-        shell();
-        translate([-500, -500, 0]) cube([1000, 1000, 1000]);
+    difference() {
+        intersection() {
+            shell();
+            translate([-500, -500, 0]) cube([1000, 1000, 1000]);
+        }
+        lip(0);
     }
 }
 
@@ -190,14 +224,8 @@ module bottom_half()
         shell();
         translate([-500, -500, -1000]) cube([1000, 1000, 1000]);
     }
+    lip(-.2);
 }
 
 translate([0, 0, shell_outer_upper_right_rear.z]) rotate([180, 0, 0]) top_half();
 translate([0, 10, -shell_outer_lower_left_front.z]) bottom_half();
-
-// halves of enclosure for printing
-    // bottom is
-        // shell minus everything above YX plane, bottom of board
-        // plus lip minus fudge
-    // top is shell minus everything below YX plane
-        // minus lip
