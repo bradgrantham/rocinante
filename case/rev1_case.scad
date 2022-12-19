@@ -5,13 +5,14 @@ board_width = 150;
 board_depth = 100;
 board_thickness = 1.6;
 
+shell_upper_half_space = 1;
+shell_lower_half_space = 1;
+
 max_component_height_above_board = 16.30 - board_thickness; // populated ESP-01.  Calipers include board
 max_component_height_below_board = 10.74 - board_thickness; // Power barrel.  Calipers include board
 
-box_upper_half_space = 1; // space between components and box top
-box_bottom_half_space = 1; // space between components and box bottom
-box_side_space = 1; // space between boards and box sides
-box_wall_thickness = 1;
+shell_side_space = .5; // space between boards and box sides
+shell_wall_thickness = 1;
 
 // clockwise from left far corner
 
@@ -128,29 +129,71 @@ rgb3_led_pipe_diameter = 3; // diameter of acrylic pipe length
 
 // three horizontal vent cuts over the CPU and memory
 
-box_upper_half_dimensions = [
-    board_width + box_wall_thickness * 2 + box_side_space * 2,
-    board_depth + box_wall_thickness * 2 + box_side_space * 2,
-    board_thickness + max_component_height_above_board + box_upper_half_space + box_wall_thickness
+shell_outer_lower_left_front = [
+    - shell_wall_thickness - shell_side_space,
+    - shell_wall_thickness - shell_side_space,
+    - shell_wall_thickness - max_component_height_below_board - shell_lower_half_space
     ];
 
-empty_upper_half_dimensions = [
-    board_width + box_side_space * 2,
-    board_depth + box_side_space * 2,
-    board_thickness + max_component_height_above_board + box_upper_half_space
+shell_outer_upper_right_rear = [
+    shell_wall_thickness + shell_side_space + board_width,
+    shell_wall_thickness + shell_side_space + board_depth,
+    shell_wall_thickness + board_thickness + max_component_height_above_board + shell_upper_half_space
     ];
 
-module upper_box_half() {
+shell_inner_lower_left_front = [
+    - shell_side_space,
+    - shell_side_space,
+    - max_component_height_below_board - shell_lower_half_space
+    ];
+
+shell_inner_upper_right_rear = [
+    shell_side_space + board_width,
+    shell_side_space + board_depth,
+    board_thickness + max_component_height_above_board + shell_upper_half_space
+    ];
+
+shell_outer_dimensions = shell_outer_upper_right_rear - shell_outer_lower_left_front;
+shell_inner_dimensions = shell_inner_upper_right_rear - shell_inner_lower_left_front;
+
+module shell_outer_walls()
+{
+    translate(shell_outer_lower_left_front)
+        cube(shell_outer_dimensions);
+}
+
+module shell_inner_walls()
+{
+    translate(shell_inner_lower_left_front)
+        cube(shell_inner_dimensions);
+}
+
+module shell()
+{
     difference() {
-        cube(box_upper_half_dimensions);
-        translate([box_wall_thickness, box_wall_thickness, 0]) cube(empty_upper_half_dimensions);
+        shell_outer_walls();
+        shell_inner_walls();
     }
-};
+}
 
-// subtract all negative components of parts
-// add back all positive components of parts
+module top_half()
+{
+    intersection() {
+        shell();
+        translate([-500, -500, 0]) cube([1000, 1000, 1000]);
+    }
+}
 
-upper_box_half();
+module bottom_half()
+{
+    intersection() {
+        shell();
+        translate([-500, -500, -1000]) cube([1000, 1000, 1000]);
+    }
+}
+
+translate([0, 0, shell_outer_upper_right_rear.z]) rotate([180, 0, 0]) top_half();
+translate([0, 10, -shell_outer_lower_left_front.z]) bottom_half();
 
 // halves of enclosure for printing
     // bottom is
