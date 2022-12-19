@@ -78,7 +78,7 @@ ctrl1_top = 13.1;
 sd_left = 18.97;
 sd_right = 43.50;
 sd_bottom = board_thickness; // from bottom of board
-sd_top = 45.9; // from bottom of board
+sd_top = board_thickness + 5.0; // 45.9; // from bottom of board
 
 // cutout for serial port dongle
 serial_front = 34.54;
@@ -88,7 +88,7 @@ serial_bottom = 6.95; // from bottom of board; calipers include board
 
 // power connector
 wire_5v_is_proud = 2.11;
-power_jack_center = [83.52, -6.04 + board_thickness]; // from front, below board bottom (calipers include board)
+power_jack_center = [0, 83.52, -6.04 + board_thickness]; // from front, below board bottom (calipers include board)
 power_jack_diameter = 6.56;
 
 // spring-button connectors for USER1, USER2, USER3
@@ -196,19 +196,69 @@ module composite_video()
         cube([comp_width, 20, comp_top]);
 }
 
+module vga()
+{
+// VGA connector
+    translate([vga_left, board_depth - 10, 0])
+        cube([vga_right - vga_left, 20, vga_top]);
+}
+
+module ctrl2()
+{
+// controller 2
+    translate([ctrl2_left, -10, 0])
+        cube([ctrl2_right - ctrl2_left, 20, ctrl2_top]);
+}
+
+module ctrl1()
+{
+// controller 1
+    translate([ctrl1_left, -10, 0])
+        cube([ctrl1_right - ctrl1_left, 20, ctrl1_top]);
+}
+
+module sd_card()
+{
+// controller 1
+    translate([sd_left, -10, 0])
+        cube([sd_right - sd_left, 20, sd_top]);
+}
+
+module swd_cutout()
+{
+    // swd cutout
+    translate([board_width - 10, debug_front, 0])
+        cube([20, debug_back - debug_front, debug_thickness + board_thickness + 5]);
+}
+
+module serial_board()
+{
+    // serial board
+    translate([-10, serial_front, 0])
+        cube([20, serial_back - serial_front, serial_top]);
+}
+
+module power_jack()
+{
+    // wire_5v_is_proud = 2.11;
+    // power_jack_diameter = 6.56;
+    translate([-10, power_jack_center.y - power_jack_diameter / 2, -10])
+        cube([20, power_jack_diameter * 2, 15]);
+}
+
 module connector_solids()
 {
     microusb();
     audio_out();
     audio_in();
     composite_video();
-    // VGA
-    // ctrl2
-    // ctrl1
-    // SD card
-    // serial board
-    // cutout for SWD cable
-    // power barrel jack
+    vga();
+    ctrl2();
+    ctrl1();
+    sd_card();
+    serial_board();
+    swd_cutout();
+    power_jack();
 }
 
 module shell()
@@ -234,7 +284,6 @@ module lip(fudge)
         - shell_wall_thickness / 2 - shell_side_space - fudge,
         - max_component_height_below_board - shell_lower_half_space
         ];
-    echo(fudge);
 
     split_upper_right_rear = [
         shell_wall_thickness / 2 + shell_side_space + board_width,
