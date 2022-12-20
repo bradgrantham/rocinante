@@ -35,11 +35,11 @@ reset_diameter = pushbutton_diameter;
 
 // audio out connector
 audio_out_center = [44.68, board_depth, 8.47]; // from left, from board top
-audio_out_diameter = 6;
+audio_out_diameter = 7;
 
 // audio in connector
 audio_in_center = [66.59, board_depth, 8.47]; // from left, from board top
-audio_in_diameter = 6;
+audio_in_diameter = 7;
 
 // composite connector
 comp_left = 81.44; // from left
@@ -75,20 +75,20 @@ ctrl1_bottom = 2.62;
 ctrl1_top = 13.1;
 
 // SD card
-sd_left = 18.97;
-sd_right = 43.50;
+sd_left = 16.97;
+sd_right = 45.50;
 sd_bottom = board_thickness; // from bottom of board
 sd_top = board_thickness + 5.0; // 45.9; // from bottom of board
 
 // cutout for serial port dongle
 serial_front = 34.54;
-serial_back = 51.95;
+serial_back = 52.95;
 serial_top = 13.13; // from bottom of board; calipers include board
 serial_bottom = 6.95; // from bottom of board; calipers include board
 
 // power connector
 wire_5v_is_proud = 2.11;
-power_jack_center = [0, 83.52, -6.04 + board_thickness]; // from front, below board bottom (calipers include board)
+power_jack_center = [0, 75.5, -6.04 + board_thickness]; // from front, below board bottom (calipers include board)
 power_jack_diameter = 6.56;
 
 // spring-button connectors for USER1, USER2, USER3
@@ -126,6 +126,17 @@ rgb2_led_pipe_diameter = 3; // diameter of acrylic pipe length
 rgb3_led_center = [116.19, 31.32]; // from left, front
 rgb3_led_height = 3.5 + board_thickness; // height from board bottom; (calipers include board)
 rgb3_led_pipe_diameter = 3; // diameter of acrylic pipe length
+
+boss_front_left = [6.5, 6.5, board_thickness];
+boss_front_right = [board_width - 6.5, 6.5, board_thickness];
+boss_rear_left = [6.5, board_depth - 6.5, board_thickness];
+boss_rear_right = [board_width - 6.5, board_depth - 6.5, board_thickness];
+boss_outer_diameter = 10;
+boss_inner_diameter = 6; // enough for screw head
+boss_screw_diameter = 3; // M3 screw
+boss_screw_lip_thickness = 3; // M3 screw
+boss_threaded_insert_diameter = 5.4; // may need to experiment
+boss_insert_iron_depth = 8.5; // room for iron pushing threaded insert
 
 // three horizontal vent cuts over the CPU and memory
 
@@ -246,6 +257,36 @@ module power_jack()
         cube([20, power_jack_diameter * 2, 15]);
 }
 
+module boss_upper()
+{
+    // 1cm cylinder from board top to top of shell
+    difference() {
+        cylinder(r = boss_outer_diameter / 2, h = shell_outer_upper_right_rear.z, $fn=50);
+        cylinder(r = boss_threaded_insert_diameter / 2, h = boss_insert_iron_depth, $fn=50);
+    }
+}
+
+module boss_lower_additive()
+{
+    translate([0,0,shell_outer_lower_left_front.z])
+    difference() {
+        // 1cm cylinder from board bottom to bottom of shell
+        cylinder(r = boss_outer_diameter / 2, h = -shell_outer_lower_left_front.z, $fn=50);
+    }
+}
+
+module boss_lower_subtractive()
+{
+    translate([0,0,shell_outer_lower_left_front.z])
+    union() {
+        // cylinder subtracted across full height or whatever of screw diameter plus fudge
+        cylinder(r = boss_inner_diameter / 2, h = -shell_outer_lower_left_front.z - boss_screw_lip_thickness, $fn=50);
+
+        // cylinder subtracted from screw wall below board (1mm?) across full height size of screw head plus fudge
+        cylinder(r = boss_screw_diameter / 2, h = -shell_outer_lower_left_front.z, $fn=50);
+    }
+}
+
 module connector_solids()
 {
     microusb();
@@ -265,12 +306,8 @@ module shell()
 {
     difference()
     {
-        difference()
-        {
-            shell_outer_walls();
-            shell_inner_walls();
-        }
-        connector_solids();
+        shell_outer_walls();
+        shell_inner_walls();
     }
 }
 
@@ -304,24 +341,62 @@ module lip(fudge)
     }
 }
 
+module upper_bosses()
+{
+    translate([boss_front_left.x, boss_front_left.y, 0]) boss_upper();
+    translate([boss_front_right.x, boss_front_right.y, 0]) boss_upper();
+    translate([boss_rear_left.x, boss_rear_left.y, 0]) boss_upper();
+    translate([boss_rear_right.x, boss_rear_right.y, 0]) boss_upper();
+}
+
+module lower_bosses_additive()
+{
+    translate([boss_front_left.x, boss_front_left.y, 0]) boss_lower_additive();
+    translate([boss_front_right.x, boss_front_right.y, 0]) boss_lower_additive();
+    translate([boss_rear_left.x, boss_rear_left.y, 0]) boss_lower_additive();
+    translate([boss_rear_right.x, boss_rear_right.y, 0]) boss_lower_additive();
+}
+
+module lower_bosses_subtractive()
+{
+    translate([boss_front_left.x, boss_front_left.y, 0]) boss_lower_subtractive();
+    translate([boss_front_right.x, boss_front_right.y, 0]) boss_lower_subtractive();
+    translate([boss_rear_left.x, boss_rear_left.y, 0]) boss_lower_subtractive();
+    translate([boss_rear_right.x, boss_rear_right.y, 0]) boss_lower_subtractive();
+}
+
+
 module top_half()
 {
     difference() {
-        intersection() {
-            shell();
-            translate([-500, -500, 0]) cube([1000, 1000, 1000]);
+        difference() {
+            intersection() {
+                shell();
+                translate([-500, -500, 0]) cube([1000, 1000, 1000]);
+            }
+            lip(0);
         }
-        lip(0);
+        connector_solids();
     }
+    upper_bosses();
 }
 
 module bottom_half()
 {
-    intersection() {
-        shell();
-        translate([-500, -500, -1000]) cube([1000, 1000, 1000]);
+    difference() {
+        union() {
+            intersection() {
+                shell();
+                translate([-500, -500, -1000]) cube([1000, 1000, 1000]);
+            }
+            lip(-.2);
+            lower_bosses_additive();
+        }
+        union() {
+            connector_solids();
+            lower_bosses_subtractive();
+        }
     }
-    lip(-.2);
 }
 
 translate([0, 0, shell_outer_upper_right_rear.z]) rotate([180, 0, 0]) top_half();
