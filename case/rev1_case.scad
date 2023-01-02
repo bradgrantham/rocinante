@@ -88,8 +88,8 @@ serial_bottom = 6.95; // from bottom of board; calipers include board
 
 // power connector
 wire_5v_is_proud = 2.11;
-power_jack_center = [0, 75.5, -6.04 + board_thickness]; // from front, below board bottom (calipers include board)
-power_jack_diameter = 6.56;
+power_jack_center = [0, 76.5, -6.04 + board_thickness]; // from front, below board bottom (calipers include board)
+power_jack_diameter = 7.06;
 
 // spring-button connectors for USER1, USER2, USER3
 
@@ -105,27 +105,27 @@ user3_height = button_height;
 user3_center = [116.24, 21.31] ; // from left, front
 user3_diameter = button_diameter;
 
-// LED light pipes - ?? holes into which I'll glue a piece of acrylic, which have thin plastic at case top?
+// LED light pipes
+
+led_pipe_inner_diameter = 3;
+led_pipe_outer_diameter = led_pipe_inner_diameter + 2;
+led_pipe_recess_diameter = 4.3;
+led_pipe_recess_depth = .3;
 
 power_led_center = [23.41, 75.53]; // from left, front
 power_led_height = 2 + board_thickness; // height from board bottom; (calipers include board)
-power_led_pipe_diameter = 2; // diameter of acrylic pipe length
 
 debug_led_center = [18.92, 75.53]; // from left, front
 debug_led_height = 2 + board_thickness; // height from board bottom; (calipers include board)
-debug_led_pipe_diameter = 2; // diameter of acrylic pipe length
 
 rgb1_led_center = [90.13, 31.32]; // from left, front
 rgb1_led_height = 3.5 + board_thickness; // height from board bottom; (calipers include board)
-rgb1_led_pipe_diameter = 3; // diameter of acrylic pipe length
 
 rgb2_led_center = [103.16, 31.32]; // from left, front
 rgb2_led_height = 3.5 + board_thickness; // height from board bottom; (calipers include board)
-rgb2_led_pipe_diameter = 3; // diameter of acrylic pipe length
 
 rgb3_led_center = [116.19, 31.32]; // from left, front
 rgb3_led_height = 3.5 + board_thickness; // height from board bottom; (calipers include board)
-rgb3_led_pipe_diameter = 3; // diameter of acrylic pipe length
 
 boss_front_left = [6.5, 6.5, board_thickness];
 boss_front_right = [board_width - 6.5, 6.5, board_thickness];
@@ -142,47 +142,96 @@ button_pressor_diameter = 3;
 button_spring_thickness = .3;
 button_spring_diameter = 6;
 
+rubberfoot_diameter = 10;
+rubberfoot_indent = 1;
+
+rubberfoot_centers = [
+    [17, 17],
+    [board_width - 17, 17],
+    [17, board_depth - 17],
+    [board_width - 17, board_depth - 17],
+];
+
+cpumem_left = 52.87;
+cpumem_right = 104.03;
+cpumem_front = 45.82;
+cpumem_rear = 70.35;
+
+// each slot is 2mm gap, 3mm of recessed channel, then 5mm of case
+cpumem_slot_gap = 1;
+cpumem_slot_recessed = 2;
+cpumem_slot_recessed_overhang = 2;
+cpumem_slot_recessed_thickness = 2;
+cpumem_slot_case = 2;
+cpumem_slot_depth = cpumem_slot_gap + cpumem_slot_recessed + cpumem_slot_case;
+cpumem_slot_count = floor((cpumem_rear - cpumem_front) / cpumem_slot_depth);
+
+module cpumem_slots_additive()
+{
+    for(slot = [0 : cpumem_slot_count - 1]) {
+        translate([cpumem_left - cpumem_slot_recessed_overhang, cpumem_front + slot * cpumem_slot_depth + cpumem_slot_gap, shell_outer_right_rear_upper[2] - shell_wall_thickness - cpumem_slot_recessed_thickness])
+            cube([cpumem_right - cpumem_left + 2 * cpumem_slot_recessed_overhang, cpumem_slot_recessed + cpumem_slot_case, cpumem_slot_recessed_thickness]);
+    }
+}
+
+module cpumem_slots_subtractive()
+{
+    for(slot = [0 : cpumem_slot_count - 1]) {
+        translate([cpumem_left, cpumem_front + slot * cpumem_slot_depth, shell_outer_right_rear_upper[2] - shell_wall_thickness])
+            cube([cpumem_right - cpumem_left, cpumem_slot_gap + cpumem_slot_recessed, shell_wall_thickness]);
+    }
+}
+
 // three horizontal vent cuts over the CPU and memory
 
-shell_outer_lower_left_front = [
+shell_outer_left_front_lower = [
     - shell_wall_thickness - shell_side_space,
     - shell_wall_thickness - shell_side_space,
     - shell_wall_thickness - max_component_height_below_board - shell_lower_half_space
     ];
 
-shell_outer_upper_right_rear = [
+shell_outer_right_rear_upper = [
     shell_wall_thickness + shell_side_space + board_width,
     shell_wall_thickness + shell_side_space + board_depth,
     shell_wall_thickness + board_thickness + max_component_height_above_board + shell_upper_half_space
     ];
 
-shell_inner_lower_left_front = [
+shell_inner_left_front_lower = [
     - shell_side_space,
     - shell_side_space,
     - max_component_height_below_board - shell_lower_half_space
     ];
 
-shell_inner_upper_right_rear = [
+shell_inner_right_rear_upper = [
     shell_side_space + board_width,
     shell_side_space + board_depth,
     board_thickness + max_component_height_above_board + shell_upper_half_space
     ];
 
-shell_outer_dimensions = shell_outer_upper_right_rear - shell_outer_lower_left_front;
-shell_inner_dimensions = shell_inner_upper_right_rear - shell_inner_lower_left_front;
+module rubberfoot_subtractive()
+{
+    for(center = rubberfoot_centers) {
+        translate([center[0], center[1], shell_outer_left_front_lower[2]])
+            cylinder(rubberfoot_indent, rubberfoot_diameter / 2, rubberfoot_diameter / 2);
+    }
+}
+
+
+shell_outer_dimensions = shell_outer_right_rear_upper - shell_outer_left_front_lower;
+shell_inner_dimensions = shell_inner_right_rear_upper - shell_inner_left_front_lower;
 
 module button_pressor_additive()
 {
     translate([0, 0, button_height])
-        cylinder(r = button_pressor_diameter, h = shell_outer_upper_right_rear.z - button_height, $fn=50);
+        cylinder(r = button_pressor_diameter, h = shell_outer_right_rear_upper.z - button_height, $fn=50);
 }
 
 module button_pressor_subtractive()
 {
     translate([0, 0, button_height])
     difference() {
-        cylinder(r = button_spring_diameter, h = shell_outer_upper_right_rear.z - button_height - button_spring_thickness, $fn=50);
-        cylinder(r = button_pressor_diameter, h = shell_outer_upper_right_rear.z - button_height, $fn=50);
+        cylinder(r = button_spring_diameter, h = shell_outer_right_rear_upper.z - button_height - button_spring_thickness, $fn=50);
+        cylinder(r = button_pressor_diameter, h = shell_outer_right_rear_upper.z - button_height, $fn=50);
     }
 }
 
@@ -204,16 +253,119 @@ module button_pressors_subtractive()
     }
 }
 
+module led_pipe_additive(center, height)
+{
+    translate(center + [0, 0, height])
+        cylinder(r = led_pipe_outer_diameter / 2, h = shell_outer_right_rear_upper.z - board_thickness, $fn=50);
+}
+
+module led_pipe_subtractive(center, height)
+{
+    union() {
+        translate(center + [0, 0, -.1])
+            cylinder(r = led_pipe_inner_diameter / 2, h = shell_outer_right_rear_upper.z + .2, $fn=50);
+        translate([center[0], center[1], shell_outer_right_rear_upper[2] - led_pipe_recess_depth])
+            cylinder(r = led_pipe_recess_diameter / 2, h = led_pipe_recess_depth, $fn=50);
+    }
+}
+
+leds = [
+    [power_led_center, power_led_height],
+    [debug_led_center, debug_led_height],
+    [rgb1_led_center, rgb1_led_height],
+    [rgb2_led_center, rgb2_led_height],
+    [rgb3_led_center, rgb3_led_height]
+    ];
+
+module led_pipes_additive()
+{
+    for(led = leds) {
+        led_pipe_additive(led[0], led[1]);
+    }
+}
+
+module led_pipes_subtractive()
+{
+    for(led = leds) {
+        led_pipe_subtractive(led[0], led[1]);
+    }
+}
+
+// Rounded cube from https://danielupshaw.com/openscad-rounded-corners/
+
+// Higher definition curves
+$fs = 0.1;
+
+module roundedcube(size = [1, 1, 1], center = false, radius = 0.5, apply_to = "all")
+{
+    // If single value, convert to [x, y, z] vector
+    size = (size[0] == undef) ? [size, size, size] : size;
+
+    translate_min = radius;
+    translate_xmax = size[0] - radius;
+    translate_ymax = size[1] - radius;
+    translate_zmax = size[2] - radius;
+
+    diameter = radius * 2;
+
+    module build_point(type = "sphere", rotate = [0, 0, 0]) {
+        if (type == "sphere") {
+            sphere(r = radius);
+        } else if (type == "cylinder") {
+            rotate(a = rotate)
+            cylinder(h = diameter, r = radius, center = true);
+        }
+    }
+
+    obj_translate = (center == false) ?
+        [0, 0, 0] : [
+            -(size[0] / 2),
+            -(size[1] / 2),
+            -(size[2] / 2)
+        ];
+
+    translate(v = obj_translate) {
+        hull() {
+            for (translate_x = [translate_min, translate_xmax]) {
+                x_at = (translate_x == translate_min) ? "min" : "max";
+                for (translate_y = [translate_min, translate_ymax]) {
+                    y_at = (translate_y == translate_min) ? "min" : "max";
+                    for (translate_z = [translate_min, translate_zmax]) {
+                        z_at = (translate_z == translate_min) ? "min" : "max";
+
+                        translate(v = [translate_x, translate_y, translate_z])
+                        if (
+                            (apply_to == "all") ||
+                            (apply_to == "xmin" && x_at == "min") || (apply_to == "xmax" && x_at == "max") ||
+                            (apply_to == "ymin" && y_at == "min") || (apply_to == "ymax" && y_at == "max") ||
+                            (apply_to == "zmin" && z_at == "min") || (apply_to == "zmax" && z_at == "max")
+                        ) {
+                            build_point("sphere");
+                        } else {
+                            rotate =
+                                (apply_to == "xmin" || apply_to == "xmax" || apply_to == "x") ? [0, 90, 0] : (
+                                (apply_to == "ymin" || apply_to == "ymax" || apply_to == "y") ? [90, 90, 0] :
+                                [0, 0, 0]
+                            );
+                            build_point("cylinder", rotate);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 module shell_outer_walls()
 {
-    translate(shell_outer_lower_left_front)
-        cube(shell_outer_dimensions);
+    translate(shell_outer_left_front_lower)
+        cube(shell_outer_dimensions); // , radius=2);
 }
 
 module shell_inner_walls()
 {
-    translate(shell_inner_lower_left_front)
-        cube(shell_inner_dimensions);
+    translate(shell_inner_left_front_lower)
+        cube(shell_inner_dimensions); // , radius=2);
 }
 
 module microusb()
@@ -299,29 +451,29 @@ module boss_upper()
     // 1cm cylinder from board top to top of shell
     translate([0, 0, board_thickness])
     difference() {
-        cylinder(r = boss_outer_diameter / 2, h = shell_outer_upper_right_rear.z - board_thickness, $fn=50);
+        cylinder(r = boss_outer_diameter / 2, h = shell_outer_right_rear_upper.z - board_thickness, $fn=50);
         cylinder(r = boss_threaded_insert_diameter / 2, h = boss_insert_iron_depth, $fn=50);
     }
 }
 
 module boss_lower_additive()
 {
-    translate([0,0,shell_outer_lower_left_front.z])
+    translate([0,0,shell_outer_left_front_lower.z])
     difference() {
         // 1cm cylinder from board bottom to bottom of shell
-        cylinder(r = boss_outer_diameter / 2, h = -shell_outer_lower_left_front.z, $fn=50);
+        cylinder(r = boss_outer_diameter / 2, h = -shell_outer_left_front_lower.z, $fn=50);
     }
 }
 
 module boss_lower_subtractive()
 {
-    translate([0,0,shell_outer_lower_left_front.z])
+    translate([0,0,shell_outer_left_front_lower.z])
     union() {
         // cylinder subtracted across full height or whatever of screw diameter plus fudge
-        cylinder(r = boss_inner_diameter / 2, h = -shell_outer_lower_left_front.z - boss_screw_lip_thickness, $fn=50);
+        cylinder(r = boss_inner_diameter / 2, h = -shell_outer_left_front_lower.z - boss_screw_lip_thickness, $fn=50);
 
         // cylinder subtracted from screw wall below board (1mm?) across full height size of screw head plus fudge
-        cylinder(r = boss_screw_diameter / 2, h = -shell_outer_lower_left_front.z, $fn=50);
+        cylinder(r = boss_screw_diameter / 2, h = -shell_outer_left_front_lower.z, $fn=50);
     }
 }
 
@@ -354,27 +506,27 @@ lip_width = shell_wall_thickness / 2;
 
 module lip(fudge)
 {
-    split_lower_left_front = [
+    split_left_front_lower = [
         - shell_wall_thickness / 2 - shell_side_space - fudge,
         - shell_wall_thickness / 2 - shell_side_space - fudge,
         - max_component_height_below_board - shell_lower_half_space
         ];
 
-    split_upper_right_rear = [
+    split_right_rear_upper = [
         shell_wall_thickness / 2 + shell_side_space + board_width,
         shell_wall_thickness / 2 + shell_side_space + board_depth,
         board_thickness + max_component_height_above_board + shell_upper_half_space
         ];
 
-    split_dimensions = split_upper_right_rear - split_lower_left_front;
+    split_dimensions = split_right_rear_upper - split_left_front_lower;
 
     intersection() {
         difference() {
-            translate(split_lower_left_front)
+            translate(split_left_front_lower)
                 cube(split_dimensions);
             shell_inner_walls();
         }
-        translate([split_lower_left_front.x, split_lower_left_front.z, 0])
+        translate([split_left_front_lower.x, split_left_front_lower.z, 0])
             cube([1000, 1000, lip_height]);
     }
 }
@@ -403,13 +555,18 @@ module lower_bosses_subtractive()
     translate([boss_rear_right.x, boss_rear_right.y, 0]) boss_lower_subtractive();
 }
 
-
 module top_half()
 {
     difference() {
         difference() {
             intersection() {
-                shell();
+                union() {
+                    shell();
+                    upper_bosses();
+                    button_pressors_additive();
+                    led_pipes_additive();
+                    cpumem_slots_additive();
+                }
                 translate([-500, -500, 0]) cube([1000, 1000, 1000]);
             }
             lip(0);
@@ -417,10 +574,10 @@ module top_half()
         union() {
             connector_solids();
             button_pressors_subtractive();
+            led_pipes_subtractive();
+            cpumem_slots_subtractive();
         }
     }
-    upper_bosses();
-    button_pressors_additive();
 }
 
 module bottom_half()
@@ -437,9 +594,10 @@ module bottom_half()
         union() {
             connector_solids();
             lower_bosses_subtractive();
+            rubberfoot_subtractive();
         }
     }
 }
 
-translate([0, 0, shell_outer_upper_right_rear.z]) rotate([180, 0, 0]) top_half();
-translate([0, 10, -shell_outer_lower_left_front.z]) bottom_half();
+translate([0, 0, shell_outer_right_rear_upper.z]) rotate([180, 0, 0]) top_half();
+translate([0, 10, -shell_outer_left_front_lower.z]) bottom_half();

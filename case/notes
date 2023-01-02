@@ -1,0 +1,100 @@
+enclosure
+    shell
+        box minus a little smaller box
+            walls width, depth=width, height
+        subtract connector cutouts plus fudge
+            subtract a model of the board?
+            some are solids for females (sticking out from board)
+            some are solids for males (plugging into board)
+            almost all connectors are above board
+            but power connector is above board.  Put above board?
+        badge space - need to design badge first?
+    bosses
+        upper
+            1cm cylinder from board top to top of shell
+            cylinder subtracted to height of soldering iron
+                need soldering iron length
+                Try different sizes as templates
+        lower
+            1cm cylinder from board bottom to bottom of shell
+            cylinder subtracted across full height or whatever of screw diameter plus fudge
+            cylinder subtracted from screw wall below board (1mm?) across full height size of screw head plus fudge
+    buttons
+        add cylinders down to button caps
+        subtract spirals around cylinders to allow more easy pressing - okay if they go all the way down
+        separately 3D print different color discs to glue on as buttons
+    LEDs
+        add cylinders down to each LED
+        then subtract smaller cylinders same size for wave guide
+        bonus make them the same size as plastic rod stock from TAP
+
+lip
+    needs to be parametric in width - inner lip and outer lip need to have some tolerance
+    lip is on *inner* edge of shell, against board edge
+    board sits on bosses enclosed by lip
+    lip width = shell thickness width / 2
+    lip is box, size of inner wall of shell plus half width of shell, lip height
+
+halves of enclosure for printing
+    bottom is
+        shell minus everything above YX plane, bottom of board
+        plus lip minus fudge
+    top is shell minus everything below YX plane
+        minus lip
+
+12/19/2022 initial print thoughts tested against bare board, no through-hole
+not a lot of tolerance on audio holes
+    ./ -> need to enlarge
+serial board
+    ./ -> probably needs more room towards back
+SD card
+    ./ -> needs a mm or two on both sides
+halves have slight warp, a little hard to join them - will help to have bosses
+halves have slight dimensionality issue, maybe print one half at a time in the same place on the print bed 
+hard to test without bosses
+    ./ -> make bottom bosses
+locations of cutouts really pretty good!  Just need minor tweaking in X and Y and additional tolerance
+enclosure top and bottom are nice and smooth
+I should put little rubber feet on the enclosure bottom - I wonder if I could have indentations that would print ok, same as idea for badge on top
+need CPU and SDRAM heat slots
+Probably need some kind of reinforcement on small bits hanging down ... ?
+    ./ -> make reinforcements
+Power jack
+    ./ -> need lots of slop
+
+12/20/2022 second print with bosses and buttons
+bosses are too long on the top
+    ./ -> make sure to subtract the board thickness, maybe minus a fudge?
+    X -> subtract a fudge for the bottom bosses?
+bottom boss screw holes are hairy
+    ./ -> print support material
+./ -> CTRL slots need a little around them
+./ -> SD can be less tall
+./ -> make everything on rear side except microusb be .5mm all around
+./ -> add 1.5mm forward on serial board cutout
+./ -> make button spring thinner and wider
+./ -> make button pressor wider
+
+12/23
+./ -> Round or chamfer edges of case
+-> Design logo
+    (printed in two layers with super-thin black base then silver PLA?)
+-> Make a recessed area for logo
+./ -> Make little foot indents for rubber feet
+-> Make heat slots over CPU and memory
+
+1/1/2023
+print in black PLA
+board plus bosses leaves a gap
+    -> remove from top boss or remove from bottom boss or maybe both?
+    -> probably also need to shorten button cylinders - one nearest edge while there is gap gives most satisfying click
+-> print small silver tops to glue to buttons - how to make sure they glue perfectly? One layer recess of button spring?  have X descending from button and corresponding X subtracted from button cylinder?  Just have spring layer alone and no cylinder, then can print silver button and cylinder then you know it's perfectly centered and also can change height if necessary
+./ -> make LED pipes bigger with a recess for white top
+-> print thin white tops for LED pipes
+
+So prints are:
+1) Top of case in center of platform in black PETG
+2) bottom of case in center of platform in black PETG
+3) logo plate using black PLA then silver PLA
+4) button tops in silver PLA
+5) LED tops in white PLA 
