@@ -133,14 +133,15 @@ boss_rear_left = [6.5, board_depth - 6.5, board_thickness];
 boss_rear_right = [board_width - 6.5, board_depth - 6.5, board_thickness];
 boss_outer_diameter = 10;
 boss_inner_diameter = 6; // enough for screw head
-boss_screw_diameter = 3; // M3 screw
+boss_screw_diameter = 3.5; // M3 screw
 boss_screw_lip_thickness = 3; // M3 screw
-boss_threaded_insert_diameter = 5.4; // may need to experiment
+boss_threaded_insert_diameter = 5.3; // may need to experiment
 boss_insert_iron_depth = 8.5; // room for iron pushing threaded insert
 
-button_pressor_diameter = 3;
+button_pressor_diameter = 6;
+button_insert_shaft_diameter = 1;
 button_spring_thickness = .3;
-button_spring_diameter = 6;
+button_spring_diameter = 12;
 
 rubberfoot_diameter = 10;
 rubberfoot_indent = 1;
@@ -165,6 +166,18 @@ cpumem_slot_recessed_thickness = 2;
 cpumem_slot_case = 2;
 cpumem_slot_depth = cpumem_slot_gap + cpumem_slot_recessed + cpumem_slot_case;
 cpumem_slot_count = floor((cpumem_rear - cpumem_front) / cpumem_slot_depth);
+
+logo_plate_left = 5;
+logo_plate_right = logo_plate_left + 30;
+logo_plate_front = 5;
+logo_plate_rear = logo_plate_front + 10;
+logo_plate_thickness = .5;
+
+module logo_plate_subtractive()
+{
+    translate([logo_plate_left, logo_plate_front, shell_outer_right_rear_upper[2] - logo_plate_thickness])
+    cube([logo_plate_right - logo_plate_left, logo_plate_rear - logo_plate_front, logo_plate_thickness + 1]);
+}
 
 module cpumem_slots_additive()
 {
@@ -222,17 +235,19 @@ shell_inner_dimensions = shell_inner_right_rear_upper - shell_inner_left_front_l
 
 module button_pressor_additive()
 {
-    translate([0, 0, button_height])
-        cylinder(r = button_pressor_diameter, h = shell_outer_right_rear_upper.z - button_height, $fn=50);
+    translate([0, 0, button_height + .2])
+        cylinder(r = button_pressor_diameter / 2, h = shell_outer_right_rear_upper.z - button_height - .2, $fn=50);
 }
 
 module button_pressor_subtractive()
 {
     translate([0, 0, button_height])
     difference() {
-        cylinder(r = button_spring_diameter, h = shell_outer_right_rear_upper.z - button_height - button_spring_thickness, $fn=50);
-        cylinder(r = button_pressor_diameter, h = shell_outer_right_rear_upper.z - button_height, $fn=50);
+        cylinder(r = button_spring_diameter / 2, h = shell_outer_right_rear_upper.z - button_height - button_spring_thickness, $fn=50);
+        cylinder(r = button_pressor_diameter / 2, h = shell_outer_right_rear_upper.z - button_height, $fn=50);
     }
+    translate([0, 0, -2.5])
+    cylinder(r = button_insert_shaft_diameter / 2, h = shell_outer_right_rear_upper.z + 5);
 }
 
 module button_pressors_additive()
@@ -440,8 +455,6 @@ module serial_board()
 
 module power_jack()
 {
-    // wire_5v_is_proud = 2.11;
-    // power_jack_diameter = 6.56;
     translate([-10, power_jack_center.y - power_jack_diameter / 2, -10])
         cube([20, power_jack_diameter * 2, 15]);
 }
@@ -576,6 +589,7 @@ module top_half()
             button_pressors_subtractive();
             led_pipes_subtractive();
             cpumem_slots_subtractive();
+            logo_plate_subtractive();
         }
     }
 }
@@ -599,5 +613,15 @@ module bottom_half()
     }
 }
 
+// top half of case
 translate([0, 0, shell_outer_right_rear_upper.z]) rotate([180, 0, 0]) top_half();
+
+// bottom half of case
 translate([0, 10, -shell_outer_left_front_lower.z]) bottom_half();
+
+// button top
+// cylinder(h = .5, r = button_pressor_diameter / 2);
+// cylinder(r = button_insert_shaft_diameter / 2 - .05, h = 5);
+
+// led light pipe insert
+// cylinder(h = led_pipe_recess_depth, r = led_pipe_recess_diameter / 2 - .05);

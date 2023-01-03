@@ -78,17 +78,17 @@ bottom boss screw holes are hairy
 12/23
 ./ -> Round or chamfer edges of case
 -> Design logo
-    (printed in two layers with super-thin black base then silver PLA?)
--> Make a recessed area for logo
+    (printed in two layers with super-thin silver base then black PLA?)
+-> Make a recessed area for logo - make upper wall thicker?  So wall can be 3mm and recess can be 1mm, leaving 1mm of wall thickness under logo?
 ./ -> Make little foot indents for rubber feet
--> Make heat slots over CPU and memory
+./ -> Make heat slots over CPU and memory
 
 1/1/2023
-print in black PLA
+print in black PETG
 board plus bosses leaves a gap
     -> remove from top boss or remove from bottom boss or maybe both?
     -> probably also need to shorten button cylinders - one nearest edge while there is gap gives most satisfying click
--> print small silver tops to glue to buttons - how to make sure they glue perfectly? One layer recess of button spring?  have X descending from button and corresponding X subtracted from button cylinder?  Just have spring layer alone and no cylinder, then can print silver button and cylinder then you know it's perfectly centered and also can change height if necessary
+./ -> print small silver tops to glue to buttons - how to make sure they glue perfectly? One layer recess of button spring?  have X descending from button and corresponding X subtracted from button cylinder
 ./ -> make LED pipes bigger with a recess for white top
 -> print thin white tops for LED pipes
 
