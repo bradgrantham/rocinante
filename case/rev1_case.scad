@@ -13,6 +13,7 @@ max_component_height_below_board = 10.74 - board_thickness; // Power barrel.  CA
 
 shell_side_space = .5; // space between boards and box sides
 shell_wall_thickness = 2;
+shell_wall_top_thickness = 2;
 
 // clockwise from left far corner
 
@@ -69,7 +70,7 @@ ctrl2_bottom = 2.62;
 ctrl2_top = 13.1;
 
 // controller 1
-ctrl1_left = 69.61;
+ctrl1_left = 69.3;
 ctrl1_right = 101.52;
 ctrl1_bottom = 2.62;
 ctrl1_top = 13.1;
@@ -88,7 +89,7 @@ serial_bottom = 6.95; // from bottom of board; calipers include board
 
 // power connector
 wire_5v_is_proud = 2.11;
-power_jack_center = [0, 76.5, -6.04 + board_thickness]; // from front, below board bottom (calipers include board)
+power_jack_center = [0, 78.5, -6.04 + board_thickness]; // from front, below board bottom (calipers include board)
 power_jack_diameter = 7.06;
 
 // spring-button connectors for USER1, USER2, USER3
@@ -107,10 +108,8 @@ user3_diameter = button_diameter;
 
 // LED light pipes
 
-led_pipe_inner_diameter = 3;
-led_pipe_outer_diameter = led_pipe_inner_diameter + 2;
-led_pipe_recess_diameter = 4.3;
-led_pipe_recess_depth = .3;
+led_pipe_inner_diameter = 4.1;
+led_pipe_outer_diameter = led_pipe_inner_diameter + 1;
 
 power_led_center = [23.41, 75.53]; // from left, front
 power_led_height = 2 + board_thickness; // height from board bottom; (calipers include board)
@@ -139,11 +138,11 @@ boss_threaded_insert_diameter = 5.3; // may need to experiment
 boss_insert_iron_depth = 8.5; // room for iron pushing threaded insert
 
 button_pressor_diameter = 6;
-button_insert_shaft_diameter = 1;
+button_insert_shaft_diameter = 2.5;
 button_spring_thickness = .3;
 button_spring_diameter = 12;
 
-rubberfoot_diameter = 10;
+rubberfoot_diameter = 11;
 rubberfoot_indent = 1;
 
 rubberfoot_centers = [
@@ -153,13 +152,13 @@ rubberfoot_centers = [
     [board_width - 17, board_depth - 17],
 ];
 
-cpumem_left = 52.87;
-cpumem_right = 104.03;
-cpumem_front = 45.82;
-cpumem_rear = 70.35;
+cpumem_left = 50; // 52.87;
+cpumem_right = 110; // 104.03;
+cpumem_front = 45; // 45.82;
+cpumem_rear = 80; // 70.35;
 
-// each slot is 2mm gap, 3mm of recessed channel, then 5mm of case
-cpumem_slot_gap = 1;
+// each slot is gap, recessed channel, then case
+cpumem_slot_gap = 2;
 cpumem_slot_recessed = 2;
 cpumem_slot_recessed_overhang = 2;
 cpumem_slot_recessed_thickness = 2;
@@ -167,16 +166,31 @@ cpumem_slot_case = 2;
 cpumem_slot_depth = cpumem_slot_gap + cpumem_slot_recessed + cpumem_slot_case;
 cpumem_slot_count = floor((cpumem_rear - cpumem_front) / cpumem_slot_depth);
 
-logo_plate_left = 5;
-logo_plate_right = logo_plate_left + 30;
-logo_plate_front = 5;
-logo_plate_rear = logo_plate_front + 10;
-logo_plate_thickness = .5;
+badge_left = 5;
+badge_right = badge_left + 60;
+badge_front = 5;
+badge_rear = badge_front + 20;
+badge_thickness = 1;
 
-module logo_plate_subtractive()
+module badge_subtractive()
 {
-    translate([logo_plate_left, logo_plate_front, shell_outer_right_rear_upper[2] - logo_plate_thickness])
-    cube([logo_plate_right - logo_plate_left, logo_plate_rear - logo_plate_front, logo_plate_thickness + 1]);
+    translate([badge_left, badge_front, shell_outer_right_rear_upper[2] - badge_thickness])
+    cube([badge_right - badge_left, badge_rear - badge_front, badge_thickness + 1]);
+}
+
+module badge()
+{
+    // base plate
+    color([.5, .5, .5])
+    translate([badge_left, badge_front, 0])
+        cube([badge_right - badge_left, badge_rear - badge_front, .5]);
+
+    // name
+    color([0, 0, 0])
+    translate([(badge_left + badge_right) / 2, (badge_front + badge_rear) / 2, .5])
+        scale([.5, .5, .5])
+            linear_extrude(height=1)
+                text("Rosa v1", halign="center", valign="center", size = 20, font="Liberation Sans:style=Bold");
 }
 
 module cpumem_slots_additive()
@@ -206,7 +220,7 @@ shell_outer_left_front_lower = [
 shell_outer_right_rear_upper = [
     shell_wall_thickness + shell_side_space + board_width,
     shell_wall_thickness + shell_side_space + board_depth,
-    shell_wall_thickness + board_thickness + max_component_height_above_board + shell_upper_half_space
+    shell_wall_top_thickness + board_thickness + max_component_height_above_board + shell_upper_half_space
     ];
 
 shell_inner_left_front_lower = [
@@ -247,7 +261,7 @@ module button_pressor_subtractive()
         cylinder(r = button_pressor_diameter / 2, h = shell_outer_right_rear_upper.z - button_height, $fn=50);
     }
     translate([0, 0, -2.5])
-    cylinder(r = button_insert_shaft_diameter / 2, h = shell_outer_right_rear_upper.z + 5);
+    cylinder(r = (button_insert_shaft_diameter + .5) / 2, h = shell_outer_right_rear_upper.z + 5);
 }
 
 module button_pressors_additive()
@@ -270,8 +284,8 @@ module button_pressors_subtractive()
 
 module led_pipe_additive(center, height)
 {
-    translate(center + [0, 0, height])
-        cylinder(r = led_pipe_outer_diameter / 2, h = shell_outer_right_rear_upper.z - board_thickness, $fn=50);
+    translate([center[0], center[1], 0] + [0, 0, height])
+        cylinder(r = led_pipe_outer_diameter / 2, h = shell_outer_right_rear_upper.z - board_thickness - height, $fn=50);
 }
 
 module led_pipe_subtractive(center, height)
@@ -279,8 +293,6 @@ module led_pipe_subtractive(center, height)
     union() {
         translate(center + [0, 0, -.1])
             cylinder(r = led_pipe_inner_diameter / 2, h = shell_outer_right_rear_upper.z + .2, $fn=50);
-        translate([center[0], center[1], shell_outer_right_rear_upper[2] - led_pipe_recess_depth])
-            cylinder(r = led_pipe_recess_diameter / 2, h = led_pipe_recess_depth, $fn=50);
     }
 }
 
@@ -374,13 +386,14 @@ module roundedcube(size = [1, 1, 1], center = false, radius = 0.5, apply_to = "a
 module shell_outer_walls()
 {
     translate(shell_outer_left_front_lower)
-        cube(shell_outer_dimensions); // , radius=2);
+        roundedcube(shell_outer_dimensions, radius=1.5);
 }
 
 module shell_inner_walls()
 {
     translate(shell_inner_left_front_lower)
-        cube(shell_inner_dimensions); // , radius=2);
+        // roundedcube(shell_inner_dimensions, radius=2);
+        cube(shell_inner_dimensions);
 }
 
 module microusb()
@@ -589,7 +602,7 @@ module top_half()
             button_pressors_subtractive();
             led_pipes_subtractive();
             cpumem_slots_subtractive();
-            logo_plate_subtractive();
+            badge_subtractive();
         }
     }
 }
@@ -608,7 +621,7 @@ module bottom_half()
         union() {
             connector_solids();
             lower_bosses_subtractive();
-            rubberfoot_subtractive();
+            // rubberfoot_subtractive();
         }
     }
 }
@@ -617,11 +630,14 @@ module bottom_half()
 translate([0, 0, shell_outer_right_rear_upper.z]) rotate([180, 0, 0]) top_half();
 
 // bottom half of case
-translate([0, 10, -shell_outer_left_front_lower.z]) bottom_half();
+// translate([0, 10, -shell_outer_left_front_lower.z]) bottom_half();
 
 // button top
 // cylinder(h = .5, r = button_pressor_diameter / 2);
-// cylinder(r = button_insert_shaft_diameter / 2 - .05, h = 5);
+// cylinder(r = button_insert_shaft_diameter / 2, h = 10);
 
 // led light pipe insert
 // cylinder(h = led_pipe_recess_depth, r = led_pipe_recess_diameter / 2 - .05);
+
+// label insert
+// badge();

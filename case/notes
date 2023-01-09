@@ -77,23 +77,34 @@ bottom boss screw holes are hairy
 
 12/23
 ./ -> Round or chamfer edges of case
--> Design logo
+./ -> Design logo
     (printed in two layers with super-thin silver base then black PLA?)
--> Make a recessed area for logo - make upper wall thicker?  So wall can be 3mm and recess can be 1mm, leaving 1mm of wall thickness under logo?
+./ -> Make a recessed area for logo - make upper wall thicker?  So wall can be 3mm and recess can be 1mm, leaving 1mm of wall thickness under logo?
 ./ -> Make little foot indents for rubber feet
 ./ -> Make heat slots over CPU and memory
 
 1/1/2023
 print in black PETG
 board plus bosses leaves a gap
-    -> remove from top boss or remove from bottom boss or maybe both?
-    -> probably also need to shorten button cylinders - one nearest edge while there is gap gives most satisfying click
+    ./ -> remove from top boss or remove from bottom boss or maybe both?
+    turned out into 
 ./ -> print small silver tops to glue to buttons - how to make sure they glue perfectly? One layer recess of button spring?  have X descending from button and corresponding X subtracted from button cylinder
 ./ -> make LED pipes bigger with a recess for white top
--> print thin white tops for LED pipes
+./ -> thin white tops for LED pipes
+
+1/3/2023
+-> probably also need to shorten button cylinders - one nearest edge while there is gap gives most satisfying click
+-> shorten LED pipes - they extend to top of board
+
+1/5/2023
+Button pins are too weak / too wide and printing caused a lot of stringing
+    -> need to experiment with pinhole diameters vs pins
+-> LED cover recesses are not flat, more like cones
+./ -> LED pipes are too tall
+./ -> inner wall cannot be rounded
 
 So prints are:
-1) Top of case in center of platform in black PETG
+1) Top of case in center of platform in black PETG - glue stick?  How to make smooth?
 2) bottom of case in center of platform in black PETG
 3) logo plate using black PLA then silver PLA
 4) button tops in silver PLA
